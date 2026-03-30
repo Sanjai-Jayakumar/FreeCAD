@@ -1,0 +1,11 @@
+{
+  "User parameter:Tux/PersistentToolbars/User": {
+    "PartDesign": {
+      "Saved": true,
+      "Top": "Std_File,Std_Edit,Std_View,Std_ToolbarBreak,PartDesign_Tools,BNC_Custom_Toolbar",
+      "Left": "",
+      "Right": "",
+      "Bottom": ""
+    }
+  }
+}
