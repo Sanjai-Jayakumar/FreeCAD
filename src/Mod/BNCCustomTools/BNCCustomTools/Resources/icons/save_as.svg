@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="64" height="64" viewBox="0 0 64 64"
+     xmlns="http://www.w3.org/2000/svg">
+
+  <!-- Body -->
+  <rect x="8" y="8" width="48" height="48" rx="4" ry="4"
+        fill="#1565c0"/>
+
+  <!-- Label area -->
+  <rect x="14" y="12" width="28" height="12"
+        fill="#ffffff"/>
+
+  <!-- Disk slot -->
+  <rect x="18" y="36" width="28" height="12"
+        fill="#90caf9"/>
+
+  <!-- Pencil -->
+  <path d="M42 20 L52 30 L30 52 L20 54 L22 44 Z"
+        fill="#ffffff"/>
+
+  <path d="M40 22 L50 32"
+        stroke="#1565c0"
+        stroke-width="2"/>
+</svg>
