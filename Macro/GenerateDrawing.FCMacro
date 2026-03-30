@@ -1,0 +1,1430 @@
+# -*- coding: utf-8 -*-
+"""
+=============================================================================
+BNC CAD - Automatic TechDraw Drawing Generator
+Version: 1.0.1
+FreeCAD Version: 1.0.2
+=============================================================================
+
+This macro automatically generates industrial-standard 2D engineering drawings
+from 3D CAD models. Features include:
+- Automatic view generation (Front, Top, Side, Isometric)
+- Smart scaling based on part size and sheet size
+- Automatic dimensioning of key features
+- Title block auto-fill from model metadata
+- Support for FCStd, STEP/STP files
+- Multiple paper sizes (A0, A1, A2, A3, A4)
+
+Author: BNC CAD Team
+Date: March 2026
+=============================================================================
+"""
+
+import FreeCAD
+import FreeCADGui as Gui
+import Part
+import TechDraw
+import os
+import math
+import datetime
+import time
+
+from PySide import QtCore, QtGui
+
+# =============================================================================
+# CONFIGURATION CONSTANTS
+# =============================================================================
+
+# Standard engineering scales (factor to multiply by)
+STANDARD_SCALES = [
+    (50.0, "50:1"),
+    (20.0, "20:1"),
+    (10.0, "10:1"),
+    (5.0, "5:1"),
+    (2.0, "2:1"),
+    (1.0, "1:1"),
+    (0.5, "1:2"),
+    (0.2, "1:5"),
+    (0.1, "1:10"),
+    (0.05, "1:20"),
+    (0.02, "1:50"),
+    (0.01, "1:100"),
+    (0.005, "1:200"),
+    (0.002, "1:500"),
+    (0.001, "1:1000"),
+]
+
+# Paper sizes in millimeters (width x height for landscape)
+PAPER_SIZES = {
+    "A0": (1189, 841),
+    "A1": (841, 594),
+    "A2": (594, 420),
+    "A3": (420, 297),
+    "A4": (297, 210),
+}
+
+# Drawing area margins (accounts for border and title block)
+# Format: (left, right, top, bottom)
+DRAWING_MARGINS = {
+    "A0": (20, 170, 20, 20),
+    "A1": (20, 160, 20, 20),
+    "A2": (15, 155, 15, 15),
+    "A3": (10, 155, 10, 10),
+    "A4": (10, 155, 10, 10),
+}
+
+# View spacing in mm
+VIEW_SPACING = 30
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def get_working_directory():
+    """Get the working directory from FreeCAD preferences."""
+    params = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/General")
+    working_dir = params.GetString("WorkingDirectory", "")
+    
+    if not working_dir or not os.path.isdir(working_dir):
+        if FreeCAD.ActiveDocument and FreeCAD.ActiveDocument.FileName:
+            working_dir = os.path.dirname(FreeCAD.ActiveDocument.FileName)
+        else:
+            working_dir = os.path.expanduser("~/Documents")
+    
+    return working_dir
+
+
+def get_template_path(paper_size):
+    """Get the path to the BNC template for the specified paper size."""
+    fc_home = FreeCAD.getHomePath()
+    
+    possible_paths = [
+        os.path.join(fc_home, "data", "Mod", "TechDraw", "Templates", f"{paper_size}_BNC_Template.svg"),
+        os.path.join(fc_home, "data", "Mod", "TechDraw", "Templates", f"BNC_{paper_size}_Template.svg"),
+        os.path.join(FreeCAD.getResourceDir(), "Mod", "TechDraw", "Templates", f"{paper_size}_BNC_Template.svg"),
+        os.path.join(FreeCAD.getResourceDir(), "Mod", "TechDraw", "Templates", f"BNC_{paper_size}_Template.svg"),
+        os.path.join(fc_home, "Mod", "BNC_CAD", "Templates", f"{paper_size}_BNC_Template.svg"),
+        os.path.join(fc_home, "Icons", f"{paper_size}_BNC_Template.svg"),
+        os.path.join(fc_home, "data", "Mod", "TechDraw", "Templates", f"{paper_size}_Landscape_blank.svg"),
+        os.path.join(FreeCAD.getResourceDir(), "Mod", "TechDraw", "Templates", f"{paper_size}_Landscape_blank.svg"),
+    ]
+    
+    for path in possible_paths:
+        if os.path.exists(path):
+            FreeCAD.Console.PrintMessage(f"Using template: {path}\n")
+            return path
+    
+    FreeCAD.Console.PrintWarning(f"BNC template not found for {paper_size}. Using default template.\n")
+    default_template = os.path.join(fc_home, "data", "Mod", "TechDraw", "Templates", "A4_Landscape_blank.svg")
+    if os.path.exists(default_template):
+        return default_template
+    return None
+
+
+def calculate_optimal_scale(part_bbox, paper_size):
+    """Calculate the optimal standard engineering scale for the drawing."""
+    paper_w, paper_h = PAPER_SIZES[paper_size]
+    margins = DRAWING_MARGINS[paper_size]
+    
+    avail_w = paper_w - margins[0] - margins[1] - VIEW_SPACING * 2
+    avail_h = paper_h - margins[2] - margins[3] - VIEW_SPACING * 2
+    
+    part_l = part_bbox['length']
+    part_w = part_bbox['width']
+    part_h = part_bbox['height']
+    
+    max_dim = max(part_l, part_w, part_h)
+    total_w_needed = part_l + part_w + max_dim * 1.2 + VIEW_SPACING * 3
+    total_h_needed = part_h + part_w + VIEW_SPACING * 2
+    
+    scale_w = avail_w / total_w_needed if total_w_needed > 0 else 1.0
+    scale_h = avail_h / total_h_needed if total_h_needed > 0 else 1.0
+    
+    ideal_scale = min(scale_w, scale_h) * 0.85
+    
+    best_scale = STANDARD_SCALES[-1]  # Start with smallest
+    for scale_factor, scale_str in STANDARD_SCALES:
+        if scale_factor <= ideal_scale:
+            best_scale = (scale_factor, scale_str)
+            break
+    
+    return best_scale
+
+
+def extract_metadata(doc, source_file=None):
+    """Extract metadata from the document and model."""
+    metadata = {
+        'part_name': 'N/A',
+        'description': 'N/A',
+        'material': 'N/A',
+        'mass': 'N/A',
+        'version': '.001',
+        'author': 'N/A',
+        'date': datetime.datetime.now().strftime('%Y-%m-%d'),
+        'company': 'BNC MOTORS PVT LTD',
+        'drawing_number': 'N/A',
+    }
+    
+    if doc:
+        if doc.Label:
+            metadata['part_name'] = doc.Label
+        elif doc.Name:
+            metadata['part_name'] = doc.Name
+    
+    if source_file:
+        base_name = os.path.basename(source_file)
+        name_without_ext = os.path.splitext(base_name)[0]
+        if name_without_ext:
+            metadata['part_name'] = name_without_ext
+            metadata['drawing_number'] = name_without_ext
+        
+        parts = name_without_ext.split('.')
+        for i, part in enumerate(parts):
+            if part.isdigit() and i > 0:
+                metadata['version'] = f".{part}"
+                break
+    
+    if doc:
+        for obj in doc.Objects:
+            if hasattr(obj, 'Material') and obj.Material:
+                metadata['material'] = str(obj.Material)
+            
+            if hasattr(obj, 'Shape') and obj.Shape:
+                try:
+                    density = 7.85e-6
+                    volume = obj.Shape.Volume
+                    mass = volume * density
+                    if mass > 0:
+                        if mass < 1:
+                            metadata['mass'] = f"{mass * 1000:.2f} g"
+                        else:
+                            metadata['mass'] = f"{mass:.2f} kg"
+                except:
+                    pass
+            
+            if hasattr(obj, 'Label2') and obj.Label2:
+                metadata['description'] = obj.Label2
+            elif hasattr(obj, 'Description') and obj.Description:
+                metadata['description'] = obj.Description
+    
+    try:
+        author_param = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Document")
+        author = author_param.GetString("Author", "")
+        if author:
+            metadata['author'] = author
+    except:
+        pass
+    
+    return metadata
+
+
+def find_solid_objects(doc):
+    """Find all solid objects in the document suitable for drawing."""
+    solids = []
+    
+    for obj in doc.Objects:
+        # Skip TechDraw objects
+        if obj.TypeId.startswith('TechDraw::'):
+            continue
+        # Skip App::Origin and other non-geometry objects
+        if obj.TypeId in ['App::Origin', 'App::Line', 'App::Plane', 'Sketcher::SketchObject']:
+            continue
+        
+        if hasattr(obj, 'Shape') and obj.Shape:
+            shape = obj.Shape
+            if hasattr(shape, 'Volume') and shape.Volume > 0:
+                solids.append(obj)
+    
+    return solids
+
+
+# =============================================================================
+# MAIN DRAWING GENERATION CLASS
+# =============================================================================
+
+class DrawingGenerator:
+    """Main class for generating TechDraw drawings."""
+    
+    def __init__(self):
+        self.source_doc = None
+        self.drawing_doc = None
+        self.page = None
+        self.source_file = None
+        self.paper_size = "A3"
+        self.scale = (1.0, "1:1")
+        self.metadata = {}
+        self.solids = []
+        self.source_doc_name = None
+        self.projection_type = "First Angle"  # "First Angle" or "Third Angle"
+    
+    def load_file(self, file_path):
+        """Load the source file (FCStd or STEP)."""
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+        
+        self.source_file = file_path
+        ext = os.path.splitext(file_path)[1].lower()
+        
+        if ext == '.fcstd':
+            self.source_doc = FreeCAD.openDocument(file_path)
+        elif ext in ['.step', '.stp']:
+            self.source_doc = FreeCAD.newDocument("Imported_STEP")
+            Part.insert(file_path, self.source_doc.Name)
+            self.source_doc.recompute()
+        else:
+            raise ValueError(f"Unsupported file type: {ext}")
+        
+        self.source_doc_name = self.source_doc.Name
+        FreeCAD.setActiveDocument(self.source_doc_name)
+        FreeCAD.Console.PrintMessage(f"Loaded file: {file_path}\n")
+        return True
+    
+    def analyze_geometry(self):
+        """Analyze the geometry to determine best views and dimensions."""
+        self.solids = find_solid_objects(self.source_doc)
+        
+        if not self.solids:
+            raise ValueError("No solid geometry found in the document.")
+        
+        combined_bbox = None
+        for obj in self.solids:
+            if combined_bbox is None:
+                combined_bbox = obj.Shape.BoundBox
+            else:
+                combined_bbox.add(obj.Shape.BoundBox)
+        
+        self.part_bbox = {
+            'length': combined_bbox.XLength,
+            'width': combined_bbox.YLength,
+            'height': combined_bbox.ZLength,
+            'min': FreeCAD.Vector(combined_bbox.XMin, combined_bbox.YMin, combined_bbox.ZMin),
+            'max': FreeCAD.Vector(combined_bbox.XMax, combined_bbox.YMax, combined_bbox.ZMax),
+            'center': FreeCAD.Vector(
+                (combined_bbox.XMin + combined_bbox.XMax) / 2,
+                (combined_bbox.YMin + combined_bbox.YMax) / 2,
+                (combined_bbox.ZMin + combined_bbox.ZMax) / 2
+            )
+        }
+        
+        FreeCAD.Console.PrintMessage(
+            f"Geometry analysis complete: L={self.part_bbox['length']:.2f}, "
+            f"W={self.part_bbox['width']:.2f}, H={self.part_bbox['height']:.2f} mm\n"
+        )
+        
+        return self.part_bbox
+    
+    def calculate_scale(self):
+        """Calculate optimal scale for the drawing."""
+        self.scale = calculate_optimal_scale(self.part_bbox, self.paper_size)
+        FreeCAD.Console.PrintMessage(f"Calculated scale: {self.scale[1]}\n")
+        return self.scale
+    
+    def create_drawing_document(self):
+        """Create a new document for the drawing."""
+        if self.source_file:
+            base_name = os.path.splitext(os.path.basename(self.source_file))[0]
+            if base_name.endswith('.prt'):
+                base_name = base_name[:-4]
+            drg_name = f"{base_name}.drg"
+        else:
+            drg_name = "Drawing"
+        
+        self.drawing_doc = FreeCAD.newDocument(drg_name)
+        FreeCAD.Console.PrintMessage(f"Created drawing document: {drg_name}\n")
+        return self.drawing_doc
+    
+    def create_page(self):
+        """Create a TechDraw page with the selected template."""
+        template_path = get_template_path(self.paper_size)
+        
+        if template_path is None:
+            raise ValueError(f"No template found for paper size {self.paper_size}")
+        
+        # Make drawing document active
+        FreeCAD.setActiveDocument(self.drawing_doc.Name)
+        Gui.setActiveDocument(self.drawing_doc.Name)
+        
+        # Create the page
+        self.page = self.drawing_doc.addObject('TechDraw::DrawPage', 'Page')
+        
+        # Create and configure template
+        template = self.drawing_doc.addObject('TechDraw::DrawSVGTemplate', 'Template')
+        template.Template = template_path
+        
+        # Link template to page
+        self.page.Template = template
+        
+        # Recompute to load template
+        self.drawing_doc.recompute()
+        Gui.updateGui()
+        
+        FreeCAD.Console.PrintMessage(f"Created page with template: {self.paper_size}\n")
+        return self.page
+    
+    def create_views(self):
+        """Create front, top, side, and isometric views based on projection type."""
+        paper_w, paper_h = PAPER_SIZES[self.paper_size]
+        margins = DRAWING_MARGINS[self.paper_size]
+        scale_factor = self.scale[0]
+        
+        # Calculate scaled dimensions
+        scaled_l = self.part_bbox['length'] * scale_factor
+        scaled_w = self.part_bbox['width'] * scale_factor
+        scaled_h = self.part_bbox['height'] * scale_factor
+        
+        # Make sure drawing document is active
+        FreeCAD.setActiveDocument(self.drawing_doc.Name)
+        
+        # Copy solids to drawing document for same-document views (avoids XSource save requirement)
+        copied_objs = []
+        for obj in self.solids:
+            shape_copy = self.drawing_doc.addObject("Part::Feature", obj.Label + "_ViewShape")
+            shape_copy.Shape = obj.Shape.copy()
+            shape_copy.ViewObject.Visibility = False
+            copied_objs.append(shape_copy)
+        
+        self.drawing_doc.recompute()
+        
+        FreeCAD.Console.PrintMessage(f"Creating views for {len(copied_objs)} objects\n")
+        FreeCAD.Console.PrintMessage(f"Projection Type: {self.projection_type}\n")
+        FreeCAD.Console.PrintMessage(f"Scale factor: {scale_factor}, Scaled dims: L={scaled_l:.1f}, W={scaled_w:.1f}, H={scaled_h:.1f}\n")
+        
+        # Calculate available drawing area (A3 example: 420x297mm, title block on right)
+        draw_left = margins[0] + 15
+        draw_right = paper_w - margins[1]
+        draw_top = paper_h - margins[2] - 10
+        draw_bottom = margins[3] + 60
+        
+        avail_w = draw_right - draw_left
+        avail_h = draw_top - draw_bottom
+        
+        FreeCAD.Console.PrintMessage(f"Drawing area: {avail_w:.0f} x {avail_h:.0f} mm\n")
+        
+        # Calculate spacing dynamically based on view sizes
+        h_spacing = max(15, VIEW_SPACING)
+        v_spacing = max(15, VIEW_SPACING)
+        
+        # View dimensions
+        front_view_w = scaled_l
+        front_view_h = scaled_h
+        side_view_w = scaled_w
+        side_view_h = scaled_h
+        top_view_w = scaled_l
+        top_view_h = scaled_w
+        iso_scale = scale_factor * 0.7
+        iso_view_size = max(scaled_l, scaled_w, scaled_h) * 0.7 * 1.2
+        
+        # =================================================================
+        # CALCULATE POSITIONS BASED ON PROJECTION TYPE
+        # =================================================================
+        
+        if self.projection_type == "First Angle":
+            # =============================================================
+            # FIRST ANGLE PROJECTION (ISO Standard - European)
+            # - Front View: Upper-left area
+            # - Side View (Left side): To the RIGHT of Front View
+            # - Top View: BELOW Front View
+            # - Isometric: Upper right area
+            # =============================================================
+            
+            # Front View position
+            front_x = draw_left + front_view_w / 2 + 20
+            front_y = draw_top - front_view_h / 2 - 30
+            
+            # Side View: to the RIGHT of Front View
+            side_x = front_x + front_view_w / 2 + h_spacing + side_view_w / 2
+            side_y = front_y  # Same Y level
+            
+            # Top View: BELOW Front View
+            top_x = front_x  # Aligned with front
+            top_y = front_y - front_view_h / 2 - v_spacing - top_view_h / 2
+            
+            # Isometric View: upper right area
+            iso_x = side_x + side_view_w / 2 + h_spacing + iso_view_size / 2
+            iso_y = front_y
+            
+        else:
+            # =============================================================
+            # THIRD ANGLE PROJECTION (ANSI Standard - American)
+            # - Front View: Center-left area
+            # - Side View (Left side): To the LEFT of Front View
+            # - Top View: ABOVE Front View
+            # - Isometric: Upper right area
+            # =============================================================
+            
+            # Front View position (shifted right to make room for side view on left)
+            front_x = draw_left + side_view_w + h_spacing + front_view_w / 2 + 20
+            front_y = draw_bottom + top_view_h + v_spacing + front_view_h / 2 + 20
+            
+            # Side View: to the LEFT of Front View
+            side_x = front_x - front_view_w / 2 - h_spacing - side_view_w / 2
+            side_y = front_y  # Same Y level
+            
+            # Top View: ABOVE Front View
+            top_x = front_x  # Aligned with front
+            top_y = front_y + front_view_h / 2 + v_spacing + top_view_h / 2
+            
+            # Isometric View: upper right area
+            iso_x = front_x + front_view_w / 2 + h_spacing + iso_view_size / 2
+            iso_y = top_y
+        
+        # Clamp isometric to stay within drawing area
+        if iso_x + iso_view_size / 2 > draw_right - 10:
+            iso_x = draw_right - iso_view_size / 2 - 10
+        
+        FreeCAD.Console.PrintMessage(f"Positions ({self.projection_type}) - Front:({front_x:.0f},{front_y:.0f}) Side:({side_x:.0f},{side_y:.0f}) Top:({top_x:.0f},{top_y:.0f}) Iso:({iso_x:.0f},{iso_y:.0f})\n")
+        
+        # =================================================================
+        # CREATE VIEWS
+        # =================================================================
+        
+        # Set TechDraw preferences for cleaner drawings (hide vertices)
+        try:
+            # Try all possible preference paths for VertexScale
+            paths = [
+                "User parameter:BaseApp/Preferences/Mod/TechDraw/Decorations",
+                "User parameter:BaseApp/Preferences/Mod/TechDraw/General", 
+                "User parameter:BaseApp/Preferences/Mod/TechDraw/HLR",
+                "User parameter:BaseApp/Preferences/Mod/TechDraw/Scale",
+            ]
+            for path in paths:
+                prefs = FreeCAD.ParamGet(path)
+                prefs.SetFloat("VertexScale", 0.0)  # Hide vertices
+                prefs.SetFloat("vertexScale", 0.0)  # Try lowercase too
+            
+            # Set line group and line standard in Decorations path
+            deco_prefs = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Mod/TechDraw/Decorations")
+            deco_prefs.SetInt("LineGroup", 0)  # FC 0.25mm (index 0)
+            deco_prefs.SetInt("Standard", 0)  # ANSI.Y14.2M.1992 (index 0)
+            
+            # Also set in Annotation path where UI displays Line Standard
+            anno_prefs = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Mod/TechDraw/Annotation")
+            anno_prefs.SetInt("LineGroup", 0)  # FC 0.25mm (index 0)
+            anno_prefs.SetInt("Standard", 0)  # ANSI.Y14.2M.1992 (index 0)
+            
+            FreeCAD.Console.PrintMessage("✓ TechDraw preferences set: VertexScale=0.0, LineGroup=1, Standard=ANSI\n")
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(f"Could not set TechDraw prefs: {e}\n")
+        
+        def configure_view_for_clean_display(view):
+            """Configure a TechDraw view for clean display without vertices/center marks."""
+            # Hide vertices
+            if hasattr(view, 'CoarseView'):
+                view.CoarseView = True
+            # Disable center marks on arcs/circles
+            if hasattr(view, 'ArcCenterMarks'):
+                view.ArcCenterMarks = False
+            if hasattr(view, 'CenterMarks'):
+                view.CenterMarks = False  
+            # Set vertex scale to 0 if available
+            if hasattr(view, 'VertexScale'):
+                view.VertexScale = 0.0
+            # Other cleanup properties
+            if hasattr(view, 'ShowSectionLine'):
+                view.ShowSectionLine = False
+        
+        # --- FRONT VIEW ---
+        front_view = self.drawing_doc.addObject('TechDraw::DrawViewPart', 'FrontView')
+        front_view.Source = copied_objs
+        front_view.Direction = FreeCAD.Vector(0, -1, 0)  # Looking at -Y face
+        front_view.XDirection = FreeCAD.Vector(1, 0, 0)
+        front_view.Scale = scale_factor
+        front_view.ScaleType = 'Custom'
+        configure_view_for_clean_display(front_view)
+        self.page.addView(front_view)
+        front_view.X = front_x
+        front_view.Y = front_y
+        FreeCAD.Console.PrintMessage(f"Created Front View at ({front_x:.0f}, {front_y:.0f})\n")
+        
+        # --- SIDE VIEW (Left side view) ---
+        side_view = self.drawing_doc.addObject('TechDraw::DrawViewPart', 'SideView')
+        side_view.Source = copied_objs
+        side_view.Direction = FreeCAD.Vector(1, 0, 0)  # Looking from +X direction = left side
+        side_view.XDirection = FreeCAD.Vector(0, 1, 0)  # Y is horizontal, Z is up
+        side_view.Scale = scale_factor
+        side_view.ScaleType = 'Custom'
+        configure_view_for_clean_display(side_view)
+        self.page.addView(side_view)
+        side_view.X = side_x
+        side_view.Y = side_y
+        FreeCAD.Console.PrintMessage(f"Created Side View at ({side_x:.0f}, {side_y:.0f})\n")
+        
+        # --- TOP VIEW ---
+        top_view = self.drawing_doc.addObject('TechDraw::DrawViewPart', 'TopView')
+        top_view.Source = copied_objs
+        top_view.Direction = FreeCAD.Vector(0, 0, 1)  # Looking from +Z = top view
+        top_view.XDirection = FreeCAD.Vector(1, 0, 0)
+        top_view.Scale = scale_factor
+        top_view.ScaleType = 'Custom'
+        configure_view_for_clean_display(top_view)
+        self.page.addView(top_view)
+        top_view.X = top_x
+        top_view.Y = top_y
+        FreeCAD.Console.PrintMessage(f"Created Top View at ({top_x:.0f}, {top_y:.0f})\n")
+        
+        # --- ISOMETRIC VIEW ---
+        iso_view = self.drawing_doc.addObject('TechDraw::DrawViewPart', 'IsometricView')
+        iso_view.Source = copied_objs
+        iso_view.Direction = FreeCAD.Vector(1, 1, 1).normalize()
+        iso_view.XDirection = FreeCAD.Vector(-1, 1, 0).normalize()
+        iso_view.Scale = iso_scale
+        iso_view.ScaleType = 'Custom'
+        configure_view_for_clean_display(iso_view)
+        self.page.addView(iso_view)
+        iso_view.X = iso_x
+        iso_view.Y = iso_y
+        FreeCAD.Console.PrintMessage(f"Created Isometric View at ({iso_x:.0f}, {iso_y:.0f})\n")
+        
+        # Store views for dimensioning
+        self.views = {
+            'front': front_view,
+            'top': top_view,
+            'side': side_view,
+            'iso': iso_view
+        }
+        
+        # Store view positions as plain floats for dimensioning (avoids Quantity issues)
+        self.view_positions = {
+            'front': (float(front_x), float(front_y)),
+            'top': (float(top_x), float(top_y)),
+            'side': (float(side_x), float(side_y)),
+            'iso': (float(iso_x), float(iso_y))
+        }
+        
+        # Force recompute all views
+        self.drawing_doc.recompute()
+        Gui.updateGui()
+        
+        # Set positions again after recompute (ensures positions stick)
+        front_view.X = front_x
+        front_view.Y = front_y
+        side_view.X = side_x
+        side_view.Y = side_y
+        top_view.X = top_x
+        top_view.Y = top_y
+        iso_view.X = iso_x
+        iso_view.Y = iso_y
+        
+        # Final recompute
+        self.drawing_doc.recompute()
+        Gui.updateGui()
+        
+        # Force another recompute to ensure views are rendered
+        time.sleep(0.2)
+        for view in [front_view, top_view, side_view, iso_view]:
+            view.recompute(True)
+        self.page.recompute(True)
+        self.drawing_doc.recompute()
+        
+        return self.views
+    
+    def apply_dimensions(self):
+        """Apply automatic dimensions to the views using proper TechDraw dimensions."""
+        try:
+            FreeCAD.Console.PrintMessage("Applying automatic dimensions...\n")
+            
+            # Wait for views to be fully computed
+            self.drawing_doc.recompute()
+            time.sleep(0.5)
+            Gui.updateGui()
+            
+            # Analyze geometry to find features
+            self.analyze_features()
+            
+            # Add overall bounding box dimensions
+            self.add_overall_dimensions()
+            
+            # Add diameter dimensions for circular features
+            self.add_diameter_dimensions()
+            
+            # Recompute after adding dimensions
+            self.drawing_doc.recompute()
+            Gui.updateGui()
+            
+            FreeCAD.Console.PrintMessage("Dimensions applied successfully\n")
+            
+        except Exception as e:
+            import traceback
+            FreeCAD.Console.PrintWarning(f"Could not apply dimensions: {str(e)}\n")
+            FreeCAD.Console.PrintWarning(traceback.format_exc())
+    
+    def analyze_features(self):
+        """Analyze the 3D geometry to find circles, holes, cylinders for dimensioning."""
+        self.circular_features = []
+        self.linear_features = []
+        
+        try:
+            for obj in self.solids:
+                shape = obj.Shape
+                
+                # Find circular edges (circles, arcs)
+                for i, edge in enumerate(shape.Edges):
+                    if edge.Curve.TypeId == 'Part::GeomCircle':
+                        circle = edge.Curve
+                        self.circular_features.append({
+                            'type': 'circle',
+                            'radius': circle.Radius,
+                            'diameter': circle.Radius * 2,
+                            'center': circle.Center,
+                            'axis': circle.Axis,
+                            'edge_index': i
+                        })
+                    elif hasattr(edge.Curve, 'Radius'):
+                        # Arc or other curved edge with radius
+                        self.circular_features.append({
+                            'type': 'arc',
+                            'radius': edge.Curve.Radius,
+                            'diameter': edge.Curve.Radius * 2,
+                            'edge_index': i
+                        })
+                
+                # Find cylindrical faces
+                for i, face in enumerate(shape.Faces):
+                    surface = face.Surface
+                    if surface.TypeId == 'Part::GeomCylinder':
+                        self.circular_features.append({
+                            'type': 'cylinder',
+                            'radius': surface.Radius,
+                            'diameter': surface.Radius * 2,
+                            'center': surface.Center,
+                            'axis': surface.Axis,
+                            'face_index': i
+                        })
+            
+            # Remove duplicate diameters (keep unique sizes)
+            seen_diameters = set()
+            unique_features = []
+            for feat in self.circular_features:
+                diam_rounded = round(feat['diameter'], 2)
+                if diam_rounded not in seen_diameters:
+                    seen_diameters.add(diam_rounded)
+                    unique_features.append(feat)
+            self.circular_features = unique_features
+            
+            FreeCAD.Console.PrintMessage(f"Found {len(self.circular_features)} unique circular features\n")
+            for feat in self.circular_features:
+                FreeCAD.Console.PrintMessage(f"  - {feat['type']}: Ø{feat['diameter']:.2f}\n")
+                
+        except Exception as e:
+            import traceback
+            FreeCAD.Console.PrintWarning(f"Feature analysis error: {str(e)}\n")
+            FreeCAD.Console.PrintWarning(traceback.format_exc())
+    
+    def add_overall_dimensions(self):
+        """Add overall dimensions using vertex-based distance dimensions."""
+        FreeCAD.Console.PrintMessage("=== Adding overall dimensions to views ===\n")
+        
+        def force_float(val):
+            if val is None:
+                return 0.0
+            if hasattr(val, 'Value'):
+                return float(val.Value)
+            try:
+                return float(val)
+            except:
+                return 0.0
+        
+        try:
+            scale_factor = force_float(self.scale[0])
+            part_length = force_float(self.part_bbox['length'])
+            part_width = force_float(self.part_bbox['width'])
+            part_height = force_float(self.part_bbox['height'])
+            
+            scaled_l = part_length * scale_factor
+            scaled_w = part_width * scale_factor
+            scaled_h = part_height * scale_factor
+            
+            FreeCAD.Console.PrintMessage(f"Part dims: L={part_length:.2f}, W={part_width:.2f}, H={part_height:.2f}\n")
+            FreeCAD.Console.PrintMessage(f"Scaled dims: L={scaled_l:.2f}, W={scaled_w:.2f}, H={scaled_h:.2f}\n")
+            
+            front_view = self.views.get('front')
+            top_view = self.views.get('top')
+            side_view = self.views.get('side')
+            
+            front_pos = self.view_positions.get('front', (0, 0))
+            top_pos = self.view_positions.get('top', (0, 0))
+            side_pos = self.view_positions.get('side', (0, 0))
+            
+            # Ensure views are computed before getting vertices
+            self.drawing_doc.recompute()
+            import time
+            time.sleep(0.2)
+            
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(f"Dimension setup error: {e}\n")
+            return
+        
+        def find_bounding_vertices(view):
+            """Find the extreme vertices of a view for dimensioning."""
+            verts = []
+            try:
+                if hasattr(view, 'getVertexes'):
+                    vertices = view.getVertexes()
+                    FreeCAD.Console.PrintMessage(f"View {view.Name} has {len(vertices)} vertices\n")
+                    for idx, v in enumerate(vertices):
+                        if hasattr(v, 'Point'):
+                            verts.append({'idx': idx, 'x': v.Point.x, 'y': v.Point.y})
+                        elif hasattr(v, 'X') and hasattr(v, 'Y'):
+                            verts.append({'idx': idx, 'x': v.X, 'y': v.Y})
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(f"Vertex enumeration error: {e}\n")
+            return verts
+        
+        def find_horizontal_edges(view, tolerance=0.5):
+            """Find horizontal line edges for length dimension."""
+            h_edges = []
+            try:
+                if hasattr(view, 'getEdges'):
+                    edges = view.getEdges()
+                    for idx, edge in enumerate(edges):
+                        if hasattr(edge, 'Vertexes') and len(edge.Vertexes) == 2:
+                            v1, v2 = edge.Vertexes
+                            dy = abs(v1.Point.y - v2.Point.y)
+                            dx = abs(v1.Point.x - v2.Point.x)
+                            if dy < tolerance and dx > tolerance:
+                                h_edges.append({
+                                    'idx': idx, 
+                                    'length': dx,
+                                    'y': (v1.Point.y + v2.Point.y) / 2,
+                                    'x1': min(v1.Point.x, v2.Point.x),
+                                    'x2': max(v1.Point.x, v2.Point.x)
+                                })
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(f"Edge search error: {e}\n")
+            return sorted(h_edges, key=lambda e: -e['length'])
+        
+        def find_vertical_edges(view, tolerance=0.5):
+            """Find vertical line edges for height dimension."""
+            v_edges = []
+            try:
+                if hasattr(view, 'getEdges'):
+                    edges = view.getEdges()
+                    for idx, edge in enumerate(edges):
+                        if hasattr(edge, 'Vertexes') and len(edge.Vertexes) == 2:
+                            v1, v2 = edge.Vertexes
+                            dy = abs(v1.Point.y - v2.Point.y)
+                            dx = abs(v1.Point.x - v2.Point.x)
+                            if dx < tolerance and dy > tolerance:
+                                v_edges.append({
+                                    'idx': idx,
+                                    'height': dy,
+                                    'x': (v1.Point.x + v2.Point.x) / 2,
+                                    'y1': min(v1.Point.y, v2.Point.y),
+                                    'y2': max(v1.Point.y, v2.Point.y)
+                                })
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(f"Edge search error: {e}\n")
+            return sorted(v_edges, key=lambda e: -e['height'])
+        
+        dim_offset = 15  # mm offset from view
+        
+        # ===================================================================
+        # FRONT VIEW DIMENSIONS - Length (below) and Height (left)
+        # ===================================================================
+        if front_view:
+            view_x = force_float(front_pos[0])
+            view_y = force_float(front_pos[1])
+            
+            h_edges = find_horizontal_edges(front_view)
+            v_edges = find_vertical_edges(front_view)
+            
+            FreeCAD.Console.PrintMessage(f"FrontView: Found {len(h_edges)} horizontal, {len(v_edges)} vertical edges\n")
+            
+            # LENGTH dimension using longest horizontal edge
+            if h_edges:
+                longest_h = h_edges[0]
+                try:
+                    dim_length = self.drawing_doc.addObject('TechDraw::DrawViewDimension', 'Dim_Length')
+                    dim_length.Type = "DistanceX"
+                    dim_length.MeasureType = "Projected"
+                    dim_length.References2D = [(front_view, f"Edge{longest_h['idx']}")]
+                    dim_length.X = view_x
+                    dim_length.Y = view_y - scaled_h/2 - dim_offset
+                    self.page.addView(dim_length)
+                    FreeCAD.Console.PrintMessage(f"Added Length dim using Edge{longest_h['idx']}, length={longest_h['length']:.2f}\n")
+                except Exception as e:
+                    FreeCAD.Console.PrintWarning(f"Length dim error: {e}\n")
+                    # Fallback: annotation
+                    try:
+                        ann = self.drawing_doc.addObject('TechDraw::DrawViewAnnotation', 'Dim_Length')
+                        ann.Text = [f"{part_length:.2f}"]
+                        ann.X = f"{view_x} mm"
+                        ann.Y = f"{view_y - scaled_h/2 - dim_offset} mm"
+                        ann.TextSize = 3.5
+                        self.page.addView(ann)
+                    except:
+                        pass
+            else:
+                # No horizontal edge found - use annotation
+                try:
+                    ann = self.drawing_doc.addObject('TechDraw::DrawViewAnnotation', 'Dim_Length')
+                    ann.Text = [f"{part_length:.2f}"]
+                    ann.X = f"{view_x} mm"
+                    ann.Y = f"{view_y - scaled_h/2 - dim_offset} mm"
+                    ann.TextSize = 3.5
+                    self.page.addView(ann)
+                    FreeCAD.Console.PrintMessage(f"Added Length annotation: {part_length:.2f}\n")
+                except Exception as e:
+                    FreeCAD.Console.PrintWarning(f"Length annotation error: {e}\n")
+            
+            # HEIGHT dimension using longest vertical edge
+            if v_edges:
+                longest_v = v_edges[0]
+                try:
+                    dim_height = self.drawing_doc.addObject('TechDraw::DrawViewDimension', 'Dim_Height')
+                    dim_height.Type = "DistanceY"
+                    dim_height.MeasureType = "Projected"
+                    dim_height.References2D = [(front_view, f"Edge{longest_v['idx']}")]
+                    dim_height.X = view_x - scaled_l/2 - dim_offset
+                    dim_height.Y = view_y
+                    self.page.addView(dim_height)
+                    FreeCAD.Console.PrintMessage(f"Added Height dim using Edge{longest_v['idx']}, height={longest_v['height']:.2f}\n")
+                except Exception as e:
+                    FreeCAD.Console.PrintWarning(f"Height dim error: {e}\n")
+                    # Fallback: annotation
+                    try:
+                        ann = self.drawing_doc.addObject('TechDraw::DrawViewAnnotation', 'Dim_Height')
+                        ann.Text = [f"{part_height:.2f}"]
+                        ann.X = f"{view_x - scaled_l/2 - dim_offset} mm"
+                        ann.Y = f"{view_y} mm"
+                        ann.TextSize = 3.5
+                        self.page.addView(ann)
+                    except:
+                        pass
+            else:
+                # No vertical edge found - use annotation
+                try:
+                    ann = self.drawing_doc.addObject('TechDraw::DrawViewAnnotation', 'Dim_Height')
+                    ann.Text = [f"{part_height:.2f}"]
+                    ann.X = f"{view_x - scaled_l/2 - dim_offset} mm"
+                    ann.Y = f"{view_y} mm"
+                    ann.TextSize = 3.5
+                    self.page.addView(ann)
+                    FreeCAD.Console.PrintMessage(f"Added Height annotation: {part_height:.2f}\n")
+                except Exception as e:
+                    FreeCAD.Console.PrintWarning(f"Height annotation error: {e}\n")
+        
+        # ===================================================================
+        # TOP VIEW DIMENSIONS - Width (right side)
+        # ===================================================================
+        if top_view:
+            view_x = force_float(top_pos[0])
+            view_y = force_float(top_pos[1])
+            
+            v_edges = find_vertical_edges(top_view)
+            
+            FreeCAD.Console.PrintMessage(f"TopView: Found {len(v_edges)} vertical edges\n")
+            
+            # WIDTH dimension using longest vertical edge on top view
+            if v_edges:
+                longest_v = v_edges[0]
+                try:
+                    dim_width = self.drawing_doc.addObject('TechDraw::DrawViewDimension', 'Dim_Width')
+                    dim_width.Type = "DistanceY"
+                    dim_width.MeasureType = "Projected"
+                    dim_width.References2D = [(top_view, f"Edge{longest_v['idx']}")]
+                    dim_width.X = view_x + scaled_l/2 + dim_offset
+                    dim_width.Y = view_y
+                    self.page.addView(dim_width)
+                    FreeCAD.Console.PrintMessage(f"Added Width dim using Edge{longest_v['idx']}, height={longest_v['height']:.2f}\n")
+                except Exception as e:
+                    FreeCAD.Console.PrintWarning(f"Width dim error: {e}\n")
+                    # Fallback: annotation
+                    try:
+                        ann = self.drawing_doc.addObject('TechDraw::DrawViewAnnotation', 'Dim_Width')
+                        ann.Text = [f"{part_width:.2f}"]
+                        ann.X = f"{view_x + scaled_l/2 + dim_offset} mm"
+                        ann.Y = f"{view_y} mm"
+                        ann.TextSize = 3.5
+                        self.page.addView(ann)
+                    except:
+                        pass
+            else:
+                # No vertical edge found - use annotation
+                try:
+                    ann = self.drawing_doc.addObject('TechDraw::DrawViewAnnotation', 'Dim_Width')
+                    ann.Text = [f"{part_width:.2f}"]
+                    ann.X = f"{view_x + scaled_l/2 + dim_offset} mm"
+                    ann.Y = f"{view_y} mm"
+                    ann.TextSize = 3.5
+                    self.page.addView(ann)
+                    FreeCAD.Console.PrintMessage(f"Added Width annotation: {part_width:.2f}\n")
+                except Exception as e:
+                    FreeCAD.Console.PrintWarning(f"Width annotation error: {e}\n")
+        
+        self.drawing_doc.recompute()
+        FreeCAD.Console.PrintMessage("Overall dimensions completed.\n")
+    
+    def add_diameter_dimensions(self):
+        """Add diameter dimensions for circular features on the appropriate views."""
+        if not hasattr(self, 'circular_features') or not self.circular_features:
+            FreeCAD.Console.PrintMessage("No circular features to dimension\n")
+            return
+        
+        FreeCAD.Console.PrintMessage(f"=== Adding {len(self.circular_features)} diameter dimensions ===\n")
+        
+        front_view = self.views.get('front')
+        top_view = self.views.get('top')
+        side_view = self.views.get('side')
+        
+        front_pos = self.view_positions.get('front', (0, 0))
+        top_pos = self.view_positions.get('top', (0, 0))
+        side_pos = self.view_positions.get('side', (0, 0))
+        
+        scale_factor = float(self.scale[0]) if hasattr(self.scale[0], 'Value') else float(self.scale[0])
+        
+        def find_circle_edges(view):
+            """Find all circular edges in a view with their info."""
+            circles = []
+            try:
+                if hasattr(view, 'getEdges'):
+                    edges = view.getEdges()
+                    for idx, edge in enumerate(edges):
+                        if hasattr(edge, 'Curve'):
+                            curve = edge.Curve
+                            if hasattr(curve, 'Radius'):
+                                circles.append({
+                                    'idx': idx,
+                                    'radius': curve.Radius,
+                                    'diameter': curve.Radius * 2
+                                })
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(f"Circle edge search error: {e}\n")
+            return circles
+        
+        dim_count = 0
+        
+        for i, feat in enumerate(self.circular_features):
+            diameter = feat['diameter']
+            dim_name = f"Dim_Dia{i+1}"
+            
+            # Determine target view based on feature axis
+            target_view = top_view if top_view else front_view
+            pos = top_pos if top_view else front_pos
+            
+            if 'axis' in feat:
+                axis = feat['axis']
+                if abs(axis.z) > 0.9:  # Hole along Z - visible in Top view
+                    target_view = top_view if top_view else front_view
+                    pos = top_pos if top_view else front_pos
+                elif abs(axis.y) > 0.9:  # Hole along Y - visible in Front view
+                    target_view = front_view if front_view else top_view
+                    pos = front_pos if front_view else top_pos
+                elif abs(axis.x) > 0.9:  # Hole along X - visible in Side view
+                    target_view = side_view if side_view else front_view
+                    pos = side_pos if side_view else front_pos
+            
+            if not target_view:
+                FreeCAD.Console.PrintWarning(f"No target view for diameter {diameter:.2f}\n")
+                continue
+            
+            # Find circular edges in the target view
+            circles = find_circle_edges(target_view)
+            FreeCAD.Console.PrintMessage(f"Searching for diameter {diameter:.2f}, found {len(circles)} circles in {target_view.Name}\n")
+            
+            # Find matching circle (account for scale)
+            scaled_diameter = diameter * scale_factor
+            circle_edge = None
+            for c in circles:
+                # Compare with tolerance (check both scaled and unscaled)
+                if abs(c['diameter'] - diameter) < 1.0 or abs(c['diameter'] - scaled_diameter) < 1.0:
+                    circle_edge = f"Edge{c['idx']}"
+                    FreeCAD.Console.PrintMessage(f"Matched circle Edge{c['idx']} with diameter {c['diameter']:.2f}\n")
+                    break
+            
+            view_x = float(pos[0])
+            view_y = float(pos[1])
+            
+            try:
+                if circle_edge:
+                    # Create proper TechDraw diameter dimension
+                    dim = self.drawing_doc.addObject('TechDraw::DrawViewDimension', dim_name)
+                    dim.Type = "Diameter"
+                    dim.MeasureType = "Projected"
+                    dim.References2D = [(target_view, circle_edge)]
+                    
+                    # Position dimension - offset from view center
+                    dim.X = view_x + 25 + (dim_count % 2) * 15
+                    dim.Y = view_y - 5 - (dim_count // 2) * 10
+                    
+                    self.page.addView(dim)
+                    FreeCAD.Console.PrintMessage(f"Added diameter dimension: {dim_name} = \u2300{diameter:.2f}\n")
+                else:
+                    # Fallback: Add as annotation
+                    annotation = self.drawing_doc.addObject('TechDraw::DrawViewAnnotation', dim_name)
+                    annotation.Text = [f"\u2300{diameter:.2f}"]
+                    annotation.X = f"{view_x + 25 + (dim_count % 2) * 15} mm"
+                    annotation.Y = f"{view_y - 5 - (dim_count // 2) * 10} mm"
+                    annotation.TextSize = 3.5
+                    self.page.addView(annotation)
+                    FreeCAD.Console.PrintMessage(f"Added diameter annotation: {dim_name} = \u2300{diameter:.2f}\n")
+                
+                dim_count += 1
+                
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(f"Error adding diameter {diameter:.2f}: {e}\n")
+                import traceback
+                FreeCAD.Console.PrintWarning(traceback.format_exc())
+        
+        self.drawing_doc.recompute()
+        FreeCAD.Console.PrintMessage(f"Completed {dim_count} diameter dimensions\n")
+    
+    def fill_title_block(self):
+        """Fill in the title block with metadata."""
+        self.metadata = extract_metadata(self.source_doc, self.source_file)
+        
+        template = self.drawing_doc.Template
+        
+        field_mapping = {
+            'DRAWING_NUMBER': 'drawing_number',
+            'PART NUMBER': 'drawing_number',
+            'DESCRIPTION': 'description',
+            'SCALE': lambda: self.scale[1],
+            'DRAWN BY': 'author',
+            'DRAWN_DATE': 'date',
+            'CHECKED BY': lambda: '',
+            'CHECKED_DATE': lambda: '',
+            'APPROVED BY': lambda: '',
+            'APPROVED_DATE': lambda: '',
+            'MATERIAL_1': 'material',
+            'MATERIAL_2': lambda: '',
+            'CURRENT_SHEET_NUMBER': lambda: '1',
+            'TOTAL_SHEET_NUMBER': lambda: '1',
+            'Rev': 'version',
+        }
+        
+        try:
+            for field, source in field_mapping.items():
+                try:
+                    if callable(source):
+                        value = source()
+                    else:
+                        value = self.metadata.get(source, '')
+                    
+                    template.setEditFieldContent(field, str(value))
+                except:
+                    pass
+            
+            self.drawing_doc.recompute()
+            FreeCAD.Console.PrintMessage("Filled title block with metadata\n")
+            
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(f"Could not fill title block: {str(e)}\n")
+    
+    def save_drawing(self):
+        """Save the drawing document."""
+        if self.source_file:
+            source_dir = os.path.dirname(self.source_file)
+            base_name = os.path.splitext(os.path.basename(self.source_file))[0]
+            if base_name.endswith('.prt'):
+                base_name = base_name[:-4]
+            save_path = os.path.join(source_dir, f"{base_name}.drg.FCStd")
+        else:
+            working_dir = get_working_directory()
+            save_path = os.path.join(working_dir, "Drawing.drg.FCStd")
+        
+        self.drawing_doc.saveAs(save_path)
+        FreeCAD.Console.PrintMessage(f"Drawing saved to: {save_path}\n")
+        
+        return save_path
+
+
+# =============================================================================
+# UI DIALOG CLASS
+# =============================================================================
+
+class DrawingGeneratorDialog(QtGui.QDialog):
+    """Dialog for configuring drawing generation options."""
+    
+    def __init__(self, parent=None):
+        super(DrawingGeneratorDialog, self).__init__(parent)
+        self.setWindowTitle("BNC CAD - Generate Drawing")
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(400)
+        
+        self.selected_file = None
+        self.generator = DrawingGenerator()
+        
+        self.setup_ui()
+    
+    def setup_ui(self):
+        """Set up the dialog UI."""
+        layout = QtGui.QVBoxLayout(self)
+        
+        # Title
+        title_label = QtGui.QLabel("<h2>Automatic Drawing Generator</h2>")
+        title_label.setAlignment(QtCore.Qt.AlignCenter)
+        layout.addWidget(title_label)
+        
+        # File Selection Group
+        file_group = QtGui.QGroupBox("Source File")
+        file_layout = QtGui.QHBoxLayout(file_group)
+        
+        self.file_edit = QtGui.QLineEdit()
+        self.file_edit.setReadOnly(True)
+        self.file_edit.setPlaceholderText("Select a CAD file...")
+        file_layout.addWidget(self.file_edit)
+        
+        browse_btn = QtGui.QPushButton("Browse...")
+        browse_btn.clicked.connect(self.browse_file)
+        file_layout.addWidget(browse_btn)
+        
+        layout.addWidget(file_group)
+        
+        # Paper Size Selection
+        paper_group = QtGui.QGroupBox("Paper Size")
+        paper_layout = QtGui.QHBoxLayout(paper_group)
+        
+        self.paper_combo = QtGui.QComboBox()
+        self.paper_combo.addItems(["A4", "A3", "A2", "A1", "A0"])
+        self.paper_combo.setCurrentText("A3")
+        paper_layout.addWidget(QtGui.QLabel("Select Size:"))
+        paper_layout.addWidget(self.paper_combo)
+        paper_layout.addStretch()
+        
+        layout.addWidget(paper_group)
+        
+        # Projection Type Selection
+        projection_group = QtGui.QGroupBox("Projection Type")
+        projection_layout = QtGui.QHBoxLayout(projection_group)
+        
+        self.projection_combo = QtGui.QComboBox()
+        self.projection_combo.addItems(["First Angle", "Third Angle"])
+        self.projection_combo.setCurrentText("First Angle")
+        projection_layout.addWidget(QtGui.QLabel("Select Projection:"))
+        projection_layout.addWidget(self.projection_combo)
+        projection_layout.addStretch()
+        
+        # Add help text
+        help_label = QtGui.QLabel("<i>First Angle: ISO/European | Third Angle: ANSI/American</i>")
+        help_label.setStyleSheet("color: gray; font-size: 10px;")
+        projection_layout.addWidget(help_label)
+        
+        layout.addWidget(projection_group)
+        
+        # Options Group
+        options_group = QtGui.QGroupBox("Options")
+        options_layout = QtGui.QVBoxLayout(options_group)
+        
+        self.auto_scale_check = QtGui.QCheckBox("Auto-calculate optimal scale")
+        self.auto_scale_check.setChecked(True)
+        options_layout.addWidget(self.auto_scale_check)
+        
+        self.auto_dim_check = QtGui.QCheckBox("Apply automatic dimensions (Overall L x W x H)")
+        self.auto_dim_check.setChecked(True)
+        options_layout.addWidget(self.auto_dim_check)
+        
+        self.fill_title_check = QtGui.QCheckBox("Auto-fill title block")
+        self.fill_title_check.setChecked(True)
+        options_layout.addWidget(self.fill_title_check)
+        
+        layout.addWidget(options_group)
+        
+        # Info/Status Area
+        self.status_text = QtGui.QTextEdit()
+        self.status_text.setReadOnly(True)
+        self.status_text.setMaximumHeight(100)
+        self.status_text.setPlaceholderText("Status messages will appear here...")
+        layout.addWidget(self.status_text)
+        
+        # Buttons
+        button_layout = QtGui.QHBoxLayout()
+        
+        generate_btn = QtGui.QPushButton("Generate Drawing")
+        generate_btn.clicked.connect(self.generate_drawing)
+        generate_btn.setMinimumHeight(40)
+        button_layout.addWidget(generate_btn)
+        
+        cancel_btn = QtGui.QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(cancel_btn)
+        
+        layout.addLayout(button_layout)
+    
+    def browse_file(self):
+        """Open file browser to select source file."""
+        working_dir = get_working_directory()
+        
+        file_filter = "CAD Files (*.FCStd *.step *.stp);;FreeCAD Files (*.FCStd);;STEP Files (*.step *.stp);;All Files (*.*)"
+        
+        file_path, _ = QtGui.QFileDialog.getOpenFileName(
+            self,
+            "Select CAD File",
+            working_dir,
+            file_filter
+        )
+        
+        if file_path:
+            self.selected_file = file_path
+            self.file_edit.setText(file_path)
+            self.log_status(f"Selected: {os.path.basename(file_path)}")
+    
+    def log_status(self, message):
+        """Add a message to the status area."""
+        self.status_text.append(message)
+        scrollbar = self.status_text.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+        QtGui.QApplication.processEvents()
+    
+    def generate_drawing(self):
+        """Generate the drawing based on selected options."""
+        if not self.selected_file:
+            QtGui.QMessageBox.warning(
+                self,
+                "No File Selected",
+                "Please select a CAD file first."
+            )
+            return
+        
+        try:
+            self.log_status("Starting drawing generation...")
+            
+            # Set paper size and projection type
+            self.generator.paper_size = self.paper_combo.currentText()
+            self.generator.projection_type = self.projection_combo.currentText()
+            
+            # Load the file
+            self.log_status(f"Loading file... (Projection: {self.generator.projection_type})")
+            self.generator.load_file(self.selected_file)
+            
+            # Analyze geometry
+            self.log_status("Analyzing geometry...")
+            bbox = self.generator.analyze_geometry()
+            self.log_status(f"Part dimensions: {bbox['length']:.2f} x {bbox['width']:.2f} x {bbox['height']:.2f} mm")
+            
+            # Calculate scale
+            if self.auto_scale_check.isChecked():
+                self.log_status("Calculating optimal scale...")
+                scale = self.generator.calculate_scale()
+                self.log_status(f"Scale: {scale[1]}")
+            
+            # Create drawing document
+            self.log_status("Creating drawing document...")
+            self.generator.create_drawing_document()
+            
+            # Create page with template
+            self.log_status(f"Creating {self.generator.paper_size} page with BNC template...")
+            self.generator.create_page()
+            
+            # Create views
+            self.log_status("Generating views...")
+            self.generator.create_views()
+            
+            # Apply dimensions
+            if self.auto_dim_check.isChecked():
+                self.log_status("Applying dimensions...")
+                self.generator.apply_dimensions()
+            
+            # Fill title block
+            if self.fill_title_check.isChecked():
+                self.log_status("Filling title block...")
+                self.generator.fill_title_block()
+            
+            # Save drawing
+            self.log_status("Saving drawing...")
+            save_path = self.generator.save_drawing()
+            
+            self.log_status("=" * 40)
+            self.log_status("Drawing generation complete!")
+            self.log_status(f"Saved to: {save_path}")
+            
+            # Set the drawing document as active and show it
+            FreeCAD.setActiveDocument(self.generator.drawing_doc.Name)
+            Gui.setActiveDocument(self.generator.drawing_doc.Name)
+            Gui.ActiveDocument = Gui.getDocument(self.generator.drawing_doc.Name)
+            
+            # Force all views to recompute
+            for view_name, view in self.generator.views.items():
+                view.touch()
+                view.recompute(True)
+            
+            self.generator.page.touch()
+            self.generator.page.recompute(True)
+            self.generator.drawing_doc.recompute()
+            
+            # Open the page in TechDraw view mode
+            try:
+                # Select the page
+                Gui.Selection.clearSelection()
+                Gui.Selection.addSelection(self.generator.drawing_doc.Name, self.generator.page.Name)
+                
+                # Double-click equivalent - open the page view
+                self.generator.page.ViewObject.doubleClicked()
+            except Exception as e:
+                FreeCAD.Console.PrintWarning(f"Could not open page view: {str(e)}\n")
+                try:
+                    Gui.runCommandGui('TechDraw_PageDefault')
+                except:
+                    pass
+            
+            Gui.updateGui()
+            Gui.SendMsgToActiveView("ViewFit")
+            
+            QtGui.QMessageBox.information(
+                self,
+                "Drawing Complete",
+                f"Drawing generated successfully!\n\nSaved to:\n{save_path}"
+            )
+            
+            self.accept()
+            
+        except FileNotFoundError as e:
+            self.log_status(f"ERROR: {str(e)}")
+            QtGui.QMessageBox.critical(self, "File Error", str(e))
+            
+        except ValueError as e:
+            self.log_status(f"ERROR: {str(e)}")
+            QtGui.QMessageBox.critical(self, "Geometry Error", str(e))
+            
+        except Exception as e:
+            import traceback
+            self.log_status(f"ERROR: {str(e)}")
+            FreeCAD.Console.PrintError(f"Drawing generation failed: {str(e)}\n")
+            FreeCAD.Console.PrintError(traceback.format_exc())
+            QtGui.QMessageBox.critical(
+                self,
+                "Error",
+                f"Drawing generation failed:\n{str(e)}"
+            )
+
+
+# =============================================================================
+# FREECAD COMMAND CLASS
+# =============================================================================
+
+class GenerateDrawingCommand:
+    """FreeCAD command for generating TechDraw drawings."""
+    
+    def GetResources(self):
+        return {
+            'Pixmap': os.path.join(os.path.dirname(__file__), '..', 'Icons', 'GenerateDrawing.svg'),
+            'MenuText': 'Generate Drawing',
+            'ToolTip': 'Automatically generate a TechDraw drawing from a CAD model',
+            'Accel': 'Ctrl+Shift+D',
+        }
+    
+    def IsActive(self):
+        return True
+    
+    def Activated(self):
+        dialog = DrawingGeneratorDialog(Gui.getMainWindow())
+        dialog.exec_()
+
+
+# =============================================================================
+# MAIN EXECUTION
+# =============================================================================
+
+def main():
+    """Main function to run the drawing generator."""
+    dialog = DrawingGeneratorDialog(Gui.getMainWindow())
+    dialog.exec_()
+
+
+# Register the command if running as a module
+if hasattr(Gui, 'addCommand'):
+    Gui.addCommand('BNC_GenerateDrawing', GenerateDrawingCommand())
+
+# Execute if run directly as a macro
+if __name__ == '__main__':
+    main()

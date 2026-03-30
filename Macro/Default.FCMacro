@@ -1,0 +1,391 @@
+import FreeCAD as App
+import FreeCADGui as Gui
+from PySide import QtGui
+
+# ============================================================
+# Origin To Assembly (Fix to Origin) Constraint
+# Recompute Safe | DAG Safe | FreeCAD 1.0.2 Compatible
+# ============================================================
+
+# ------------------------------------------------------------
+# Constraint Object
+# ------------------------------------------------------------
+
+class OriginToAssemblyConstraint:
+
+    def __init__(self, obj):
+        obj.Proxy = self
+
+        obj.addProperty("App::PropertyLink",
+                        "Component",
+                        "Constraint",
+                        "Constrained Component")
+
+        obj.addProperty("App::PropertyBool",
+                        "Suppressed",
+                        "Constraint",
+                        "Suppress constraint")
+
+        obj.addProperty("App::PropertyInteger",
+                        "PositionDOF",
+                        "DOF",
+                        "Position DOF")
+
+        obj.addProperty("App::PropertyInteger",
+                        "RotationDOF",
+                        "DOF",
+                        "Rotation DOF")
+
+        obj.PositionDOF = 0
+        obj.RotationDOF = 0
+        obj.Suppressed = False
+
+    # IMPORTANT:
+    # Do NOT move anything during recompute
+    def execute(self, obj):
+        return
+
+    def onDelete(self, obj, subelements):
+        return True
+
+
+# ------------------------------------------------------------
+# View Provider
+# ------------------------------------------------------------
+
+class ViewProviderConstraint:
+
+    def __init__(self, vobj):
+        vobj.Proxy = self
+
+    def attach(self, vobj):
+        self.Object = vobj.Object
+
+    def getIcon(self):
+        return """
+            /* XPM */
+            static char * origin_xpm[] = {
+            "16 16 2 1",
+            " 	c None",
+            ".	c #FF0000",
+            "       ..       ",
+            "       ..       ",
+            "       ..       ",
+            "................",
+            "................",
+            "       ..       ",
+            "       ..       ",
+            "       ..       ",
+            "       ..       ",
+            "       ..       ",
+            "................",
+            "................",
+            "       ..       ",
+            "       ..       ",
+            "       ..       ",
+            "       ..       "};
+        """
+
+
+# ------------------------------------------------------------
+# Utilities
+# ------------------------------------------------------------
+
+def get_selected_component():
+    sel = Gui.Selection.getSelection()
+
+    if len(sel) != 1:
+        QtGui.QMessageBox.warning(
+            None,
+            "Selection Error",
+            "Select exactly ONE Part / Body / Link."
+        )
+        return None
+
+    obj = sel[0]
+
+    if not hasattr(obj, "Placement"):
+        QtGui.QMessageBox.warning(
+            None,
+            "Invalid Object",
+            "Selected object does not support Placement."
+        )
+        return None
+
+    return obj
+
+
+def find_parent_assembly(component):
+    """Find the innermost assembly that directly contains *component*.
+    Uses FreeCAD's built-in getParentGeoFeatureGroup() to walk up the
+    container hierarchy — this always returns the immediate parent,
+    never skipping to the root assembly."""
+
+    # Method 1: getParentGeoFeatureGroup — walks the real container tree
+    current = component
+    while current is not None:
+        try:
+            parent = current.getParentGeoFeatureGroup()
+        except Exception:
+            parent = None
+        if parent is None:
+            break
+        if hasattr(parent, "TypeId") and parent.TypeId == "Assembly::AssemblyObject":
+            return parent
+        current = parent
+
+    # Method 2: scan assemblies, but pick the INNERMOST one
+    doc = component.Document
+    if doc is None:
+        return None
+
+    candidates = []
+    for obj in doc.Objects:
+        if not (hasattr(obj, "TypeId") and obj.TypeId == "Assembly::AssemblyObject"):
+            continue
+        if not hasattr(obj, "Group"):
+            continue
+        if any(child.Name == component.Name for child in obj.Group):
+            candidates.append(obj)
+
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    # Multiple matches — pick the one that is itself inside another candidate
+    # (i.e. the sub-assembly, not the root)
+    candidate_names = {c.Name for c in candidates}
+    for c in candidates:
+        try:
+            p = c.getParentGeoFeatureGroup()
+            if p and p.Name in candidate_names:
+                return c   # c is nested inside another matching assembly → innermost
+        except Exception:
+            pass
+
+    # Final fallback: pick the LAST candidate (deepest in doc.Objects order)
+    return candidates[-1]
+
+
+def get_active_assembly(component=None):
+    """Find the assembly that owns *component*.
+
+    Priority order:
+      0) Parent assembly of the selected component (most reliable)
+      1) getInEdit — assembly ViewProvider in edit mode
+      2) ActiveView active-object registry
+      3) Walk all assemblies and check isEditing()
+      4) Fallback — first root assembly in document
+    """
+    doc = App.ActiveDocument
+    if not doc:
+        return None
+
+    # 0) Best: find the assembly that directly contains the component
+    if component is not None:
+        asm = find_parent_assembly(component)
+        if asm is not None:
+            return asm
+
+    assembly = None
+
+    # 1) getInEdit — works when the assembly ViewProvider is in edit mode
+    try:
+        edit_vp = Gui.ActiveDocument.getInEdit()
+        if edit_vp is not None:
+            try:
+                obj = edit_vp.Object
+            except AttributeError:
+                obj = edit_vp
+            if hasattr(obj, "TypeId") and obj.TypeId == "Assembly::AssemblyObject":
+                assembly = obj
+    except Exception:
+        pass
+
+    # 2) ActiveView active-object registry
+    if assembly is None:
+        try:
+            view = Gui.ActiveDocument.ActiveView
+            for key in ("Assembly", "assembly", "part"):
+                obj = view.getActiveObject(key)
+                if obj and hasattr(obj, "TypeId") and obj.TypeId == "Assembly::AssemblyObject":
+                    assembly = obj
+                    break
+        except Exception:
+            pass
+
+    # 3) Walk all assemblies and check isEditing()
+    if assembly is None:
+        for obj in doc.Objects:
+            if obj.TypeId == "Assembly::AssemblyObject":
+                try:
+                    if obj.ViewObject.isEditing():
+                        assembly = obj
+                        break
+                except Exception:
+                    continue
+
+    # 4) Fallback — first root assembly in document
+    if assembly is None:
+        for obj in doc.Objects:
+            if obj.TypeId == "Assembly::AssemblyObject":
+                assembly = obj
+                break
+
+    return assembly
+
+
+def get_or_create_joints_folder(assembly):
+    """Get or create the Joints group inside *assembly*."""
+    doc = App.ActiveDocument
+
+    # Look for an existing Joints group or JointGroup inside the assembly
+    if hasattr(assembly, "Group"):
+        for obj in assembly.Group:
+            if obj.TypeId == "Assembly::JointGroup":
+                return obj
+            if obj.Label == "Joints" and obj.TypeId == "App::DocumentObjectGroup":
+                return obj
+
+    # Create a new Joints group and place it inside the assembly
+    joints = doc.addObject("App::DocumentObjectGroup", "Joints")
+    assembly.addObject(joints)
+    return joints
+
+
+# ------------------------------------------------------------
+# Main Function
+# ------------------------------------------------------------
+
+def create_origin_to_assembly_constraint():
+
+    doc = App.ActiveDocument
+    if not doc:
+        return
+
+    component = get_selected_component()
+    if not component:
+        return
+
+    # --- DEBUG: show what we detected ---
+    print("=== Default Macro Debug ===")
+    print("  Selected component: Name='{}' Label='{}' TypeId='{}'".format(
+        component.Name, component.Label, getattr(component, 'TypeId', '?')))
+    try:
+        pgfg = component.getParentGeoFeatureGroup()
+        print("  getParentGeoFeatureGroup: {}".format(
+            "Name='{}' Label='{}' TypeId='{}'".format(pgfg.Name, pgfg.Label, pgfg.TypeId) if pgfg else "None"))
+    except Exception as e:
+        print("  getParentGeoFeatureGroup ERROR: {}".format(e))
+    print("  InList: [{}]".format(
+        ", ".join("'{}' ({})".format(p.Label, getattr(p, 'TypeId', '?')) for p in component.InList)))
+    # List all assemblies and their direct Group children
+    for obj in doc.Objects:
+        if hasattr(obj, "TypeId") and obj.TypeId == "Assembly::AssemblyObject":
+            children = []
+            if hasattr(obj, "Group"):
+                children = ["'{}' ({})".format(c.Label, c.Name) for c in obj.Group]
+            print("  Assembly '{}' ({}): Group=[{}]".format(
+                obj.Label, obj.Name, ", ".join(children)))
+    # --- END DEBUG ---
+
+    assembly = get_active_assembly(component)
+    if not assembly:
+        QtGui.QMessageBox.warning(
+            None,
+            "Assembly Error",
+            "No active Assembly found in the document."
+        )
+        return
+
+    print("  >> Chosen assembly: Name='{}' Label='{}'".format(assembly.Name, assembly.Label))
+    print("=== End Debug ===")
+
+    doc.openTransaction("OriginToAssembly Constraint")
+
+    # Snap ONCE to global origin
+    component.Placement = App.Placement()
+
+    joints_folder = get_or_create_joints_folder(assembly)
+
+    constraint = doc.addObject("App::FeaturePython", "OriginToAssembly")
+    OriginToAssemblyConstraint(constraint)
+    ViewProviderConstraint(constraint.ViewObject)
+
+    constraint.Component = component
+
+    joints_folder.addObject(constraint)
+
+    doc.recompute()
+    doc.commitTransaction()
+
+    App.Console.PrintMessage(
+        "Origin to Assembly constraint created inside '{}'\n".format(assembly.Label)
+    )
+
+
+# ------------------------------------------------------------
+# Auto Remove Constraint if Component Deleted
+# ------------------------------------------------------------
+
+class ConstraintObserver:
+
+    def slotDeletedObject(self, obj):
+        """Remove every OriginToAssembly constraint that references *obj*.
+
+        Searches ALL document objects (not just a named "Joints" group)
+        so it works regardless of whether the container is an
+        App::DocumentObjectGroup or an Assembly::JointGroup, and
+        regardless of the internal name FreeCAD assigned.
+        """
+        doc = App.ActiveDocument
+        if not doc:
+            return
+
+        # Get the deleted object's internal name while we still can
+        try:
+            obj_name = obj.Name
+        except Exception:
+            return
+
+        to_remove = []
+        for candidate in doc.Objects:
+            if not hasattr(candidate, "Component"):
+                continue
+            try:
+                comp = candidate.Component
+                if comp is not None and comp.Name == obj_name:
+                    to_remove.append(candidate.Name)
+            except Exception:
+                pass
+
+        for name in to_remove:
+            try:
+                doc.removeObject(name)
+                App.Console.PrintMessage(
+                    "Default: removed constraint '{}' "
+                    "(component '{}' was deleted)\n".format(name, obj_name)
+                )
+            except Exception as e:
+                App.Console.PrintWarning(
+                    "Default: could not remove constraint '{}': {}\n"
+                    .format(name, e)
+                )
+
+
+# Always re-register to pick up the latest class definition
+if hasattr(App, "OriginAssemblyObserver"):
+    try:
+        App.removeDocumentObserver(App.OriginAssemblyObserver)
+    except Exception:
+        pass
+App.OriginAssemblyObserver = ConstraintObserver()
+App.addDocumentObserver(App.OriginAssemblyObserver)
+
+
+# ------------------------------------------------------------
+# Execute
+# ------------------------------------------------------------
+
+create_origin_to_assembly_constraint()

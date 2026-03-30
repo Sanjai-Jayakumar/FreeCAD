@@ -1,0 +1,1376 @@
+# -*- coding: utf-8 -*-
+# =============================================================================
+# Apply Indian Standard Material — FreeCAD 1.0.2 Compatible
+# Categories: Sheet Metal | Piping | Casting | Alloys | Plastic | Rubber
+# =============================================================================
+# HOW TO USE:
+#   1. Select a Body in the model tree (or just open the file with one Body).
+#   2. Run this macro.
+#   3. Choose a tab, pick a material, click Apply Material.
+# =============================================================================
+
+import os
+import re
+import uuid
+
+import FreeCAD
+import FreeCADGui
+from PySide2 import QtCore, QtWidgets
+
+# ---------------------------------------------------------------------------
+# Base folder — FreeCAD user Material directory
+# ---------------------------------------------------------------------------
+BASE_DIR = os.path.join(
+    os.path.expanduser("~"), "AppData", "Roaming", "FreeCAD", "Material"
+)
+
+# ---------------------------------------------------------------------------
+# Shared model UUIDs (same as IndianStandardMaterials mod)
+# ---------------------------------------------------------------------------
+_U_FATHER   = "9cdda8b6-b606-4778-8f13-3934d8668e67"
+_U_STDMODEL = "1e2c0088-904a-4537-925f-64064c07d700"
+_U_DENSITY  = "454661e5-265b-4320-8e6f-fcf6223ac3af"
+_U_ELASTIC  = "f6f9e48c-b116-4e82-ad7f-3659a9219c50"
+_U_THERMAL  = "9959d007-a970-4ea7-bae4-3eb1b8b883c7"
+_U_STEEL    = "4b849c55-6b3a-4f75-a055-40c0d0324596"
+
+# ---------------------------------------------------------------------------
+# Category appearance colours — default values
+# User overrides are saved to SETTINGS_FILE (JSON)
+# ---------------------------------------------------------------------------
+SETTINGS_FILE = os.path.join(
+    os.path.expanduser("~"), "AppData", "Roaming", "FreeCAD",
+    "Material", "ISM_appearance.json"
+)
+
+_DEFAULT_CATEGORY_COLORS = {
+    "Sheet Metal": "#00b33c",
+    "Tube":        "#3333cc",
+    "Casting":     "#404040",
+    "Alloys":      "#47476b",
+    "Plastic":     "#004080",
+    "Rubber":      "#008040",
+}
+
+
+def _load_colors():
+    """Return the effective colour map (user overrides merged with defaults)."""
+    import json
+    colours = dict(_DEFAULT_CATEGORY_COLORS)
+    try:
+        if os.path.isfile(SETTINGS_FILE):
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as fh:
+                saved = json.load(fh)
+            for k, v in saved.items():
+                if k in colours and isinstance(v, str) and v.startswith("#"):
+                    colours[k] = v
+    except Exception:
+        pass
+    return colours
+
+
+def _save_colors(colour_map):
+    """Persist user colour overrides to JSON."""
+    import json
+    try:
+        folder = os.path.dirname(SETTINGS_FILE)
+        if not os.path.isdir(folder):
+            os.makedirs(folder)
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as fh:
+            json.dump(colour_map, fh, indent=2)
+    except Exception as e:
+        FreeCAD.Console.PrintWarning(
+            "[ApplyMaterial] Could not save colour settings: {}\n".format(e))
+
+
+def _hex_to_rgb(hex_str):
+    """Convert '#RRGGBB' to (r, g, b) float tuple 0-1."""
+    h = hex_str.lstrip("#")
+    if len(h) != 6:
+        return (0.5, 0.5, 0.5)
+    return tuple(int(h[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+
+
+# ---------------------------------------------------------------------------
+# Material catalogue — 6 categories
+# Tuple: (filename, name, description, kind, standard,
+#         density_kg_m3, youngs, poisson, uts, ys,
+#         specific_heat, thermal_cond, thermal_exp)
+# ---------------------------------------------------------------------------
+CATEGORIES = {
+
+    # ── 1. SHEET METAL ───────────────────────────────────────────────────────
+    "Sheet Metal": {
+        "folder": "Indian_SheetMetal_Materials",
+        "inherit_uuid": _U_STEEL, "inherit_name": "Steel",
+        "materials": [
+            ("IS513_D_CR1.FCMat",  "IS 513 D CR1 - Cold Rolled",       "Cold Rolled Steel Sheet Grade CR1 (Commercial Quality) as per IS 513:2018",           "Steel",    "IS 513:2018",   7850, "210000 MPa", "0.3",  "410 MPa",  "280 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS513_D_CR2.FCMat",  "IS 513 D CR2 - Cold Rolled",       "Cold Rolled Steel Sheet Grade CR2 (Drawing Quality) as per IS 513:2018",               "Steel",    "IS 513:2018",   7850, "210000 MPa", "0.3",  "370 MPa",  "220 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS513_D_CR3.FCMat",  "IS 513 D CR3 - Cold Rolled",       "Cold Rolled Steel Sheet Grade CR3 (Deep Drawing Quality) as per IS 513:2018",          "Steel",    "IS 513:2018",   7850, "210000 MPa", "0.3",  "350 MPa",  "210 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS513_D_CR4.FCMat",  "IS 513 D CR4 - Cold Rolled",       "Cold Rolled Steel Sheet Grade CR4 (Extra Deep Drawing) as per IS 513:2018",            "Steel",    "IS 513:2018",   7850, "210000 MPa", "0.3",  "330 MPa",  "190 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS1079_HR.FCMat",    "IS 1079 HR - Hot Rolled",          "Hot Rolled Steel Sheet and Strip Grade HR as per IS 1079:2009",                        "Steel",    "IS 1079:2009",  7850, "210000 MPa", "0.3",  "340 MPa",  "210 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS2062_E250.FCMat",  "IS 2062 E250 - Structural Steel",  "Hot Rolled Structural Steel Grade E250 as per IS 2062:2011",                           "Steel",    "IS 2062:2011",  7850, "210000 MPa", "0.3",  "410 MPa",  "250 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS2062_E350.FCMat",  "IS 2062 E350 - Structural Steel",  "Hot Rolled Structural Steel Grade E350 as per IS 2062:2011",                           "Steel",    "IS 2062:2011",  7850, "210000 MPa", "0.3",  "490 MPa",  "350 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS277_Z80.FCMat",    "IS 277 Z80 - Galvanized Steel",    "Galvanized Steel Sheet Coating Class Z80 as per IS 277:2018",                          "Steel",    "IS 277:2018",   7850, "210000 MPa", "0.3",  "340 MPa",  "220 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS277_Z120.FCMat",   "IS 277 Z120 - Galvanized Steel",   "Galvanized Steel Sheet Coating Class Z120 as per IS 277:2018",                         "Steel",    "IS 277:2018",   7850, "210000 MPa", "0.3",  "370 MPa",  "240 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS277_Z275.FCMat",   "IS 277 Z275 - Galvanized Steel",   "Galvanized Steel Sheet Coating Class Z275 as per IS 277:2018",                         "Steel",    "IS 277:2018",   7850, "210000 MPa", "0.3",  "390 MPa",  "280 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS6911_SS304.FCMat", "IS 6911 SS 304 - Austenitic SS",   "Austenitic Stainless Steel 304 Sheet as per IS 6911:2017",                             "Stainless","IS 6911:2017",  8000, "193000 MPa", "0.29", "515 MPa",  "205 MPa", "500 J/kg/K", "16.2 W/m/K",  "17.3e-6 m/m/K"),
+            ("IS6911_SS316.FCMat", "IS 6911 SS 316 - Austenitic SS",   "Austenitic Stainless Steel 316 Sheet as per IS 6911:2017",                             "Stainless","IS 6911:2017",  8000, "193000 MPa", "0.29", "500 MPa",  "200 MPa", "500 J/kg/K", "16.3 W/m/K",  "16.5e-6 m/m/K"),
+            ("IS6911_SS202.FCMat", "IS 6911 SS 202 - Austenitic SS",   "Austenitic Stainless Steel 202 Sheet as per IS 6911:2017",                             "Stainless","IS 6911:2017",  8000, "193000 MPa", "0.29", "515 MPa",  "260 MPa", "500 J/kg/K", "16.0 W/m/K",  "17.0e-6 m/m/K"),
+            ("IS6911_SS430.FCMat", "IS 6911 SS 430 - Ferritic SS",     "Ferritic Stainless Steel 430 Sheet as per IS 6911:2017",                               "Stainless","IS 6911:2017",  8000, "193000 MPa", "0.29", "450 MPa",  "275 MPa", "460 J/kg/K", "26.0 W/m/K",  "10.5e-6 m/m/K"),
+        ],
+    },
+
+    # ── 2. TUBE ──────────────────────────────────────────────────────────────
+    "Tube": {
+        "folder": "Indian_Tube_Materials",
+        "inherit_uuid": _U_STEEL, "inherit_name": "Steel",
+        "materials": [
+            ("IS1239_MS_Pipe.FCMat",      "IS 1239 Part1 - MS Tube",            "Mild Steel Tubes Light/Medium/Heavy as per IS 1239 Part 1:2004",               "Steel",    "IS 1239:2004",  7850, "210000 MPa", "0.29", "320 MPa",  "210 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS3589_Fe330_Pipe.FCMat",   "IS 3589 Fe 330 - ERW Tube",          "ERW Steel Tube Grade Fe330 as per IS 3589:2001",                               "Steel",    "IS 3589:2001",  7850, "210000 MPa", "0.29", "330 MPa",  "205 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS3589_Fe410_Pipe.FCMat",   "IS 3589 Fe 410 - ERW Tube",          "ERW Steel Tube Grade Fe410 as per IS 3589:2001",                               "Steel",    "IS 3589:2001",  7850, "210000 MPa", "0.29", "410 MPa",  "250 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS1161_YSt210_Pipe.FCMat",  "IS 1161 YSt 210 - Structural Tube",  "Steel Tubes Structural Grade YSt210 as per IS 1161:2014",                     "Steel",    "IS 1161:2014",  7850, "210000 MPa", "0.29", "330 MPa",  "210 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS1161_YSt240_Pipe.FCMat",  "IS 1161 YSt 240 - Structural Tube",  "Steel Tubes Structural Grade YSt240 as per IS 1161:2014",                     "Steel",    "IS 1161:2014",  7850, "210000 MPa", "0.29", "370 MPa",  "240 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS1161_YSt310_Pipe.FCMat",  "IS 1161 YSt 310 - Structural Tube",  "Steel Tubes Structural Grade YSt310 as per IS 1161:2014",                     "Steel",    "IS 1161:2014",  7850, "210000 MPa", "0.29", "450 MPa",  "310 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS6990_SS304_Pipe.FCMat",   "IS 6990 SS 304 - SS Tube",           "SS Seamless Tube Grade 304 as per IS 6990:1992",                              "Stainless","IS 6990:1992",  8000, "193000 MPa", "0.29", "515 MPa",  "205 MPa", "500 J/kg/K", "16.2 W/m/K",  "17.3e-6 m/m/K"),
+            ("IS6990_SS316_Pipe.FCMat",   "IS 6990 SS 316 - SS Tube",           "SS Seamless Tube Grade 316 as per IS 6990:1992",                              "Stainless","IS 6990:1992",  8000, "193000 MPa", "0.29", "500 MPa",  "200 MPa", "500 J/kg/K", "16.3 W/m/K",  "16.5e-6 m/m/K"),
+            ("IS1545_Copper_Pipe.FCMat",  "IS 1545 - Copper Tube",              "Copper Tube for Engineering and Plumbing as per IS 1545:1994",                "Copper",   "IS 1545:1994",  8940, "120000 MPa", "0.33", "250 MPa",  "200 MPa", "385 J/kg/K", "390.0 W/m/K", "17.0e-6 m/m/K"),
+            ("IS737_AA6061_Pipe.FCMat",   "IS 737 AA6061-T6 - Aluminium Tube",  "Aluminium Alloy 6061-T6 Drawn Tube as per IS 737:1986",                       "Aluminium","IS 737:1986",   2700, "69000 MPa",  "0.33", "310 MPa",  "276 MPa", "896 J/kg/K", "167.0 W/m/K", "23.6e-6 m/m/K"),
+            ("IS3074_CDS1.FCMat",         "IS 3074 CDS-1 - Cold Drawn Seamless","Cold Drawn Seamless Steel Tube Grade CDS-1 (low-C) as per IS 3074:2005",     "Steel",    "IS 3074:2005",  7850, "210000 MPa", "0.29", "430 MPa",  "370 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS3074_CDS2.FCMat",         "IS 3074 CDS-2 - Cold Drawn Seamless","Cold Drawn Seamless Steel Tube Grade CDS-2 (low-C, tighter C range) as per IS 3074:2005", "Steel", "IS 3074:2005", 7850, "210000 MPa", "0.29", "430 MPa",  "370 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS3074_CDS3.FCMat",         "IS 3074 CDS-3 - Cold Drawn Seamless","Cold Drawn Seamless Steel Tube Grade CDS-3 (low-C, higher Mn) as per IS 3074:2005", "Steel", "IS 3074:2005", 7850, "210000 MPa", "0.29", "430 MPa",  "370 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS3074_CDS4.FCMat",         "IS 3074 CDS-4 - Cold Drawn Seamless","Cold Drawn Seamless Steel Tube Grade CDS-4 (medium-C) as per IS 3074:2005",  "Steel",    "IS 3074:2005",  7850, "210000 MPa", "0.29", "570 MPa",  "460 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS3074_CDS5.FCMat",         "IS 3074 CDS-5 - Cold Drawn Seamless","Cold Drawn Seamless Steel Tube Grade CDS-5 (high-C) as per IS 3074:2005",    "Steel",    "IS 3074:2005",  7850, "210000 MPa", "0.29", "690 MPa",  "590 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS3074_CDS6.FCMat",         "IS 3074 CDS-6 - Cold Drawn Seamless","Cold Drawn Seamless Steel Tube Grade CDS-6 (Mn-steel) as per IS 3074:2005",  "Steel",    "IS 3074:2005",  7850, "210000 MPa", "0.29", "630 MPa",  "510 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS3074_CDS7.FCMat",         "IS 3074 CDS-7 - Cold Drawn Seamless","Cold Drawn Seamless Steel Tube Grade CDS-7 (low-C Cr-Mo) as per IS 3074:2005","Steel",   "IS 3074:2005",  7850, "210000 MPa", "0.29", "710 MPa",  "590 MPa", "470 J/kg/K", "42.0 W/m/K",  "11.5e-6 m/m/K"),
+            ("IS3074_CDS8.FCMat",         "IS 3074 CDS-8 - Cold Drawn Seamless","Cold Drawn Seamless Steel Tube Grade CDS-8 (med-C Cr-Mo) as per IS 3074:2005","Steel",   "IS 3074:2005",  7850, "210000 MPa", "0.29", "710 MPa",  "590 MPa", "470 J/kg/K", "42.0 W/m/K",  "11.5e-6 m/m/K"),
+            ("IS3074_CDS9.FCMat",         "IS 3074 CDS-9 - Cold Drawn Seamless","Cold Drawn Seamless Steel Tube Grade CDS-9 (Ni-Cr, oil Q+T) as per IS 3074:2005","Steel", "IS 3074:2005",  7850, "210000 MPa", "0.29", "640 MPa",  "440 MPa", "470 J/kg/K", "44.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS3074_ERW1.FCMat",         "IS 3074 ERW-1 - Electric Resistance Welded","ERW Steel Tube Grade ERW-1 (very low-C) as per IS 3074:2005",             "Steel",    "IS 3074:2005",  7850, "210000 MPa", "0.29", "310 MPa",  "160 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS3074_ERW2.FCMat",         "IS 3074 ERW-2 - Electric Resistance Welded","ERW Steel Tube Grade ERW-2 (low-C) as per IS 3074:2005",                 "Steel",    "IS 3074:2005",  7850, "210000 MPa", "0.29", "380 MPa",  "240 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS3074_ERW3.FCMat",         "IS 3074 ERW-3 - Electric Resistance Welded","ERW Steel Tube Grade ERW-3 (medium-C) as per IS 3074:2005",              "Steel",    "IS 3074:2005",  7850, "210000 MPa", "0.29", "430 MPa",  "270 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS3074_CEW1.FCMat",         "IS 3074 CEW-1 - Cold Drawn ERW",     "Cold Drawn ERW Steel Tube Grade CEW-1 (low-C) as per IS 3074:2005",          "Steel",    "IS 3074:2005",  7850, "210000 MPa", "0.29", "430 MPa",  "370 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS3074_CEW2.FCMat",         "IS 3074 CEW-2 - Cold Drawn ERW",     "Cold Drawn ERW Steel Tube Grade CEW-2 (medium-C) as per IS 3074:2005",       "Steel",    "IS 3074:2005",  7850, "210000 MPa", "0.29", "550 MPa",  "450 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS3074_CEW3.FCMat",         "IS 3074 CEW-3 - Cold Drawn ERW",     "Cold Drawn ERW Steel Tube Grade CEW-3 (medium-C, higher Mn) as per IS 3074:2005","Steel","IS 3074:2005",  7850, "210000 MPa", "0.29", "590 MPa",  "430 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+        ],
+    },
+
+    # ── 3. CASTING ───────────────────────────────────────────────────────────
+    "Casting": {
+        "folder": "Indian_Casting_Materials",
+        "inherit_uuid": _U_STEEL, "inherit_name": "Steel",
+        "materials": [
+            ("IS210_FG150.FCMat",       "IS 210 FG 150 - Grey Cast Iron",    "Grey Cast Iron Grade FG150 as per IS 210:1993",                                "CastIron", "IS 210:1993",   7200, "100000 MPa", "0.26", "150 MPa",  "98 MPa",  "460 J/kg/K", "52.0 W/m/K",  "11.0e-6 m/m/K"),
+            ("IS210_FG200.FCMat",       "IS 210 FG 200 - Grey Cast Iron",    "Grey Cast Iron Grade FG200 as per IS 210:1993",                                "CastIron", "IS 210:1993",   7200, "110000 MPa", "0.26", "200 MPa",  "130 MPa", "460 J/kg/K", "50.0 W/m/K",  "11.0e-6 m/m/K"),
+            ("IS210_FG260.FCMat",       "IS 210 FG 260 - Grey Cast Iron",    "Grey Cast Iron Grade FG260 as per IS 210:1993",                                "CastIron", "IS 210:1993",   7200, "120000 MPa", "0.26", "260 MPa",  "165 MPa", "460 J/kg/K", "48.0 W/m/K",  "11.0e-6 m/m/K"),
+            ("IS1865_SG400.FCMat",      "IS 1865 SG 400 - Ductile Iron",     "Ductile Iron Grade SG400/12 as per IS 1865:1991",                              "CastIron", "IS 1865:1991",  7100, "169000 MPa", "0.27", "400 MPa",  "250 MPa", "460 J/kg/K", "36.0 W/m/K",  "11.5e-6 m/m/K"),
+            ("IS1865_SG500.FCMat",      "IS 1865 SG 500 - Ductile Iron",     "Ductile Iron Grade SG500/7 as per IS 1865:1991",                               "CastIron", "IS 1865:1991",  7100, "169000 MPa", "0.27", "500 MPa",  "320 MPa", "460 J/kg/K", "36.0 W/m/K",  "11.5e-6 m/m/K"),
+            ("IS1030_280-520.FCMat",    "IS 1030 280-520 - Steel Casting",   "Carbon Steel Casting Grade 280-520 as per IS 1030:1998",                       "Steel",    "IS 1030:1998",  7850, "200000 MPa", "0.3",  "520 MPa",  "280 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS1030_340-570.FCMat",    "IS 1030 340-570 - Steel Casting",   "Carbon Steel Casting Grade 340-570 as per IS 1030:1998",                       "Steel",    "IS 1030:1998",  7850, "200000 MPa", "0.3",  "570 MPa",  "340 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS617_LM4_Gravity.FCMat", "IS 617 LM4 A319 - Al Gravity",      "Aluminium Alloy LM4 A319 Gravity Die Casting as per IS 617:1994",              "Aluminium","IS 617:1994",   2790, "72000 MPa",  "0.33", "230 MPa",  "130 MPa", "880 J/kg/K", "155.0 W/m/K", "21.0e-6 m/m/K"),
+            ("IS617_LM6_Gravity.FCMat", "IS 617 LM6 A413 - Al Gravity",      "Aluminium Alloy LM6 A413 Gravity Die Casting as per IS 617:1994",              "Aluminium","IS 617:1994",   2650, "71000 MPa",  "0.33", "170 MPa",  "80 MPa",  "963 J/kg/K", "96.0 W/m/K",  "21.0e-6 m/m/K"),
+            ("IS617_LM25_Gravity.FCMat","IS 617 LM25 A356 - Al Gravity",     "Aluminium Alloy LM25 A356 Gravity Die Casting as per IS 617:1994",             "Aluminium","IS 617:1994",   2685, "72000 MPa",  "0.33", "230 MPa",  "165 MPa", "963 J/kg/K", "151.0 W/m/K", "21.0e-6 m/m/K"),
+            ("IS617_ADC12_PDC.FCMat",   "IS 617 ADC12 A383 - Al PDC",        "Aluminium Alloy ADC12 A383 Pressure Die Casting as per IS 617:1994",           "Aluminium","IS 617:1994",   2720, "71000 MPa",  "0.33", "310 MPa",  "150 MPa", "963 J/kg/K", "96.0 W/m/K",  "21.0e-6 m/m/K"),
+            ("IS617_LM2_PDC.FCMat",     "IS 617 LM2 A380 - Al PDC",          "Aluminium Alloy LM2 A380 Pressure Die Casting as per IS 617:1994",             "Aluminium","IS 617:1994",   2710, "71000 MPa",  "0.33", "300 MPa",  "140 MPa", "963 J/kg/K", "96.0 W/m/K",  "21.0e-6 m/m/K"),
+        ],
+    },
+
+    # ── 4. ALLOYS ────────────────────────────────────────────────────────────
+    "Alloys": {
+        "folder": "Indian_Alloy_Materials",
+        "inherit_uuid": _U_STEEL, "inherit_name": "Steel",
+        "materials": [
+            ("IS733_AA2014T6.FCMat",   "IS 733 AA2014-T6 - Al Forging",      "Aluminium Alloy 2014-T6 Forging as per IS 733:1983",                            "Aluminium","IS 733:1983",   2800, "72000 MPa",  "0.33", "480 MPa",  "415 MPa", "880 J/kg/K", "154.0 W/m/K", "23.0e-6 m/m/K"),
+            ("IS733_AA2024T4.FCMat",   "IS 733 AA2024-T4 - Al Forging",      "Aluminium Alloy 2024-T4 Forging as per IS 733:1983",                            "Aluminium","IS 733:1983",   2780, "73000 MPa",  "0.33", "470 MPa",  "325 MPa", "875 J/kg/K", "121.0 W/m/K", "23.2e-6 m/m/K"),
+            ("IS733_AA6061T6.FCMat",   "IS 733 AA6061-T6 - Al Forging",      "Aluminium Alloy 6061-T6 Forging as per IS 733:1983",                            "Aluminium","IS 733:1983",   2700, "69000 MPa",  "0.33", "310 MPa",  "276 MPa", "896 J/kg/K", "167.0 W/m/K", "23.6e-6 m/m/K"),
+            ("IS733_AA7075T6.FCMat",   "IS 733 AA7075-T6 - Al Forging",      "Aluminium Alloy 7075-T6 Forging as per IS 733:1983",                            "Aluminium","IS 733:1983",   2810, "71700 MPa",  "0.33", "572 MPa",  "503 MPa", "960 J/kg/K", "130.0 W/m/K", "23.6e-6 m/m/K"),
+            ("IS1570_C15.FCMat",       "IS 1570 C15 - Carbon Steel",         "Plain Carbon Steel Grade C15 as per IS 1570 Part 1:1978",                      "Steel",    "IS 1570:1978",  7850, "210000 MPa", "0.3",  "440 MPa",  "310 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS1570_C45.FCMat",       "IS 1570 C45 - Carbon Steel",         "Plain Carbon Steel Grade C45 as per IS 1570 Part 1:1978",                      "Steel",    "IS 1570:1978",  7850, "210000 MPa", "0.3",  "700 MPa",  "490 MPa", "470 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS4367_40Cr4.FCMat",     "IS 4367 40Cr4 - Alloy Steel EN19",   "Alloy Steel 40Cr4 (EN19) Forging Quality as per IS 4367:1991",                 "Steel",    "IS 4367:1991",  7850, "210000 MPa", "0.3",  "900 MPa",  "750 MPa", "460 J/kg/K", "42.0 W/m/K",  "11.5e-6 m/m/K"),
+            ("IS4367_40NiCrMo.FCMat",  "IS 4367 40NiCrMo - Alloy Steel EN24","Alloy Steel 40NiCrMo (EN24) Forging Quality as per IS 4367:1991",              "Steel",    "IS 4367:1991",  7850, "210000 MPa", "0.3",  "1000 MPa", "850 MPa", "460 J/kg/K", "40.0 W/m/K",  "11.5e-6 m/m/K"),
+            ("IS6912_CopperC101.FCMat","IS 6912 Copper C101 - ETP",          "Electrolytic Tough Pitch Copper C101 as per IS 6912:1985",                     "Copper",   "IS 6912:1985",  8940, "120000 MPa", "0.33", "250 MPa",  "200 MPa", "385 J/kg/K", "390.0 W/m/K", "17.0e-6 m/m/K"),
+            ("IS6912_BrassCZ121.FCMat","IS 6912 Brass CZ121 - Free Cutting", "Free Cutting Brass CZ121 as per IS 6912:1985",                                 "Copper",   "IS 6912:1985",  8500, "100000 MPa", "0.35", "400 MPa",  "310 MPa", "380 J/kg/K", "120.0 W/m/K", "20.9e-6 m/m/K"),
+            ("IS15995_Ti_Gr2.FCMat",   "IS 15995 Titanium Grade 2",          "Commercially Pure Titanium Grade 2 as per IS 15995:2012",                      "Titanium", "IS 15995:2012", 4510, "103000 MPa", "0.37", "345 MPa",  "275 MPa", "520 J/kg/K", "16.4 W/m/K",  "8.6e-6 m/m/K"),
+            ("IS1570_EN5K_C30.FCMat",  "IS 1570 C30 - EN5K Medium Carbon",   "Medium Carbon Steel EN5K (IS 40C8) for mild-strength engineering components as per IS 1570-1:1978",    "Steel",    "IS 1570:1978",  7850, "210000 MPa", "0.3",  "540 MPa",  "320 MPa", "460 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS1570_EN8_C40.FCMat",   "IS 1570 C40 - EN8 Medium Carbon",    "Medium Carbon Steel EN8/8D (IS 40C8) for bolts, shafts, connecting rods as per IS 1570-2:1979",        "Steel",    "IS 1570:1979",  7850, "210000 MPa", "0.3",  "620 MPa",  "415 MPa", "460 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS1570_EN9_C70.FCMat",   "IS 1570 C70 - EN9 High Carbon",      "High Carbon Steel EN9 for gears, sprockets, wear-resistant parts as per IS 1570-1:1978",               "Steel",    "IS 1570:1978",  7850, "210000 MPa", "0.3",  "850 MPa",  "550 MPa", "460 J/kg/K", "48.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS1570_EN15_15Mn6.FCMat","IS 1570 15Mn6 - EN15 Carbon-Mn",     "Carbon-Manganese Steel EN15 for medium-strength engineering parts as per IS 1570-2:1979",              "Steel",    "IS 1570:1979",  7850, "210000 MPa", "0.3",  "620 MPa",  "415 MPa", "460 J/kg/K", "50.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS1570_EN30B_36Ni14.FCMat","IS 1570 36Ni14Cr3 - EN30B Ni-Cr",  "Nickel-Chromium Alloy Steel EN30B for aerospace and high-toughness parts as per IS 1570-4:1988",      "Steel",    "IS 1570:1988",  7850, "210000 MPa", "0.3",  "1080 MPa", "930 MPa", "460 J/kg/K", "36.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS1570_EN31_103Cr1.FCMat","IS 1570 103Cr1 - EN31 Bearing Steel","High Carbon Chromium Bearing Steel EN31 for ball/roller bearings, dies as per IS 1570-3:1979",        "Steel",    "IS 1570:1979",  7850, "210000 MPa", "0.3",  "950 MPa",  "750 MPa", "460 J/kg/K", "46.0 W/m/K",  "11.5e-6 m/m/K"),
+            ("IS1570_EN36_17NiCr.FCMat","IS 1570 17NiCr1Mo15 - EN36 Ni-Cr",  "Ni-Cr Case Hardening Steel EN36 for high-stress gears as per IS 1570-4:1988",                         "Steel",    "IS 1570:1988",  7850, "210000 MPa", "0.3",  "1000 MPa", "850 MPa", "460 J/kg/K", "38.0 W/m/K",  "11.5e-6 m/m/K"),
+            ("IS1570_EN42_C75.FCMat",  "IS 1570 C75 - EN42 High Carbon",     "High Carbon Steel EN42 for spring-type tools and cutlery as per IS 1570-1:1978",                       "Steel",    "IS 1570:1978",  7850, "210000 MPa", "0.3",  "750 MPa",  "580 MPa", "460 J/kg/K", "47.0 W/m/K",  "12.0e-6 m/m/K"),
+            ("IS1570_EN45_55Si2Mn.FCMat","IS 1570 55Si2Mn90 - EN45 Si-Mn",   "Silicon-Manganese Spring Steel EN45 for leaf and volute springs as per IS 1570-5:1985",                "Steel",    "IS 1570:1985",  7850, "210000 MPa", "0.3",  "1080 MPa", "930 MPa", "460 J/kg/K", "44.0 W/m/K",  "11.5e-6 m/m/K"),
+            ("IS1570_EN47_50CrV.FCMat", "IS 1570 50Cr4V2 - EN47 Cr-V",       "Chromium-Vanadium Spring Steel EN47 for high-duty springs and torsion bars as per IS 1570-5:1985",     "Steel",    "IS 1570:1985",  7850, "210000 MPa", "0.3",  "1150 MPa", "1000 MPa","460 J/kg/K", "42.0 W/m/K",  "11.5e-6 m/m/K"),
+            ("IS1570_EN353_16NiCrMo.FCMat","IS 1570 16Ni3Cr2 - EN353 Ni-Cr-Mo","Ni-Cr-Mo Case Hardening Steel EN353 for case-hardened gears and shafts as per IS 1570-4:1988",       "Steel",    "IS 1570:1988",  7850, "210000 MPa", "0.3",  "930 MPa",  "740 MPa", "460 J/kg/K", "38.0 W/m/K",  "11.5e-6 m/m/K"),
+        ],
+    },
+
+    # ── 5. PLASTIC ───────────────────────────────────────────────────────────
+    "Plastic": {
+        "folder": "Indian_Plastic_Materials",
+        "inherit_uuid": _U_STEEL, "inherit_name": "Steel",
+        "materials": [
+            ("ABS_General.FCMat",      "ABS General - Injection Moulding",    "Acrylonitrile Butadiene Styrene General Purpose IM Grade",                     "Plastic","IS/ISO",  1050, "2200 MPa",  "0.35", "55 MPa",  "45 MPa",  "1400 J/kg/K", "0.17 W/m/K", "70.0e-6 m/m/K"),
+            ("ABS_HeatResist.FCMat",   "ABS Heat Resistant - IM",             "ABS Heat Resistant Grade Injection Moulding",                                  "Plastic","IS/ISO",  1060, "2400 MPa",  "0.35", "60 MPa",  "50 MPa",  "1400 J/kg/K", "0.17 W/m/K", "60.0e-6 m/m/K"),
+            ("HIPS.FCMat",             "HIPS - High Impact Polystyrene",      "High Impact Polystyrene Injection Moulding Grade",                             "Plastic","IS/ISO",  1050, "2000 MPa",  "0.35", "40 MPa",  "30 MPa",  "1300 J/kg/K", "0.17 W/m/K", "60.0e-6 m/m/K"),
+            ("PA6_Nylon6.FCMat",       "PA6 Nylon 6 - Injection Moulding",    "Polyamide 6 (Nylon 6) IM Grade",                                              "Plastic","IS/ISO",  1130, "3000 MPa",  "0.38", "80 MPa",  "70 MPa",  "1700 J/kg/K", "0.25 W/m/K", "80.0e-6 m/m/K"),
+            ("PA66_Nylon66.FCMat",     "PA66 Nylon 66 - Injection Moulding",  "Polyamide 66 (Nylon 66) IM Grade",                                            "Plastic","IS/ISO",  1140, "3200 MPa",  "0.38", "85 MPa",  "75 MPa",  "1700 J/kg/K", "0.26 W/m/K", "80.0e-6 m/m/K"),
+            ("PA6_GF30.FCMat",         "PA6 GF30 - Glass Filled Nylon",       "Polyamide 6 with 30 percent Glass Fibre IM Grade",                            "Plastic","IS/ISO",  1360, "9000 MPa",  "0.35", "180 MPa", "155 MPa", "1400 J/kg/K", "0.35 W/m/K", "30.0e-6 m/m/K"),
+            ("PC_Polycarbonate.FCMat", "PC Polycarbonate - IM",               "Polycarbonate Injection Moulding Grade",                                      "Plastic","IS/ISO",  1200, "2300 MPa",  "0.37", "65 MPa",  "60 MPa",  "1200 J/kg/K", "0.20 W/m/K", "65.0e-6 m/m/K"),
+            ("PC_ABS_Blend.FCMat",     "PC-ABS Blend - IM",                   "Polycarbonate ABS Blend Injection Moulding Grade",                            "Plastic","IS/ISO",  1130, "2200 MPa",  "0.36", "55 MPa",  "50 MPa",  "1300 J/kg/K", "0.19 W/m/K", "65.0e-6 m/m/K"),
+            ("POM_Acetal.FCMat",       "POM Acetal - Injection Moulding",     "Polyoxymethylene (Acetal) IM Grade",                                          "Plastic","IS/ISO",  1410, "3100 MPa",  "0.35", "70 MPa",  "65 MPa",  "1460 J/kg/K", "0.23 W/m/K", "110.0e-6 m/m/K"),
+            ("PP_Homopolymer.FCMat",   "PP Homopolymer - IM",                 "Polypropylene Homopolymer Injection Moulding Grade",                          "Plastic","IS/ISO",   905, "1400 MPa",  "0.43", "35 MPa",  "30 MPa",  "1900 J/kg/K", "0.22 W/m/K", "150.0e-6 m/m/K"),
+            ("PP_GF30.FCMat",          "PP GF30 - Glass Filled PP",           "Polypropylene with 30 percent Glass Fibre IM Grade",                          "Plastic","IS/ISO",  1130, "6500 MPa",  "0.35", "100 MPa", "80 MPa",  "1200 J/kg/K", "0.30 W/m/K", "50.0e-6 m/m/K"),
+            ("PVC_Rigid.FCMat",        "PVC Rigid - Injection Moulding",      "Rigid Polyvinyl Chloride IM Grade",                                           "Plastic","IS/ISO",  1380, "3000 MPa",  "0.38", "55 MPa",  "50 MPa",  "900 J/kg/K",  "0.16 W/m/K", "70.0e-6 m/m/K"),
+            ("PMMA_Acrylic.FCMat",     "PMMA Acrylic - IM",                   "Polymethyl Methacrylate (Acrylic) IM Grade",                                  "Plastic","IS/ISO",  1190, "3200 MPa",  "0.35", "75 MPa",  "65 MPa",  "1450 J/kg/K", "0.19 W/m/K", "70.0e-6 m/m/K"),
+            ("HDPE_Blow.FCMat",        "HDPE - Blow Moulding",                "High Density Polyethylene Blow Moulding Grade",                               "Plastic","IS/ISO",   960, "1100 MPa",  "0.45", "30 MPa",  "26 MPa",  "2100 J/kg/K", "0.48 W/m/K", "120.0e-6 m/m/K"),
+            ("PET_Blow.FCMat",         "PET - Blow Moulding",                 "Polyethylene Terephthalate Blow Moulding Grade",                              "Plastic","IS/ISO",  1380, "3100 MPa",  "0.40", "60 MPa",  "52 MPa",  "1000 J/kg/K", "0.24 W/m/K", "60.0e-6 m/m/K"),
+            ("TPU_IM.FCMat",           "TPU - Thermoplastic Polyurethane",    "Thermoplastic Polyurethane IM Grade",                                         "Plastic","IS/ISO",  1200, "30 MPa",    "0.48", "50 MPa",  "20 MPa",  "1800 J/kg/K", "0.20 W/m/K", "150.0e-6 m/m/K"),
+        ],
+    },
+
+    # ── 6. RUBBER ────────────────────────────────────────────────────────────
+    "Rubber": {
+        "folder": "Indian_Rubber_Materials",
+        "inherit_uuid": _U_STEEL, "inherit_name": "Steel",
+        "materials": [
+            ("NR_Natural.FCMat",    "NR - Natural Rubber",               "Natural Rubber General Engineering Grade as per IS 3400",                       "Rubber","IS 3400",  920,  "0.01 MPa",  "0.499","25 MPa", "10 MPa", "1900 J/kg/K", "0.14 W/m/K", "220.0e-6 m/m/K"),
+            ("SBR_Rubber.FCMat",    "SBR - Styrene Butadiene Rubber",    "Styrene Butadiene Rubber General Purpose Grade as per IS 3400",                 "Rubber","IS 3400",  1100, "0.004 MPa", "0.499","18 MPa", "8 MPa",  "1900 J/kg/K", "0.25 W/m/K", "210.0e-6 m/m/K"),
+            ("NBR_Nitrile.FCMat",   "NBR - Nitrile Rubber",              "Nitrile Butadiene Rubber Oil Resistant Grade as per IS 3400",                   "Rubber","IS 3400",  1000, "0.007 MPa", "0.499","20 MPa", "9 MPa",  "2000 J/kg/K", "0.25 W/m/K", "200.0e-6 m/m/K"),
+            ("EPDM_Rubber.FCMat",   "EPDM - Ethylene Propylene Rubber",  "EPDM Rubber Weather and Ozone Resistant as per IS 3400",                        "Rubber","IS 3400",   870, "0.005 MPa", "0.499","15 MPa", "7 MPa",  "2100 J/kg/K", "0.25 W/m/K", "180.0e-6 m/m/K"),
+            ("CR_Neoprene.FCMat",   "CR - Neoprene (Chloroprene)",       "Polychloroprene Neoprene Flame and Oil Resistant as per IS 3400",               "Rubber","IS 3400",  1230, "0.007 MPa", "0.499","20 MPa", "9 MPa",  "2000 J/kg/K", "0.19 W/m/K", "200.0e-6 m/m/K"),
+            ("VMQ_Silicone.FCMat",  "VMQ - Silicone Rubber",             "Silicone Rubber High Temp Grade -60 to 200C as per IS 3400",                    "Rubber","IS 3400",  1200, "0.006 MPa", "0.499","8 MPa",  "4 MPa",  "1300 J/kg/K", "0.20 W/m/K", "250.0e-6 m/m/K"),
+            ("FKM_Viton.FCMat",     "FKM - Viton (Fluoroelastomer)",     "Fluoroelastomer Viton High Chemical Resistance as per IS 3400",                 "Rubber","IS 3400",  1800, "0.010 MPa", "0.499","16 MPa", "7 MPa",  "1050 J/kg/K", "0.25 W/m/K", "160.0e-6 m/m/K"),
+            ("IIR_Butyl.FCMat",     "IIR - Butyl Rubber",                "Isobutylene Isoprene Butyl Rubber Low Gas Permeability as per IS 3400",         "Rubber","IS 3400",   920, "0.002 MPa", "0.499","17 MPa", "7 MPa",  "1960 J/kg/K", "0.24 W/m/K", "190.0e-6 m/m/K"),
+            ("HNBR_Rubber.FCMat",   "HNBR - Hydrogenated Nitrile",       "Hydrogenated Nitrile Rubber High Temp Oil Resistant as per IS 3400",            "Rubber","IS 3400",  1000, "0.010 MPa", "0.499","22 MPa", "10 MPa", "2000 J/kg/K", "0.25 W/m/K", "190.0e-6 m/m/K"),
+        ],
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Build .FCMat YAML content for one material
+# ---------------------------------------------------------------------------
+def _build_fcmat(cat_folder, mat_tuple):
+    fname, name, desc, kind, std, density, youngs, poisson, uts, ys, sh, tc, te = mat_tuple
+    cat = next(v for v in CATEGORIES.values() if v["folder"] == cat_folder)
+    return (
+        "---\n"
+        "# Indian Standard Material - Generated by Apply Material macro\n"
+        "General:\n"
+        "  UUID: \"{uid}\"\n"
+        "  Author: \"IndianStandardMaterials\"\n"
+        "  License: \"CC-BY-4.0\"\n"
+        "  Name: \"{name}\"\n"
+        "  Description: \"{desc}\"\n"
+        "Inherits:\n"
+        "  {inh}:\n"
+        "    UUID: \"{iuuid}\"\n"
+        "Models:\n"
+        "  Father:\n"
+        "    UUID: '{fu}'\n"
+        "    Father: \"Metal\"\n"
+        "  MaterialStandard:\n"
+        "    UUID: '{mu}'\n"
+        "    KindOfMaterial: \"{kind}\"\n"
+        "    StandardCode: \"{std}\"\n"
+        "  Density:\n"
+        "    UUID: '{du}'\n"
+        "    Density: \"{density} kg/m^3\"\n"
+        "  IsotropicLinearElastic:\n"
+        "    UUID: '{eu}'\n"
+        "    YoungsModulus: \"{youngs}\"\n"
+        "    PoissonRatio: \"{poisson}\"\n"
+        "    UltimateTensileStrength: \"{uts}\"\n"
+        "    YieldStrength: \"{ys}\"\n"
+        "  Thermal:\n"
+        "    UUID: '{tu}'\n"
+        "    SpecificHeat: \"{sh}\"\n"
+        "    ThermalConductivity: \"{tc}\"\n"
+        "    ThermalExpansionCoefficient: \"{te}\"\n"
+    ).format(
+        uid=str(uuid.uuid4()), name=name, desc=desc,
+        inh=cat["inherit_name"], iuuid=cat["inherit_uuid"],
+        fu=_U_FATHER, mu=_U_STDMODEL, du=_U_DENSITY, eu=_U_ELASTIC, tu=_U_THERMAL,
+        kind=kind, std=std, density=density,
+        youngs=youngs, poisson=poisson, uts=uts, ys=ys, sh=sh, tc=tc, te=te,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Category UI defaults (kind list + property hints) used by Add-Material dialog
+# ---------------------------------------------------------------------------
+_CAT_DEFAULTS = {
+    "Sheet Metal": {
+        "kinds": ["Steel", "Stainless", "Aluminium", "Copper"],
+        "E": "210000 MPa", "nu": "0.3",
+        "sh": "470 J/kg/K", "tc": "50.0 W/m/K", "te": "12.0e-6 m/m/K",
+    },
+    "Tube": {
+        "kinds": ["Steel", "Stainless", "Aluminium", "Copper"],
+        "E": "210000 MPa", "nu": "0.29",
+        "sh": "470 J/kg/K", "tc": "50.0 W/m/K", "te": "12.0e-6 m/m/K",
+    },
+    "Casting": {
+        "kinds": ["Steel", "CastIron", "Aluminium", "Copper"],
+        "E": "200000 MPa", "nu": "0.27",
+        "sh": "460 J/kg/K", "tc": "50.0 W/m/K", "te": "12.0e-6 m/m/K",
+    },
+    "Alloys": {
+        "kinds": ["Steel", "Aluminium", "Copper", "Titanium"],
+        "E": "210000 MPa", "nu": "0.3",
+        "sh": "470 J/kg/K", "tc": "50.0 W/m/K", "te": "12.0e-6 m/m/K",
+    },
+    "Plastic": {
+        "kinds": ["Plastic", "Composite"],
+        "E": "3000 MPa", "nu": "0.38",
+        "sh": "1400 J/kg/K", "tc": "0.20 W/m/K", "te": "80.0e-6 m/m/K",
+    },
+    "Rubber": {
+        "kinds": ["Rubber", "Elastomer"],
+        "E": "0.01 MPa", "nu": "0.499",
+        "sh": "1900 J/kg/K", "tc": "0.20 W/m/K", "te": "200.0e-6 m/m/K",
+    },
+}
+
+
+def _hline():
+    """Return a horizontal separator widget."""
+    line = QtWidgets.QFrame()
+    line.setFrameShape(QtWidgets.QFrame.HLine)
+    line.setFrameShadow(QtWidgets.QFrame.Sunken)
+    return line
+
+
+def _add_unit(text, unit):
+    """Append unit string if the text is a bare number."""
+    text = text.strip()
+    try:
+        float(text)
+        return text + " " + unit
+    except ValueError:
+        return text
+
+
+# ---------------------------------------------------------------------------
+# Add-New-Material dialog
+# ---------------------------------------------------------------------------
+class AddMaterialDialog(QtWidgets.QDialog):
+    """Form to create and save a custom .FCMat file into any category folder."""
+
+    def __init__(self, initial_cat=None, parent=None):
+        super(AddMaterialDialog, self).__init__(parent)
+        self.setWindowTitle("Add New Material")
+        self.setMinimumWidth(520)
+        self.saved_path = None   # set after successful save
+        self.saved_cat  = None
+        self._initial_cat  = initial_cat or list(CATEGORIES.keys())[0]
+        self._build()
+
+    def _build(self):
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setSpacing(6)
+
+        # ── Category ─────────────────────────────────────────────────────────
+        cat_row = QtWidgets.QFormLayout()
+        self.cat_combo = QtWidgets.QComboBox()
+        self.cat_combo.addItems(list(CATEGORIES.keys()))
+        if self._initial_cat in CATEGORIES:
+            self.cat_combo.setCurrentText(self._initial_cat)
+        self.cat_combo.currentTextChanged.connect(self._on_cat_changed)
+        cat_row.addRow("Category: *", self.cat_combo)
+        layout.addLayout(cat_row)
+        layout.addWidget(_hline())
+
+        # ── Required fields ───────────────────────────────────────────────────
+        req_grp = QtWidgets.QGroupBox("Required Fields")
+        req_layout = QtWidgets.QFormLayout(req_grp)
+        req_layout.setRowWrapPolicy(QtWidgets.QFormLayout.WrapLongRows)
+
+        self.f_name = QtWidgets.QLineEdit()
+        self.f_name.setPlaceholderText("e.g. IS 3074 CDS-1 Cold Drawn Seamless")
+        req_layout.addRow("Material Name: *", self.f_name)
+
+        self.f_std = QtWidgets.QLineEdit()
+        self.f_std.setPlaceholderText("e.g. IS 3074:2005")
+        req_layout.addRow("Standard Code: *", self.f_std)
+
+        self.f_kind = QtWidgets.QComboBox()
+        self.f_kind.setEditable(True)
+        req_layout.addRow("Type / Kind: *", self.f_kind)
+
+        self.f_den = QtWidgets.QLineEdit()
+        self.f_den.setPlaceholderText("kg/m\u00b3 — number only, e.g. 7850")
+        req_layout.addRow("Density (kg/m\u00b3): *", self.f_den)
+
+        self.f_E = QtWidgets.QLineEdit()
+        self.f_E.setPlaceholderText("MPa — number only, e.g. 210000")
+        req_layout.addRow("Young's Modulus (MPa): *", self.f_E)
+
+        self.f_nu = QtWidgets.QLineEdit()
+        self.f_nu.setPlaceholderText("unitless — e.g. 0.3")
+        req_layout.addRow("Poisson Ratio: *", self.f_nu)
+
+        self.f_ys = QtWidgets.QLineEdit()
+        self.f_ys.setPlaceholderText("MPa — number only, e.g. 250")
+        req_layout.addRow("Yield Strength (MPa): *", self.f_ys)
+
+        self.f_uts = QtWidgets.QLineEdit()
+        self.f_uts.setPlaceholderText("MPa — number only, e.g. 410")
+        req_layout.addRow("Tensile Strength (MPa): *", self.f_uts)
+
+        layout.addWidget(req_grp)
+
+        # ── Optional fields ───────────────────────────────────────────────────
+        opt_grp = QtWidgets.QGroupBox("Optional Fields (defaults auto-filled)")
+        opt_layout = QtWidgets.QFormLayout(opt_grp)
+
+        self.f_desc = QtWidgets.QLineEdit()
+        self.f_desc.setPlaceholderText("Brief description — auto-generated if left blank")
+        opt_layout.addRow("Description:", self.f_desc)
+
+        self.f_sh = QtWidgets.QLineEdit()
+        opt_layout.addRow("Specific Heat (J/kg/K):", self.f_sh)
+
+        self.f_tc = QtWidgets.QLineEdit()
+        opt_layout.addRow("Thermal Conductivity (W/m/K):", self.f_tc)
+
+        self.f_te = QtWidgets.QLineEdit()
+        opt_layout.addRow("Thermal Expansion (m/m/K):", self.f_te)
+
+        layout.addWidget(opt_grp)
+
+        # ── Buttons ───────────────────────────────────────────────────────────
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel)
+        btns.button(QtWidgets.QDialogButtonBox.Save).setText("Save Material")
+        btns.accepted.connect(self._on_save)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+        # Initialise kind + thermal defaults for initial category
+        self._on_cat_changed(self._initial_cat)
+
+        # Map required widgets for validation
+        self._required = {
+            "Material Name":     self.f_name,
+            "Standard Code":     self.f_std,
+            "Type / Kind":       self.f_kind,
+            "Density":           self.f_den,
+            "Young's Modulus":   self.f_E,
+            "Poisson Ratio":     self.f_nu,
+            "Yield Strength":    self.f_ys,
+            "Tensile Strength":  self.f_uts,
+        }
+        self._numeric = {
+            "Density":          self.f_den,
+            "Young's Modulus":  self.f_E,
+            "Poisson Ratio":    self.f_nu,
+            "Yield Strength":   self.f_ys,
+            "Tensile Strength": self.f_uts,
+        }
+
+    # ── Slots ────────────────────────────────────────────────────────────────
+
+    def _on_cat_changed(self, cat_name):
+        d = _CAT_DEFAULTS.get(cat_name, {})
+        self.f_kind.clear()
+        self.f_kind.addItems(d.get("kinds", []))
+        # Fill optional defaults only when field is empty
+        for w, key in [(self.f_E,"E"),(self.f_nu,"nu"),
+                       (self.f_sh,"sh"),(self.f_tc,"tc"),(self.f_te,"te")]:
+            if w.text().strip() == "":
+                w.setText(d.get(key, ""))
+
+    def _widget_val(self, w):
+        if isinstance(w, QtWidgets.QComboBox):
+            return w.currentText().strip()
+        return w.text().strip()
+
+    def _validate(self):
+        """Mark empty/invalid fields red. Returns (ok, missing_list)."""
+        missing = []
+        for label, w in self._required.items():
+            val = self._widget_val(w)
+            if not val:
+                if isinstance(w, QtWidgets.QLineEdit):
+                    w.setStyleSheet("border: 1.5px solid red; background: #fff0f0;")
+                missing.append(label)
+            else:
+                if isinstance(w, QtWidgets.QLineEdit):
+                    w.setStyleSheet("")
+        # Numeric check for number-only fields
+        for label, w in self._numeric.items():
+            val = w.text().strip()
+            if val:
+                try:
+                    float(val)
+                    w.setStyleSheet("")
+                except ValueError:
+                    w.setStyleSheet("border: 1.5px solid red; background: #fff0f0;")
+                    if label not in missing:
+                        missing.append(label + " (must be a number)")
+        return (len(missing) == 0, missing)
+
+    def _on_save(self):
+        ok, missing = self._validate()
+        if not ok:
+            QtWidgets.QMessageBox.warning(
+                self, "Required Fields Missing",
+                "Please fill in the following required fields:\n\n  "
+                + "\n  ".join("\u2022 " + m for m in missing))
+            return
+
+        cat_name = self.cat_combo.currentText()
+        cat      = CATEGORIES[cat_name]
+        d        = _CAT_DEFAULTS.get(cat_name, {})
+
+        name    = self.f_name.text().strip()
+        std     = self.f_std.text().strip()
+        kind    = self._widget_val(self.f_kind)
+        desc    = self.f_desc.text().strip() or "{} as per {}".format(name, std)
+        try:
+            density_num = float(self.f_den.text().strip())
+        except ValueError:
+            density_num = 0.0
+
+        youngs  = _add_unit(self.f_E.text().strip(),   "MPa")
+        poisson = self.f_nu.text().strip()
+        uts     = _add_unit(self.f_uts.text().strip(),  "MPa")
+        ys      = _add_unit(self.f_ys.text().strip(),   "MPa")
+        sh      = self.f_sh.text().strip()  or d.get("sh", "470 J/kg/K")
+        tc      = self.f_tc.text().strip()  or d.get("tc", "50.0 W/m/K")
+        te      = self.f_te.text().strip()  or d.get("te", "12.0e-6 m/m/K")
+
+        # Auto-generate filename from material name
+        fname_raw = re.sub(r'[^\w\-.]', '_', name)
+        fname_raw = re.sub(r'_+', '_', fname_raw).strip('_') + ".FCMat"
+
+        folder_path = os.path.join(BASE_DIR, cat["folder"])
+        if not os.path.isdir(folder_path):
+            os.makedirs(folder_path)
+        fpath = os.path.join(folder_path, fname_raw)
+
+        if os.path.isfile(fpath):
+            ans = QtWidgets.QMessageBox.question(
+                self, "File Exists",
+                "\"{}\" already exists.\nOverwrite?".format(fname_raw),
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+            if ans != QtWidgets.QMessageBox.Yes:
+                return
+
+        mat_tuple = (fname_raw, name, desc, kind, std,
+                     density_num, youngs, poisson, uts, ys, sh, tc, te)
+        content = _build_fcmat(cat["folder"], mat_tuple)
+        try:
+            with open(fpath, "w", encoding="utf-8") as fh:
+                fh.write(content)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Save Error",
+                                           "Could not write file:\n" + str(e))
+            return
+
+        self.saved_path = fpath
+        self.saved_cat  = cat_name
+        QtWidgets.QMessageBox.information(
+            self, "Material Saved",
+            "\"{}\" saved successfully.\n\nIt will now appear in the {} tab."
+            .format(name, cat_name))
+        self.accept()
+
+
+# ---------------------------------------------------------------------------
+# Default filenames AND names per category — used by Remove to protect built-ins
+# ---------------------------------------------------------------------------
+_DEFAULT_FNAMES = {
+    cat_name: {t[0] for t in cat["materials"]}
+    for cat_name, cat in CATEGORIES.items()
+}
+_DEFAULT_NAMES = {
+    cat_name: {t[1] for t in cat["materials"]}   # display name
+    for cat_name, cat in CATEGORIES.items()
+}
+
+
+# ---------------------------------------------------------------------------
+# Auto-generate missing .FCMat files on startup
+# ---------------------------------------------------------------------------
+def ensure_material_files():
+    """Create missing .FCMat files and remove stale ones not in the catalogue."""
+    # Collect all valid filenames per folder to detect + remove stale files
+    valid_files_per_folder = {}
+    for cat in CATEGORIES.values():
+        folder_path = os.path.join(BASE_DIR, cat["folder"])
+        valid_files_per_folder[folder_path] = {t[0] for t in cat["materials"]}
+
+    for cat in CATEGORIES.values():
+        folder_path = os.path.join(BASE_DIR, cat["folder"])
+        if not os.path.isdir(folder_path):
+            os.makedirs(folder_path)
+
+        valid_names = valid_files_per_folder[folder_path]
+
+        # Remove stale .FCMat files that are not in the current catalogue
+        for existing in os.listdir(folder_path):
+            if existing.lower().endswith(".fcmat") and existing not in valid_names:
+                try:
+                    os.remove(os.path.join(folder_path, existing))
+                except Exception:
+                    pass
+
+        # Create any catalogue file that is still missing
+        for mat_tuple in cat["materials"]:
+            fpath = os.path.join(folder_path, mat_tuple[0])
+            if not os.path.isfile(fpath):
+                try:
+                    with open(fpath, "w", encoding="utf-8") as fh:
+                        fh.write(_build_fcmat(cat["folder"], mat_tuple))
+                except Exception as e:
+                    FreeCAD.Console.PrintWarning(
+                        "[ApplyMaterial] Could not write {}: {}\n".format(mat_tuple[0], e))
+
+
+# ---------------------------------------------------------------------------
+# Load .FCMat files from a folder into a list of dicts
+# ---------------------------------------------------------------------------
+def _load_folder(folder_path):
+    mats = []
+    if not os.path.isdir(folder_path):
+        return mats
+    for fname in sorted(os.listdir(folder_path)):
+        if not fname.lower().endswith(".fcmat"):
+            continue
+        fpath = os.path.join(folder_path, fname)
+        props = {}
+        try:
+            with open(fpath, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    m = re.match(r'^\s+([\w]+)\s*:\s*["\']?([^"\'#\n]+)["\']?\s*$', line)
+                    if m:
+                        props[m.group(1).strip()] = m.group(2).strip()
+        except Exception:
+            continue
+        density_val = 0.0
+        dm = re.match(r"([\d.eE+\-]+)", props.get("Density", ""))
+        if dm:
+            density_val = float(dm.group(1))
+        mats.append({
+            "filename":    fname,
+            "filepath":    fpath,
+            "name":        props.get("Name", fname.replace(".FCMat", "")),
+            "description": props.get("Description", ""),
+            "standard":    props.get("StandardCode", ""),
+            "kind":        props.get("KindOfMaterial", ""),
+            "density":     density_val,
+            "youngs":      props.get("YoungsModulus", ""),
+            "poisson":     props.get("PoissonRatio", ""),
+            "uts":         props.get("UltimateTensileStrength", ""),
+            "ys":          props.get("YieldStrength", ""),
+        })
+    return mats
+
+
+# ---------------------------------------------------------------------------
+# Apply material dict + visible string properties to a FreeCAD object
+# ---------------------------------------------------------------------------
+def apply_material_to_object(obj, mat, category=None):
+    mat_dict = {
+        "Name":                    mat["name"],
+        "CardName":                mat["name"],
+        "AuthorAndLicense":        "IndianStandardMaterials CC-BY-4.0",
+        "Source":                  mat["filepath"],
+        "KindOfMaterial":          mat["kind"],
+        "StandardCode":            mat["standard"],
+        "Density":                 "{:.4g} kg/m^3".format(mat["density"]),
+        "YoungsModulus":           mat["youngs"],
+        "PoissonRatio":            mat["poisson"],
+        "UltimateTensileStrength": mat["uts"],
+        "YieldStrength":           mat["ys"],
+    }
+    # PropertyMap — used by MeasureMass
+    if not hasattr(obj, "Material"):
+        try:
+            obj.addProperty("App::PropertyMap", "Material", "Material",
+                            "Material properties (for mass calculation)")
+        except Exception as e:
+            FreeCAD.Console.PrintError("[ApplyMaterial] addProperty failed: {}\n".format(e))
+            return False
+    try:
+        obj.Material = mat_dict
+    except Exception as e:
+        FreeCAD.Console.PrintError("[ApplyMaterial] Assignment failed: {}\n".format(e))
+        return False
+
+    # Visible PropertyString fields — shown in Data tab under "Material" group
+    for pname, tip, val in [
+        ("Mat_Name",     "Material name",             mat["name"]),
+        ("Mat_Standard", "Indian Standard code",      mat["standard"]),
+        ("Mat_Type",     "Kind of material",          mat["kind"]),
+        ("Mat_Density",  "Density",                   "{:.4g} kg/m\u00b3".format(mat["density"])),
+        ("Mat_Youngs",   "Young's Modulus",           mat["youngs"]),
+        ("Mat_Poisson",  "Poisson Ratio",             mat["poisson"]),
+        ("Mat_YieldStr", "Yield Strength",            mat["ys"]),
+        ("Mat_UTS",      "Ultimate Tensile Strength", mat["uts"]),
+    ]:
+        if not hasattr(obj, pname):
+            try:
+                obj.addProperty("App::PropertyString", pname, "Material", tip)
+            except Exception:
+                pass
+        try:
+            setattr(obj, pname, val)
+        except Exception:
+            pass
+
+    # Appearance — category-based colour via ViewObject
+    try:
+        colours  = _load_colors()
+        hex_col  = colours.get(category, "#808080") if category else "#808080"
+        r, g, b  = _hex_to_rgb(hex_col)
+        vobj = obj.ViewObject          # works for Body, Part, Feature, etc.
+        # Primary setter — works in FreeCAD 1.0
+        vobj.ShapeColor = (r, g, b)
+        # Also set via ShapeAppearance / ShapeMaterial if available
+        try:
+            app = vobj.ShapeAppearance
+            if app:
+                mat = app[0]
+                mat.DiffuseColor  = (r, g, b, 1.0)
+                mat.SpecularColor = (min(r + 0.25, 1.0),
+                                     min(g + 0.25, 1.0),
+                                     min(b + 0.25, 1.0), 1.0)
+                mat.Shininess     = 0.6
+                vobj.ShapeAppearance = app
+        except Exception:
+            pass
+    except Exception as e:
+        FreeCAD.Console.PrintWarning(
+            "[ApplyMaterial] Colour not applied: {}\n".format(e))
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Appearance settings dialog — lets user customise per-category colours
+# ---------------------------------------------------------------------------
+class AppearanceSettingsDialog(QtWidgets.QDialog):
+    """Colour picker for each material category."""
+
+    def __init__(self, parent=None):
+        super(AppearanceSettingsDialog, self).__init__(parent)
+        self.setWindowTitle("Appearance Settings \u2014 Category Colours")
+        self.setMinimumWidth(420)
+        self._colours = _load_colors()
+        self._btns = {}
+        self._build()
+
+    def _build(self):
+        layout = QtWidgets.QVBoxLayout(self)
+
+        info = QtWidgets.QLabel(
+            "Choose the 3-D body colour applied automatically when you select a material."
+            "<br>Click a colour swatch to change it.")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+        layout.addWidget(_hline())
+
+        grid = QtWidgets.QGridLayout()
+        grid.setColumnStretch(1, 1)
+        for row, (cat, hex_val) in enumerate(_DEFAULT_CATEGORY_COLORS.items()):
+            lbl = QtWidgets.QLabel("<b>{}</b>".format(cat))
+            grid.addWidget(lbl, row, 0)
+
+            btn = QtWidgets.QPushButton()
+            btn.setFixedHeight(28)
+            btn.setToolTip("Click to change colour for {}".format(cat))
+            self._btns[cat] = btn
+            self._refresh_btn(cat)
+            btn.clicked.connect(lambda checked, c=cat: self._pick_color(c))
+            grid.addWidget(btn, row, 1)
+
+            reset_btn = QtWidgets.QPushButton("Reset")
+            reset_btn.setFixedWidth(54)
+            reset_btn.setToolTip("Reset to default: {}".format(_DEFAULT_CATEGORY_COLORS[cat]))
+            reset_btn.clicked.connect(lambda checked, c=cat: self._reset_color(c))
+            grid.addWidget(reset_btn, row, 2)
+
+        layout.addLayout(grid)
+        layout.addWidget(_hline())
+
+        note = QtWidgets.QLabel(
+            "<small>Settings are saved to <i>ISM_appearance.json</i> and "
+            "applied on next material assignment.</small>")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel)
+        btns.button(QtWidgets.QDialogButtonBox.Save).setText("Save Colours")
+        btns.accepted.connect(self._on_save)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _refresh_btn(self, cat):
+        hex_val = self._colours.get(cat, _DEFAULT_CATEGORY_COLORS.get(cat, "#808080"))
+        r, g, b = _hex_to_rgb(hex_val)
+        luminance = 0.299 * r + 0.587 * g + 0.114 * b
+        text_col = "#000000" if luminance > 0.5 else "#ffffff"
+        self._btns[cat].setText(hex_val.upper())
+        self._btns[cat].setStyleSheet(
+            "QPushButton {{ background-color: {bg}; color: {fg}; "
+            "border: 1px solid #888; border-radius: 4px; font-family: monospace; }}"
+            "QPushButton:hover {{ border: 2px solid #333; }}"
+            .format(bg=hex_val, fg=text_col))
+
+    def _pick_color(self, cat):
+        from PySide2.QtWidgets import QColorDialog
+        from PySide2.QtGui import QColor
+        current = self._colours.get(cat, "#808080")
+        col = QColorDialog.getColor(
+            QColor(current), self,
+            "Choose colour for {}".format(cat))
+        if col.isValid():
+            self._colours[cat] = col.name().lower()
+            self._refresh_btn(cat)
+
+    def _reset_color(self, cat):
+        self._colours[cat] = _DEFAULT_CATEGORY_COLORS[cat]
+        self._refresh_btn(cat)
+
+    def _on_save(self):
+        _save_colors(self._colours)
+        self.accept()
+
+
+# ---------------------------------------------------------------------------
+# Read current material from object
+# ---------------------------------------------------------------------------
+def get_current_material(obj):
+    mat = getattr(obj, "Material", None)
+    if mat and isinstance(mat, dict) and mat.get("Name"):
+        return mat
+    name = getattr(obj, "Mat_Name", None)
+    if name:
+        return {
+            "Name":                    name,
+            "StandardCode":            getattr(obj, "Mat_Standard", "\u2014"),
+            "KindOfMaterial":          getattr(obj, "Mat_Type",     "\u2014"),
+            "Density":                 getattr(obj, "Mat_Density",  "\u2014"),
+            "YoungsModulus":           getattr(obj, "Mat_Youngs",   "\u2014"),
+            "PoissonRatio":            getattr(obj, "Mat_Poisson",  "\u2014"),
+            "YieldStrength":           getattr(obj, "Mat_YieldStr", "\u2014"),
+            "UltimateTensileStrength": getattr(obj, "Mat_UTS",      "\u2014"),
+        }
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Info dialog — show currently applied material
+# ---------------------------------------------------------------------------
+def show_material_info(obj, mat_dict):
+    name    = mat_dict.get("Name", "Unknown")
+    std     = mat_dict.get("StandardCode",           "\u2014")
+    kind    = mat_dict.get("KindOfMaterial",          "\u2014")
+    density = mat_dict.get("Density",                 "\u2014")
+    youngs  = mat_dict.get("YoungsModulus",           "\u2014")
+    poisson = mat_dict.get("PoissonRatio",            "\u2014")
+    ys      = mat_dict.get("YieldStrength",           "\u2014")
+    uts     = mat_dict.get("UltimateTensileStrength", "\u2014")
+
+    mass_line = ""
+    try:
+        vol_mm3 = obj.Shape.Volume
+        dm = re.match(r"([\d.eE+\-]+)", density.replace(",", "").strip())
+        if dm:
+            mass_kg = float(dm.group(1)) * vol_mm3 * 1e-9
+            mass_line = "\nVolume  : {:.2f} mm\u00b3\nMass    : {:.4f} kg  ({:.1f} g)".format(
+                vol_mm3, mass_kg, mass_kg * 1000)
+    except Exception:
+        pass
+
+    text = (
+        "Object  : {obj}\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+        "Material: {name}\nStandard: {std}\nType    : {kind}\n"
+        "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"
+        "Density         : {density}\nYoung's Modulus : {youngs}\n"
+        "Poisson Ratio   : {poisson}\nYield Strength  : {ys}\n"
+        "Tensile Strength: {uts}{mass}"
+    ).format(obj=obj.Label, name=name, std=std, kind=kind,
+             density=density, youngs=youngs, poisson=poisson,
+             ys=ys, uts=uts, mass=mass_line)
+
+    mb = QtWidgets.QMessageBox()
+    mb.setWindowTitle("Applied Material \u2014 {}".format(obj.Label))
+    mb.setIcon(QtWidgets.QMessageBox.Information)
+    mb.setText("<b>{}</b> is assigned to <b>{}</b>.".format(name, obj.Label))
+    mb.setDetailedText(text)
+    chg = mb.addButton("Change Material\u2026", QtWidgets.QMessageBox.ActionRole)
+    mb.addButton(QtWidgets.QMessageBox.Close)
+    mb.exec_()
+    return mb.clickedButton() == chg
+
+
+# ---------------------------------------------------------------------------
+# Per-tab widget: search + tree + preview
+# ---------------------------------------------------------------------------
+class MaterialTabWidget(QtWidgets.QWidget):
+
+    def __init__(self, mats, dialog_ref, cat_name, parent=None):
+        super(MaterialTabWidget, self).__init__(parent)
+        self.all_mats   = mats
+        self.dialog_ref = dialog_ref
+        self.cat_name   = cat_name
+        self.selected_mat = None
+        self._build()
+
+    def _build(self):
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        # Search bar + Add button
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("Search:"))
+        self.search = QtWidgets.QLineEdit()
+        self.search.setPlaceholderText("Type to filter\u2026")
+        self.search.textChanged.connect(self._filter)
+        row.addWidget(self.search)
+        add_btn = QtWidgets.QPushButton("+")
+        add_btn.setToolTip("Create and save a new custom material to this category")
+        add_btn.setFixedWidth(32)
+        add_btn.setStyleSheet(
+            "QPushButton { color: white; background-color: #2e7d32; font-weight: bold;"
+            " border-radius: 4px; font-size: 14px; padding: 2px; }"
+            "QPushButton:hover { background-color: #43a047; }"
+            "QPushButton:pressed { background-color: #1b5e20; }")
+        add_btn.clicked.connect(self._on_add)
+        row.addWidget(add_btn)
+        rem_btn = QtWidgets.QPushButton("\u2212")
+        rem_btn.setToolTip("Delete the selected user-added material (built-in materials cannot be removed)")
+        rem_btn.setFixedWidth(32)
+        rem_btn.setStyleSheet(
+            "QPushButton { color: white; background-color: #e65100; font-weight: bold;"
+            " border-radius: 4px; font-size: 14px; padding: 2px; }"
+            "QPushButton:hover { background-color: #ff6d00; }"
+            "QPushButton:pressed { background-color: #bf360c; }")
+        rem_btn.clicked.connect(self._on_remove)
+        row.addWidget(rem_btn)
+        layout.addLayout(row)
+
+        # Tree
+        self.tree = QtWidgets.QTreeWidget()
+        self.tree.setHeaderLabels(["Material", "Standard", "Density (kg/m\u00b3)"])
+        self.tree.setColumnWidth(0, 245)
+        self.tree.setColumnWidth(1, 110)
+        self.tree.setAlternatingRowColors(True)
+        self.tree.itemSelectionChanged.connect(self._on_select)
+        self.tree.itemDoubleClicked.connect(self._on_dblclick)
+        layout.addWidget(self.tree)
+
+        # Properties preview
+        grp = QtWidgets.QGroupBox("Properties")
+        gl  = QtWidgets.QFormLayout(grp)
+        gl.setRowWrapPolicy(QtWidgets.QFormLayout.WrapLongRows)
+        self.lbl = {}
+        for key, label in [("name","Name"),("std","Standard"),("kind","Type"),
+                           ("den","Density"),("E","Young's Mod."),("nu","Poisson"),
+                           ("ys","Yield Str."),("uts","Tensile Str."),("desc","Description")]:
+            w = QtWidgets.QLabel("\u2014")
+            w.setWordWrap(True)
+            gl.addRow(label + ":", w)
+            self.lbl[key] = w
+        layout.addWidget(grp)
+
+        self._populate(self.all_mats)
+
+    def _populate(self, mats):
+        self.tree.clear()
+        cats = {}
+        for m in mats:
+            cat = m["kind"] if m["kind"] else "Other"
+            if cat not in cats:
+                p = QtWidgets.QTreeWidgetItem(self.tree, [cat])
+                p.setExpanded(True)
+                f = p.font(0); f.setBold(True); p.setFont(0, f)
+                cats[cat] = p
+            c = QtWidgets.QTreeWidgetItem(cats[cat])
+            c.setText(0, m["name"])
+            c.setText(1, m["standard"])
+            c.setText(2, "{:.0f}".format(m["density"]) if m["density"] else "\u2014")
+            c.setData(0, QtCore.Qt.UserRole, m)
+
+    def _filter(self, text):
+        t = text.lower().strip()
+        filtered = [m for m in self.all_mats
+                    if not t or t in m["name"].lower()
+                    or t in m["standard"].lower()
+                    or t in m["kind"].lower()]
+        self._populate(filtered)
+
+    def _on_select(self):
+        items = self.tree.selectedItems()
+        if not items:
+            return
+        m = items[0].data(0, QtCore.Qt.UserRole)
+        if m is None:
+            return
+        self.selected_mat = m
+        self.lbl["name"].setText(m["name"])
+        self.lbl["std"].setText(m["standard"])
+        self.lbl["kind"].setText(m["kind"])
+        self.lbl["den"].setText("{:.4g} kg/m\u00b3".format(m["density"]) if m["density"] else "\u2014")
+        self.lbl["E"].setText(m["youngs"])
+        self.lbl["nu"].setText(m["poisson"])
+        self.lbl["ys"].setText(m["ys"])
+        self.lbl["uts"].setText(m["uts"])
+        self.lbl["desc"].setText(m["description"])
+
+    def _on_dblclick(self, item, _col):
+        if item.data(0, QtCore.Qt.UserRole) is not None:
+            self.dialog_ref.accept()
+
+    def _on_add(self):
+        """Open AddMaterialDialog pre-selected to this tab's category."""
+        dlg = AddMaterialDialog(initial_cat=self.cat_name, parent=self)
+        if dlg.exec_() == QtWidgets.QDialog.Accepted and dlg.saved_path:
+            if dlg.saved_cat == self.cat_name:
+                self.refresh_mats()
+            else:
+                QtWidgets.QMessageBox.information(
+                    self, "Tab Updated",
+                    "Material saved to the \"{}\" tab.\n"
+                    "Switch to that tab to see it.".format(dlg.saved_cat))
+                if hasattr(self.dialog_ref, '_tab_widgets'):
+                    target_tw = self.dialog_ref._tab_widgets.get(dlg.saved_cat)
+                    if target_tw:
+                        target_tw.refresh_mats()
+
+    def _on_remove(self):
+        """Delete the selected user-added .FCMat file. Built-in materials are protected."""
+        items = self.tree.selectedItems()
+        if not items:
+            QtWidgets.QMessageBox.information(
+                self, "No Selection", "Select a material in the list first.")
+            return
+        m = items[0].data(0, QtCore.Qt.UserRole)
+        if m is None:   # category header row selected
+            QtWidgets.QMessageBox.information(
+                self, "No Selection", "Select a material row, not a category header.")
+            return
+
+        # Protection: block if filename OR display name matches any built-in
+        default_fnames = _DEFAULT_FNAMES.get(self.cat_name, set())
+        default_names  = _DEFAULT_NAMES.get(self.cat_name, set())
+        if m["filename"] in default_fnames or m["name"] in default_names:
+            QtWidgets.QMessageBox.warning(
+                self, "Cannot Remove Built-in Material",
+                "\"{}\" is a built-in material and cannot be removed.\n\n"
+                "Only materials you added manually can be deleted."
+                .format(m["name"]))
+            return
+
+        ans = QtWidgets.QMessageBox.question(
+            self, "Confirm Remove",
+            "Delete \"{}\"?\n\nThis will permanently delete the file:\n{}"
+            .format(m["name"], m["filepath"]),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+        if ans != QtWidgets.QMessageBox.Yes:
+            return
+
+        try:
+            os.remove(m["filepath"])
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self, "Delete Failed", "Could not delete file:\n" + str(e))
+            return
+
+        self.selected_mat = None
+        for key in self.lbl:
+            self.lbl[key].setText("\u2014")
+        self.refresh_mats()
+
+    def refresh_mats(self):
+        """Reload .FCMat files from disk and repopulate the tree."""
+        folder_path = os.path.join(BASE_DIR, CATEGORIES[self.cat_name]["folder"])
+        fresh = _load_folder(folder_path)
+        self.all_mats = fresh
+        t = self.search.text().strip().lower()
+        if t:
+            fresh = [m for m in fresh
+                     if t in m["name"].lower()
+                     or t in m["standard"].lower()
+                     or t in m["kind"].lower()]
+        self._populate(fresh)
+
+
+# ---------------------------------------------------------------------------
+# Main tabbed dialog
+# ---------------------------------------------------------------------------
+class MaterialDialog(QtWidgets.QDialog):
+
+    def __init__(self, parent=None):
+        super(MaterialDialog, self).__init__(parent)
+        self.setWindowTitle("Apply Indian Standard Material")
+        self.setMinimumWidth(640)
+        self.setMinimumHeight(600)
+        self._build()
+
+    def _build(self):
+        layout = QtWidgets.QVBoxLayout(self)
+
+        self.tabs = QtWidgets.QTabWidget()
+        self._tab_widgets = {}
+
+        for cat_name, cat in CATEGORIES.items():
+            mats = _load_folder(os.path.join(BASE_DIR, cat["folder"]))
+            tw   = MaterialTabWidget(mats, self, cat_name)
+            self.tabs.addTab(tw, cat_name)
+            self._tab_widgets[cat_name] = tw
+
+        layout.addWidget(self.tabs)
+
+        # Bottom button row: Appearance settings on left, Apply/Cancel on right
+        bottom_row = QtWidgets.QHBoxLayout()
+        appear_btn = QtWidgets.QPushButton("\u2699  Colours\u2026")
+        appear_btn.setToolTip("Customise the 3-D colour applied per material category")
+        appear_btn.setFixedWidth(110)
+        appear_btn.setStyleSheet(
+            "QPushButton { border: 1px solid #888; border-radius: 4px; padding: 4px 8px; }"
+            "QPushButton:hover { background-color: #e8e8e8; }")
+        appear_btn.clicked.connect(self._on_appearance)
+        bottom_row.addWidget(appear_btn)
+        bottom_row.addStretch()
+
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        btns.button(QtWidgets.QDialogButtonBox.Ok).setText("Apply Material")
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        bottom_row.addWidget(btns)
+        layout.addLayout(bottom_row)
+
+    def _on_appearance(self):
+        dlg = AppearanceSettingsDialog(parent=self)
+        dlg.exec_()
+
+    @property
+    def selected_mat(self):
+        tw = self.tabs.currentWidget()
+        return getattr(tw, "selected_mat", None)
+
+    @property
+    def selected_cat(self):
+        tw = self.tabs.currentWidget()
+        return getattr(tw, "cat_name", None)
+
+
+# ---------------------------------------------------------------------------
+# Part / Body picker dialog — shown when multiple bodies exist in an assembly
+# ---------------------------------------------------------------------------
+class PartPickerDialog(QtWidgets.QDialog):
+    """Checklist of all bodies/parts in the document for the user to choose from."""
+
+    def __init__(self, candidates, parent=None):
+        super(PartPickerDialog, self).__init__(parent)
+        self.setWindowTitle("Select Part(s) to Apply Material")
+        self.setMinimumWidth(420)
+        self.setMinimumHeight(320)
+        self._candidates = candidates
+        self._checks = []
+        self._build()
+
+    def _build(self):
+        layout = QtWidgets.QVBoxLayout(self)
+
+        info = QtWidgets.QLabel(
+            "<b>Multiple bodies / parts detected.</b><br>"
+            "Tick the part(s) you want to apply the material to, then click "
+            "<b>Apply Material</b>.")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+        layout.addWidget(_hline())
+
+        # Select-all header
+        hdr_row = QtWidgets.QHBoxLayout()
+        self._chk_all = QtWidgets.QCheckBox("Select / Deselect All")
+        self._chk_all.stateChanged.connect(self._toggle_all)
+        hdr_row.addWidget(self._chk_all)
+        layout.addLayout(hdr_row)
+
+        # Scrollable list
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        inner = QtWidgets.QWidget()
+        vlay  = QtWidgets.QVBoxLayout(inner)
+        vlay.setSpacing(4)
+
+        for obj in self._candidates:
+            row = QtWidgets.QHBoxLayout()
+            chk = QtWidgets.QCheckBox()
+            chk.setChecked(False)
+            self._checks.append((chk, obj))
+
+            # Icon indicator: show existing material name if any
+            existing = get_current_material(obj)
+            label_text = "<b>{}</b>".format(obj.Label)
+            if existing:
+                label_text += "  <small style='color:#888;'>[{}]</small>".format(
+                    existing.get("Name", "has material"))
+            lbl = QtWidgets.QLabel(label_text)
+            lbl.setTextFormat(QtCore.Qt.RichText)
+
+            row.addWidget(chk)
+            row.addWidget(lbl, 1)
+            vlay.addLayout(row)
+
+        vlay.addStretch()
+        inner.setLayout(vlay)
+        scroll.setWidget(inner)
+        layout.addWidget(scroll)
+
+        layout.addWidget(_hline())
+
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        btns.button(QtWidgets.QDialogButtonBox.Ok).setText("Apply Material")
+        btns.accepted.connect(self._on_ok)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _toggle_all(self, state):
+        checked = (state == QtCore.Qt.Checked)
+        for chk, _ in self._checks:
+            chk.setChecked(checked)
+
+    def _on_ok(self):
+        if not self.selected_objects:
+            QtWidgets.QMessageBox.warning(
+                self, "Nothing Selected",
+                "Please tick at least one part before clicking Apply Material.")
+            return
+        self.accept()
+
+    @property
+    def selected_objects(self):
+        return [obj for chk, obj in self._checks if chk.isChecked()]
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+def run():
+    # Auto-create any missing material files
+    ensure_material_files()
+
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        QtWidgets.QMessageBox.critical(None, "No Document", "No active document.")
+        return
+
+    # ── 1. Collect candidate bodies ───────────────────────────────────────
+    # Priority: active PartDesign body > explicit tree selection > all bodies
+    explicit_selection = False
+    targets = []
+
+    try:
+        ab = FreeCADGui.ActiveDocument.ActiveView.getActiveObject("pdbody")
+        if ab:
+            targets.append(ab)
+            explicit_selection = True
+    except Exception:
+        pass
+
+    if not targets:
+        sel = list(FreeCADGui.Selection.getSelection())
+        if sel:
+            # Keep only Body/Part objects from the selection
+            bodies = [o for o in sel if "Body" in o.TypeId or "Part" in o.TypeId]
+            if bodies:
+                targets = bodies
+                explicit_selection = True
+            else:
+                # User selected a feature/sketch inside a body — walk up to body
+                bodies = []
+                for o in sel:
+                    parent = getattr(o, "_Body", None) or getattr(o, "Body", None)
+                    if parent is None:
+                        # Try finding via document parents
+                        for b in doc.Objects:
+                            if "Body" in b.TypeId and hasattr(b, "Group"):
+                                if o in b.Group:
+                                    parent = b
+                                    break
+                    if parent and parent not in bodies:
+                        bodies.append(parent)
+                if bodies:
+                    targets = bodies
+                    explicit_selection = True
+
+    if not targets:
+        targets = [o for o in doc.Objects
+                   if "Body" in o.TypeId or o.TypeId == "App::Part"]
+
+    if not targets:
+        QtWidgets.QMessageBox.warning(
+            None, "No Body Found",
+            "No Body or Part found in the document.\n"
+            "Select a Body in the model tree and run the macro again.")
+        return
+
+    # ── 2. If multiple objects and no explicit selection → ask user to activate ──
+    if len(targets) > 1 and not explicit_selection:
+        QtWidgets.QMessageBox.information(
+            None,
+            "Activate a Part First",
+            "An assembly with multiple parts is open.\n\n"
+            "To apply a material to a specific part:\n\n"
+            "  1. Double-click the Body / Part in the model tree\n"
+            "     to activate it (it will become bold/highlighted).\n\n"
+            "  2. Run this macro again.\n\n"
+            "The material will then be applied only to that active part."
+        )
+        return
+
+    # ── 3. Single target — show existing material info if any ─────────────
+    if len(targets) == 1:
+        existing = get_current_material(targets[0])
+        if existing:
+            if not show_material_info(targets[0], existing):
+                return  # user chose Close
+
+    # ── 4. Show material picker ───────────────────────────────────────────
+    dlg = MaterialDialog()
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return
+
+    mat = dlg.selected_mat
+    if mat is None:
+        QtWidgets.QMessageBox.warning(None, "No Selection", "No material was selected.")
+        return
+
+    # ── 5. Apply ──────────────────────────────────────────────────────────
+    cat_name = dlg.selected_cat
+    applied_to, failed_on = [], []
+    for obj in targets:
+        (applied_to if apply_material_to_object(obj, mat, category=cat_name)
+         else failed_on).append(obj.Label)
+
+    doc.recompute()
+
+    mb = QtWidgets.QMessageBox()
+    mb.setWindowTitle("Material Applied" if not failed_on else "Partial Success")
+    mb.setIcon(QtWidgets.QMessageBox.Information if not failed_on
+               else QtWidgets.QMessageBox.Warning)
+    mb.setText("\"{}\" has been assigned successfully.".format(mat["name"]))
+    parts = []
+    if applied_to:
+        parts.append("Applied to:\n  " + "\n  ".join(applied_to))
+    if failed_on:
+        parts.append("Failed:\n  " + "\n  ".join(failed_on))
+    mb.setDetailedText("\n".join(parts))
+    mb.exec_()
+
+    FreeCAD.Console.PrintMessage(
+        "\n\u2500\u2500 Apply Material \u2500\u2500\n  Material : {}\n  Density  : {:.4g} kg/m\u00b3\n  Applied  : {}\n"
+        .format(mat["name"], mat["density"],
+                ", ".join(applied_to) if applied_to else "FAILED"))
+
+
+run()

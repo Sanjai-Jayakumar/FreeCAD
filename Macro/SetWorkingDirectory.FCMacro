@@ -1,0 +1,26 @@
+import FreeCAD
+import FreeCADGui
+from PySide import QtGui, QtCore
+import os
+
+params = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/General")
+start_dir = params.GetString("WorkingDirectory", os.path.expanduser("~"))
+
+folder = QtGui.QFileDialog.getExistingDirectory(
+    None,
+    "Select Working Directory",
+    start_dir
+)
+
+if folder:
+    params.SetString("WorkingDirectory", folder)
+    os.chdir(folder)
+
+    mw = FreeCADGui.getMainWindow()
+
+    def update_title():
+        base_title = mw.windowTitle().split(" — ")[0]
+        mw.setWindowTitle(f"{base_title} — WD: {folder}")
+
+    # Delay title update so FreeCAD cannot overwrite it
+    QtCore.QTimer.singleShot(200, update_title)

@@ -1,0 +1,495 @@
+# -*- coding: utf-8 -*-
+"""
+MeasureMass Macro for FreeCAD 1.0.2
+
+Calculates the mass (in kg) of the selected component(s) based on
+the applied material's density and the shape volume.
+
+Supports:
+  - Single Part / PartDesign::Body with material assigned
+  - Assembly – sums mass of all children with shapes
+  - FreeCAD 1.0 Materials workbench material objects
+  - Legacy App::PropertyMap "Material" dict on the object
+"""
+
+import re
+import FreeCAD as App
+import FreeCADGui as Gui
+from PySide import QtWidgets, QtCore, QtGui
+
+
+# ───────────────────────────────────────────────────────────────────────
+#  Density extraction helpers
+# ───────────────────────────────────────────────────────────────────────
+
+def _parse_density_string(density_str):
+    """Extract a numeric density in kg/m^3 from a string like '2720 kg/m^3'."""
+    if not density_str:
+        return None
+    m = re.match(r"([0-9]*\.?[0-9]+)", density_str.strip())
+    if m:
+        return float(m.group(1))
+    return None
+
+
+def _get_density_from_material_object(mat_obj):
+    """Extract density from a FreeCAD 1.0 Material object."""
+    # FreeCAD 1.0+ material objects expose a Material dict
+    mat_dict = getattr(mat_obj, "Material", None)
+    if mat_dict and isinstance(mat_dict, dict):
+        for key in ("Density", "density"):
+            if key in mat_dict:
+                return _parse_density_string(mat_dict[key])
+    return None
+
+
+def _get_density_for_object(obj):
+    """
+    Try every known method to find the density (kg/m^3) for *obj*.
+
+    Returns (density_float, material_name_str) or (None, None).
+    """
+    # 1) Check for FreeCAD 1.0 MaterialObject children inside a Body/Part
+    if hasattr(obj, "Group"):
+        for child in obj.Group:
+            type_id = getattr(child, "TypeId", "")
+            if "Material" in type_id:
+                d = _get_density_from_material_object(child)
+                if d is not None:
+                    name = ""
+                    mat_dict = getattr(child, "Material", {})
+                    if isinstance(mat_dict, dict):
+                        name = mat_dict.get("Name", child.Label)
+                    return d, name or child.Label
+
+    # 2) Direct Material property (dict) on the object
+    mat_dict = getattr(obj, "Material", None)
+    if mat_dict and isinstance(mat_dict, dict):
+        for key in ("Density", "density"):
+            if key in mat_dict:
+                d = _parse_density_string(mat_dict[key])
+                if d is not None:
+                    return d, mat_dict.get("Name", "Unknown")
+
+    # 3) Walk parents / linked objects for material
+    linked = getattr(obj, "LinkedObject", None)
+    if linked and linked != obj:
+        return _get_density_for_object(linked)
+
+    # 4) Source object (for links / clones)
+    source = getattr(obj, "SourceObject", None)
+    if source and source != obj:
+        return _get_density_for_object(source)
+
+    return None, None
+
+
+# ───────────────────────────────────────────────────────────────────────
+#  Volume helper
+# ───────────────────────────────────────────────────────────────────────
+
+def _get_volume_mm3(obj):
+    """Return the shape volume in mm^3, or None."""
+    shape = getattr(obj, "Shape", None)
+    if shape is None:
+        return None
+    try:
+        vol = shape.Volume
+        if vol is not None and vol > 0:
+            return vol
+    except Exception:
+        pass
+    return None
+
+
+# ───────────────────────────────────────────────────────────────────────
+#  Collect parts recursively
+# ───────────────────────────────────────────────────────────────────────
+
+# TypeIds that are always non-geometry and should be skipped
+_SKIP_TYPE_FRAGMENTS = ("JointGroup", "Origin", "Sketch", "Datum",
+                        "Material", "Constraint", "Joints")
+
+def _should_skip(type_id):
+    return any(s in type_id for s in _SKIP_TYPE_FRAGMENTS)
+
+
+def _resolve_shape_and_material(obj):
+    """
+    Return (volume_mm3, density, mat_name) for a leaf object.
+    Follows App::Link → LinkedObject to get real shape and material.
+    """
+    # Try shape on obj itself first
+    vol = _get_volume_mm3(obj)
+
+    # For links, also try the linked object's shape (App::Link stores its own
+    # transformed shape, so prefer it; fall back to linked if missing)
+    linked = getattr(obj, "LinkedObject", None)
+    if vol is None and linked and linked is not obj:
+        vol = _get_volume_mm3(linked)
+
+    if vol is None:
+        return None, None, None
+
+    # Material: try obj first, then follow link chain
+    density, mat_name = _get_density_for_object(obj)
+    if density is None and linked and linked is not obj:
+        density, mat_name = _get_density_for_object(linked)
+        # Also look inside the linked part's document for a Body with material
+        if density is None:
+            linked_doc = getattr(linked, "Document", None)
+            if linked_doc and linked_doc is not getattr(obj, "Document", None):
+                for o in linked_doc.Objects:
+                    if o.TypeId == "PartDesign::Body":
+                        density, mat_name = _get_density_for_object(o)
+                        if density is not None:
+                            break
+
+    return vol, density, mat_name
+
+
+def _collect_parts(obj, parts_list, depth=0):
+    """
+    Recursively gather (obj, volume_mm3, density, mat_name, depth, is_asm) tuples.
+
+    Classification rules (strict TypeId-based):
+    - Assembly::AssemblyObject  → ASM row, recurse into Group children.
+    - PartDesign::Body          → leaf part, record once, stop recursing.
+    - PartDesign::*             → internal feature, skip entirely.
+    - App::Link / Assembly::*Link → leaf part (resolves to its linked solid).
+    - App::Part                 → transparent wrapper; if it has its own valid
+                                  shape record as leaf, else recurse into Group.
+    - Everything else with a shape → leaf part.
+    """
+    type_id = getattr(obj, "TypeId", "")
+
+    if _should_skip(type_id):
+        return
+
+    # ── True assembly container ─────────────────────────────────────────
+    if type_id == "Assembly::AssemblyObject":
+        parts_list.append((obj, 0.0, None, None, depth, True))
+        for child in getattr(obj, "Group", []):
+            _collect_parts(child, parts_list, depth + 1)
+        return
+
+    # ── PartDesign::Body → leaf, stop ──────────────────────────────────
+    if type_id == "PartDesign::Body":
+        vol, density, mat_name = _resolve_shape_and_material(obj)
+        if vol is not None:
+            parts_list.append((obj, vol, density, mat_name, depth, False))
+        return
+
+    # ── Individual PartDesign features → skip ─────────────────────────
+    if type_id.startswith("PartDesign::"):
+        return
+
+    # ── Links (parts inserted into assembly) → leaf ────────────────────
+    if "Link" in type_id:          # App::Link, Assembly::AssemblyLink, etc.
+        vol, density, mat_name = _resolve_shape_and_material(obj)
+        if vol is not None:
+            parts_list.append((obj, vol, density, mat_name, depth, False))
+        return
+
+    # ── App::Part (part-file container) ────────────────────────────────
+    if type_id == "App::Part":
+        vol, density, mat_name = _resolve_shape_and_material(obj)
+        if vol is not None:
+            # Has its own combined shape → record as a single leaf
+            parts_list.append((obj, vol, density, mat_name, depth, False))
+        else:
+            # Transparent container → pass through to children at same depth
+            for child in getattr(obj, "Group", []):
+                _collect_parts(child, parts_list, depth)
+        return
+
+    # ── Everything else with a valid shape → leaf ──────────────────────
+    vol, density, mat_name = _resolve_shape_and_material(obj)
+    if vol is not None:
+        parts_list.append((obj, vol, density, mat_name, depth, False))
+        return
+
+    # ── Generic group/container with no shape → recurse ────────────────
+    for child in getattr(obj, "Group", []):
+        _collect_parts(child, parts_list, depth + 1)
+
+
+def _compute_assembly_masses(rows):
+    """
+    Post-process the flat row list.
+    For each assembly row, compute its mass_kg as the sum of all
+    descendant leaf rows' masses.  Returns a new list of 7-tuples:
+      (obj, vol_mm3, density, mat_name, depth, is_asm, mass_kg)
+    """
+    n = len(rows)
+    result = []
+    for i, row in enumerate(rows):
+        obj, vol_mm3, density, mat_name, depth, is_asm = row
+        if is_asm:
+            total = 0.0
+            for j in range(i + 1, n):
+                child_depth = rows[j][4]
+                if child_depth <= depth:
+                    break
+                child_is_asm = rows[j][5]
+                if not child_is_asm:  # leaf only – avoids double counting
+                    child_density = rows[j][2]
+                    child_vol_m3  = rows[j][1] * 1e-9
+                    if child_density is not None:
+                        total += child_density * child_vol_m3
+            result.append((obj, vol_mm3, density, mat_name, depth, is_asm, total if total > 0 else None))
+        else:
+            vol_m3   = vol_mm3 * 1e-9
+            mass_kg  = density * vol_m3 if density is not None else None
+            result.append((obj, vol_mm3, density, mat_name, depth, is_asm, mass_kg))
+    return result
+
+
+# ───────────────────────────────────────────────────────────────────────
+#  Shape property helpers (CoG, Surface Area)
+# ───────────────────────────────────────────────────────────────────────
+
+def _get_shape_props(obj):
+    """
+    Return (cog_x, cog_y, cog_z, surface_area_mm2) from obj's shape.
+    All values in mm / mm^2.  Returns (None, None, None, None) on failure.
+    """
+    shape = getattr(obj, "Shape", None)
+    if shape is None:
+        # Try linked object
+        linked = getattr(obj, "LinkedObject", None)
+        if linked and linked is not obj:
+            shape = getattr(linked, "Shape", None)
+    if shape is None:
+        return None, None, None, None
+    try:
+        cog  = shape.CenterOfGravity          # FreeCAD Vector (mm)
+        area = shape.Area                     # mm^2
+        return cog.x, cog.y, cog.z, area
+    except Exception:
+        return None, None, None, None
+
+
+# ───────────────────────────────────────────────────────────────────────
+#  Result Dialog
+# ───────────────────────────────────────────────────────────────────────
+
+class MassResultDialog(QtWidgets.QDialog):
+    """Component | Material | Mass | CoG X/Y/Z | Density | Volume | Surface Area"""
+
+    def __init__(self, parts, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Measure Mass")
+        self.resize(1050, 480)
+        self.setMinimumWidth(800)
+        self.setMinimumHeight(300)
+        self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
+
+        # ── table ───────────────────────────────────────────────────────
+        headers = [
+            "Component", "Material",
+            "Mass (kg)",
+            "CoG X (mm)", "CoG Y (mm)", "CoG Z (mm)",
+            "Density\n(kg/mm\u00b3)", "Volume\n(mm\u00b3)", "Surface Area\n(mm\u00b2)",
+        ]
+        COL_COMP   = 0
+        COL_MAT    = 1
+        COL_MASS   = 2
+        COL_COGX   = 3
+        COL_COGY   = 4
+        COL_COGZ   = 5
+        COL_DEN    = 6
+        COL_VOL    = 7
+        COL_AREA   = 8
+
+        table = QtWidgets.QTableWidget(len(parts), len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setDefaultAlignment(
+            QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter
+        )
+
+        total_mass_kg = 0.0
+        warnings = []
+
+        depths    = [r[4] for r in parts]
+        min_depth = min(depths) if depths else 0
+
+        asm_font = QtGui.QFont()
+        asm_font.setBold(True)
+
+        AL = QtCore.Qt.AlignLeft    | QtCore.Qt.AlignVCenter
+        AC = QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter
+        AR = QtCore.Qt.AlignRight   | QtCore.Qt.AlignVCenter
+
+        def _fmt(val, fmt="{:.3f}", fallback="\u2014"):
+            try:
+                return fmt.format(val) if val is not None else fallback
+            except Exception:
+                return fallback
+
+        for row, (obj, vol_mm3, density, mat_name, depth, is_asm, mass_kg) in enumerate(parts):
+
+            if depth == min_depth and mass_kg is not None:
+                total_mass_kg += mass_kg
+
+            cog_x, cog_y, cog_z, surf_area = _get_shape_props(obj)
+
+            if is_asm:
+                mat_display = "ASM"
+            else:
+                mat_display = mat_name if mat_name else "\u2014 not assigned \u2014"
+                if density is None:
+                    warnings.append(obj.Label)
+
+            # density in kg/mm\u00b3  (material cards store kg/m\u00b3  \u2192 \u00d7 1e-9)
+            den_mm3 = density * 1e-9 if density is not None else None
+
+            cells = [
+                # (value_str, alignment)
+                (obj.Label,               AL),
+                (mat_display,             AL),
+                (_fmt(mass_kg),           AC),
+                (_fmt(cog_x),             AR),
+                (_fmt(cog_y),             AR),
+                (_fmt(cog_z),             AR),
+                (_fmt(den_mm3, "{:.3e}"), AR),
+                (_fmt(vol_mm3, "{:.3f}"), AR),
+                (_fmt(surf_area, "{:.3f}"), AR),
+            ]
+
+            for col, (val, align) in enumerate(cells):
+                item = QtWidgets.QTableWidgetItem(val)
+                item.setTextAlignment(align)
+                if is_asm:
+                    item.setFont(asm_font)
+                table.setItem(row, col, item)
+
+        # Column resize modes
+        h_header = table.horizontalHeader()
+        h_header.setSectionResizeMode(COL_COMP, QtWidgets.QHeaderView.Stretch)
+        h_header.setSectionResizeMode(COL_MAT,  QtWidgets.QHeaderView.Stretch)
+        for c in (COL_MASS, COL_COGX, COL_COGY, COL_COGZ,
+                  COL_DEN, COL_VOL, COL_AREA):
+            h_header.setSectionResizeMode(c, QtWidgets.QHeaderView.ResizeToContents)
+
+        root.addWidget(table)
+
+        # ── summary ─────────────────────────────────────────────────────
+        summary_lbl = QtWidgets.QLabel(
+            "<b>Total Mass: {:.3f} kg</b>".format(total_mass_kg)
+        )
+        summary_lbl.setTextFormat(QtCore.Qt.RichText)
+        root.addWidget(summary_lbl)
+
+        # ── warning ─────────────────────────────────────────────────────
+        if warnings:
+            warn_lbl = QtWidgets.QLabel(
+                "<span style='color:red;'><b>No material:</b> {}</span>".format(
+                    ", ".join(warnings)
+                )
+            )
+            warn_lbl.setTextFormat(QtCore.Qt.RichText)
+            warn_lbl.setWordWrap(True)
+            root.addWidget(warn_lbl)
+
+        # ── buttons ─────────────────────────────────────────────────────
+        btn_layout = QtWidgets.QHBoxLayout()
+        btn_layout.addStretch()
+
+        copy_btn = QtWidgets.QPushButton("Copy Summary")
+        copy_btn.clicked.connect(
+            lambda: QtWidgets.QApplication.clipboard().setText(
+                "Total Mass: {:.3f} kg".format(total_mass_kg)
+            )
+        )
+        btn_layout.addWidget(copy_btn)
+
+        close_btn = QtWidgets.QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(close_btn)
+
+        root.addLayout(btn_layout)
+
+        # ── console log ─────────────────────────────────────────────────
+        App.Console.PrintMessage("\n\u2500\u2500\u2500\u2500 Measure Mass \u2500\u2500\u2500\u2500\n")
+        for obj, vol_mm3, density, mat_name, depth, is_asm, mass_kg in parts:
+            if is_asm:
+                App.Console.PrintMessage(
+                    "  [ASM] {} | mass={:.3f} kg\n".format(
+                        obj.Label, mass_kg if mass_kg else 0.0)
+                )
+            elif mass_kg is not None:
+                App.Console.PrintMessage(
+                    "  {}: {} | {:.3e} kg/mm\u00b3 | {:.3f} mm\u00b3 | mass={:.3f} kg\n".format(
+                        obj.Label, mat_name,
+                        density * 1e-9 if density else 0.0,
+                        vol_mm3, mass_kg)
+                )
+            else:
+                App.Console.PrintWarning(
+                    "  {}: NO MATERIAL | vol={:,.3f} mm\u00b3\n".format(obj.Label, vol_mm3)
+                )
+        App.Console.PrintMessage(
+            "  \u2500\u2500 Total: {:.3f} kg\n\n".format(total_mass_kg)
+        )
+
+
+# ───────────────────────────────────────────────────────────────────────
+#  Main entry point
+# ───────────────────────────────────────────────────────────────────────
+
+def measure_mass():
+    doc = App.ActiveDocument
+    if doc is None:
+        App.Console.PrintError("[MeasureMass] No active document.\n")
+        return
+
+    sel = Gui.Selection.getSelection()
+
+    # If nothing selected, try the whole document
+    if not sel:
+        # Gather all top-level bodies / parts
+        sel = [
+            o for o in doc.Objects
+            if getattr(o, "Shape", None) is not None
+            and not getattr(o, "InList", [])
+        ]
+
+    if not sel:
+        QtWidgets.QMessageBox.warning(
+            Gui.getMainWindow(),
+            "Measure Mass",
+            "No object selected and no solid shapes found in the document.\n\n"
+            "Please select one or more components and run the macro again."
+        )
+        return
+
+    raw = []
+    for obj in sel:
+        _collect_parts(obj, raw)
+    parts = _compute_assembly_masses(raw)
+
+    if not parts:
+        QtWidgets.QMessageBox.warning(
+            Gui.getMainWindow(),
+            "Measure Mass",
+            "Selected object(s) have no valid 3-D shape.\n"
+            "Select a Part, Body or Assembly and try again."
+        )
+        return
+
+    dlg = MassResultDialog(parts, Gui.getMainWindow())
+    dlg.exec_()
+
+
+# ── Run ─────────────────────────────────────────────────────────────────
+measure_mass()

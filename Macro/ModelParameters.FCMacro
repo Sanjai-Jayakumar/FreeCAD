@@ -1,0 +1,633 @@
+# -*- coding: utf-8 -*-
+# Model Parameters Macro for BNC CAD
+# Opens a dialog to view and edit model parameters for parts/assemblies
+
+import FreeCAD as App
+import FreeCADGui as Gui
+from PySide import QtWidgets
+import os
+import re
+
+
+# ============================================================
+# RESOLVE LINK
+# ============================================================
+
+def resolve_link(obj):
+    """Follow App::Link / LinkedObject chain to the real source object.
+    When a component is selected inside an assembly it is represented as
+    an App::Link — the MP_ properties live on the actual Body/Part in the
+    source document, so we must resolve the link first.
+    """
+    seen = set()
+    while obj is not None:
+        oid = id(obj)
+        if oid in seen:
+            break
+        seen.add(oid)
+        linked = getattr(obj, 'LinkedObject', None)
+        if linked is not None and linked is not obj:
+            obj = linked
+        else:
+            break
+    return obj
+
+
+# ============================================================
+# GET TARGET
+# ============================================================
+
+def get_target():
+    sel = Gui.Selection.getSelection()
+    if sel:
+        return resolve_link(sel[0])
+    return App.ActiveDocument
+
+
+# ============================================================
+# ENSURE PROPERTIES
+# ============================================================
+
+def ensure_properties(obj):
+
+    props = {
+        "MP_PartNumber": "App::PropertyString",
+        "MP_Description": "App::PropertyString",
+        "MP_Revision": "App::PropertyString",
+        "MP_Weight": "App::PropertyFloat",
+        "MP_BOMType": "App::PropertyString",
+        "MP_Type": "App::PropertyString",
+        "MP_TypeSub": "App::PropertyString",
+        "MP_Identification": "App::PropertyString",
+        "MP_Category": "App::PropertyString",
+        "MP_Material": "App::PropertyString",
+        "MP_THK": "App::PropertyString",
+        "MP_Aggregate": "App::PropertyString"
+    }
+
+    for name, ptype in props.items():
+        if not hasattr(obj, name):
+            obj.addProperty(ptype, name, "Model Parameters")
+
+
+# ============================================================
+# SYNC MP PROPERTIES TO ALL BODIES IN DOCUMENT
+# ============================================================
+
+def sync_mp_to_bodies(doc, mp_values):
+    """Mirror all MP_ property values onto every Body / Part object
+    inside *doc*.  This ensures that when the same file is opened
+    inside an assembly (where resolve_link lands on the Body, not the
+    Document) all Model Parameter data is available on the Body too.
+
+    mp_values: dict  {property_name: value}  e.g. {'MP_PartNumber': '...', ...}
+    """
+    for obj in doc.Objects:
+        # Target solid bodies, parts and features that may be linked
+        type_id = getattr(obj, 'TypeId', '')
+        if not any(t in type_id for t in ('PartDesign::Body', 'App::Part',
+                                           'Part::Feature', 'PartDesign::Feature')):
+            continue
+        try:
+            ensure_properties(obj)
+            for prop, value in mp_values.items():
+                try:
+                    setattr(obj, prop, value)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+
+# ============================================================
+# CLEAN DOCUMENT NAME
+# ============================================================
+
+def clean_doc_name(doc):
+    if not doc.FileName:
+        return ""
+    name = os.path.splitext(os.path.basename(doc.FileName))[0]
+    name = re.sub(r"\.(prt|asm|drg)$", "", name, flags=re.IGNORECASE)
+    name = re.sub(r"\.\d+$", "", name)
+    return name
+
+
+# ============================================================
+# MATERIAL & WEIGHT HELPERS
+# ============================================================
+
+def get_material_from_obj(obj):
+    """Read material name stored by the Apply Material macro.
+    Primary:  obj.Material['Name']  (PropertyMap set by Apply Material)
+    Fallback: obj.Mat_Name          (PropertyString set by Apply Material)
+    Also walks Document.Objects and PartDesign Body.Group children.
+    """
+    def _read(o):
+        # 1 — PropertyMap 'Material' dict  (Apply Material primary storage)
+        mat = getattr(o, 'Material', None)
+        if isinstance(mat, dict):
+            for key in ('Name', 'CardName'):
+                val = str(mat.get(key, '') or '').strip()
+                if val:
+                    return val
+        # 2 — Explicit PropertyString 'Mat_Name'  (Apply Material visible field)
+        val = str(getattr(o, 'Mat_Name', '') or '').strip()
+        if val:
+            return val
+        # 3 — FreeCAD 0.21+ ShapeMaterial object (built-in material system)
+        shape_mat = getattr(o, 'ShapeMaterial', None)
+        if shape_mat is not None:
+            for attr in ('Name', 'Label'):
+                val = str(getattr(shape_mat, attr, '') or '').strip()
+                # Skip placeholder values that mean "no material assigned"
+                if val and val.lower() not in ('default', 'none', ''):
+                    return val
+        return None
+
+    try:
+        if isinstance(obj, App.Document):
+            # Walk all document objects — same strategy as compute_weight_kg
+            for o in obj.Objects:
+                result = _read(o)
+                if result:
+                    return result
+                for child in getattr(o, 'Group', []):
+                    result = _read(child)
+                    if result:
+                        return result
+            return ""
+
+        result = _read(obj)
+        if result:
+            return result
+        # PartDesign Body / Assembly: walk child features
+        for child in getattr(obj, 'Group', []):
+            result = _read(child)
+            if result:
+                return result
+    except Exception:
+        pass
+    return ""
+
+
+def parse_density_kg_per_mm3(material_dict):
+    """Parse density from Apply Material's mat dict.
+    Apply Material stores: '7850 kg/m^3'  (note ^ not superscript).
+    Also handles g/cm^3, g/cm3, kg/m3, g/mm3.
+    Returns density in kg/mm³.
+    """
+    try:
+        if not isinstance(material_dict, dict):
+            return None
+        density_str = str(material_dict.get('Density', '') or '').strip()
+        if not density_str:
+            return None
+        match = re.match(r'([\d.eE+\-]+)', density_str.replace(',', ''))
+        if not match:
+            return None
+        value = float(match.group(1))
+        dl = density_str.lower().replace('^', '').replace(' ', '')
+        # kg/m3 or kg/m^3  → ×1e-9  (Apply Material default)
+        if 'kg/m' in dl:
+            return value * 1e-9
+        # g/cm3 or g/cm^3  → ×1e-6
+        elif 'g/cm' in dl:
+            return value * 1e-6
+        # g/mm3  → ×1e-3
+        elif 'g/mm' in dl:
+            return value * 1e-3
+        # kg/mm3
+        elif 'kg/mm' in dl:
+            return value
+        else:
+            # default: treat as kg/m³
+            return value * 1e-9
+    except Exception:
+        return None
+
+
+def _get_density_from_obj(o):
+    """Try all sources to get density in kg/mm³ for a single object."""
+    # 1 — Material dict (Apply Material primary)
+    mat = getattr(o, 'Material', None)
+    rho = parse_density_kg_per_mm3(mat) if isinstance(mat, dict) else None
+    if rho:
+        return rho
+    # 2 — Mat_Density PropertyString e.g. '7850 kg/m³' or '7850 kg/m^3'
+    mat_density_str = str(getattr(o, 'Mat_Density', '') or '').strip()
+    if mat_density_str:
+        rho = parse_density_kg_per_mm3({'Density': mat_density_str})
+        if rho:
+            return rho
+    return None
+
+
+def compute_weight_kg(obj):
+    """Compute weight in kg from Shape.Volume × material density.
+    For a Document, sums all solid objects that have a Material assigned.
+    """
+    try:
+        objects_to_check = list(obj.Objects) if isinstance(obj, App.Document) else [obj]
+        total = 0.0
+        found = False
+        for o in objects_to_check:
+            shape = getattr(o, 'Shape', None)
+            if shape is None:
+                continue
+            try:
+                vol = shape.Volume  # mm³
+            except Exception:
+                continue
+            if vol <= 0:
+                continue
+            rho = _get_density_from_obj(o)
+            if rho:
+                total += vol * rho
+                found = True
+        return round(total, 4) if found else None
+    except Exception:
+        return None
+
+
+# ============================================================
+# MAIN DIALOG
+# ============================================================
+
+class ModelDialog(QtWidgets.QDialog):
+
+    def __init__(self):
+        super().__init__()
+
+        self.target = get_target()
+        ensure_properties(self.target)
+
+        self.setWindowTitle("Model Parameters")
+        self.setFixedWidth(420)
+
+        layout = QtWidgets.QVBoxLayout()
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+
+        grid = QtWidgets.QGridLayout()
+        grid.setVerticalSpacing(6)
+        grid.setHorizontalSpacing(10)
+
+        row = 0
+        field_w = 220
+        small_w = 80
+        h = 22
+
+        # Part Number
+        grid.addWidget(QtWidgets.QLabel("Part Number"), row, 0)
+        self.partNumber = QtWidgets.QLineEdit()
+        self.partNumber.setFixedSize(field_w, h)
+        grid.addWidget(self.partNumber, row, 1)
+        row += 1
+
+        # Description
+        grid.addWidget(QtWidgets.QLabel("Description"), row, 0)
+        self.description = QtWidgets.QLineEdit()
+        self.description.setFixedSize(field_w, h)
+        grid.addWidget(self.description, row, 1)
+        row += 1
+
+        # Revision + Weight
+        grid.addWidget(QtWidgets.QLabel("Revision"), row, 0)
+
+        self.revision = QtWidgets.QComboBox()
+        self.revision.addItems(["NR", "A", "B", "C", "D"])
+        self.revision.setFixedSize(60, h)
+
+        self.weight = QtWidgets.QLineEdit()
+        self.weight.setFixedSize(small_w, h)
+        self.weight.setToolTip("Auto-computed from geometry and material density. You can override manually.")
+
+        revLayout = QtWidgets.QHBoxLayout()
+        revLayout.addWidget(self.revision)
+        revLayout.addWidget(QtWidgets.QLabel("Weight"))
+        revLayout.addWidget(self.weight)
+        revLayout.addWidget(QtWidgets.QLabel("kg"))
+        revLayout.addStretch()
+
+        grid.addLayout(revLayout, row, 1)
+        row += 1
+
+        # BOM
+        grid.addWidget(QtWidgets.QLabel("BOM Type"), row, 0)
+
+        self.ebom = QtWidgets.QCheckBox("E-BOM")
+        self.ebom.setChecked(True)
+        self.ebom.setEnabled(False)
+
+        self.mbom = QtWidgets.QRadioButton("M-BOM")
+        self.sbom = QtWidgets.QRadioButton("S-BOM")
+        self.mbom.setChecked(True)
+
+        bomLayout = QtWidgets.QHBoxLayout()
+        bomLayout.addWidget(self.ebom)
+        bomLayout.addWidget(self.mbom)
+        bomLayout.addWidget(self.sbom)
+        bomLayout.addStretch()
+
+        grid.addLayout(bomLayout, row, 1)
+        row += 1
+
+        # Type + SubType
+        grid.addWidget(QtWidgets.QLabel("Type"), row, 0)
+
+        self.typeBox = QtWidgets.QComboBox()
+        self.typeBox.addItems(["", "MAKE", "BUY"])
+        self.typeBox.setFixedSize(100, h)
+        self.typeBox.currentTextChanged.connect(self.type_changed)
+        self.typeBox.currentTextChanged.connect(self.update_thk_visibility)
+
+        self.typeSub = QtWidgets.QComboBox()
+        self.typeSub.setFixedSize(110, h)
+
+        typeLayout = QtWidgets.QHBoxLayout()
+        typeLayout.addWidget(self.typeBox)
+        typeLayout.addWidget(QtWidgets.QLabel("Sub-Type"))
+        typeLayout.addWidget(self.typeSub)
+        typeLayout.addStretch()
+
+        self.typeSub.currentTextChanged.connect(self.update_thk_visibility)
+
+        grid.addLayout(typeLayout, row, 1)
+        row += 1
+
+        # Identification
+        grid.addWidget(QtWidgets.QLabel("Identification"), row, 0)
+        self.identification = QtWidgets.QComboBox()
+        self.identification.addItems(["", "Serialized", "Batch Code"])
+        self.identification.setFixedSize(field_w, h)
+        grid.addWidget(self.identification, row, 1)
+        row += 1
+
+        # Category
+        grid.addWidget(QtWidgets.QLabel("Category"), row, 0)
+        self.category = QtWidgets.QComboBox()
+        self.category.setFixedSize(field_w, h)
+        self.category.addItems([
+            "Main Assembly",
+            "Aggregate Assembly",
+            "Sub-Assembly",
+            "Weld-Assembly",
+            "Part",
+            "Fastner"
+        ])
+        self.category.currentTextChanged.connect(self.update_thk_visibility)
+        grid.addWidget(self.category, row, 1)
+        row += 1
+
+        # Material + THK
+        grid.addWidget(QtWidgets.QLabel("Material"), row, 0)
+        self.material = QtWidgets.QLineEdit()
+        self.material.setFixedSize(130, h)
+        self.material.setPlaceholderText("auto / manual")
+
+        self.refreshBtn = QtWidgets.QPushButton("↺")
+        self.refreshBtn.setFixedSize(24, h)
+        self.refreshBtn.setToolTip("Re-read material and weight from part")
+        self.refreshBtn.clicked.connect(self.refresh_from_part)
+
+        self.thkLabel = QtWidgets.QLabel("THK")
+        self.thk = QtWidgets.QLineEdit()
+        self.thk.setFixedSize(50, h)
+        self.thkMmLabel = QtWidgets.QLabel("mm")
+
+        matLayout = QtWidgets.QHBoxLayout()
+        matLayout.addWidget(self.material)
+        matLayout.addWidget(self.refreshBtn)
+        matLayout.addWidget(self.thkLabel)
+        matLayout.addWidget(self.thk)
+        matLayout.addWidget(self.thkMmLabel)
+        matLayout.addStretch()
+
+        grid.addLayout(matLayout, row, 1)
+        row += 1
+
+        # Initially hide THK
+        self.thkLabel.setVisible(False)
+        self.thk.setVisible(False)
+        self.thkMmLabel.setVisible(False)
+
+        # Aggregate (Manual)
+        grid.addWidget(QtWidgets.QLabel("Aggregate"), row, 0)
+        self.aggregate = QtWidgets.QLineEdit()
+        self.aggregate.setFixedSize(field_w, h)
+        grid.addWidget(self.aggregate, row, 1)
+
+        layout.addLayout(grid)
+
+        # Save
+        btnLayout = QtWidgets.QHBoxLayout()
+        btnLayout.addStretch()
+        saveBtn = QtWidgets.QPushButton("Save")
+        saveBtn.setFixedSize(80, 26)
+        saveBtn.clicked.connect(self.save_data)
+        btnLayout.addWidget(saveBtn)
+        layout.addLayout(btnLayout)
+
+        self.setLayout(layout)
+
+        self.load_data()
+
+
+    # ============================================================
+    # TYPE CHANGE
+    # ============================================================
+
+    # ============================================================
+    # REFRESH FROM PART
+    # ============================================================
+
+    def refresh_from_part(self):
+        """Re-read material name and compute weight from the live FreeCAD object."""
+        auto_mat = get_material_from_obj(self.target)
+        if auto_mat:
+            self.material.setText(auto_mat)
+        auto_wt = compute_weight_kg(self.target)
+        if auto_wt is not None:
+            self.weight.setText(str(auto_wt))
+
+
+    def update_thk_visibility(self):
+        show = (
+            self.typeBox.currentText() == "MAKE"
+            and self.typeSub.currentText() == "Fabrication"
+            and self.category.currentText() == "Part"
+        )
+        self.thkLabel.setVisible(show)
+        self.thk.setVisible(show)
+        self.thkMmLabel.setVisible(show)
+
+
+    def type_changed(self, text):
+
+        self.typeSub.clear()
+
+        if text == "MAKE":
+            self.typeSub.addItems([
+                "Fabrication",
+                "Machining",
+                "Casting",
+                "Forging",
+                "Extrusion",
+                "Plastic",
+                "Foam",
+                "Rubber",
+                "Harness",
+                "Consumables",
+                "Sticker"
+            ])
+        elif text == "BUY":
+            self.typeSub.addItems([
+                "Electrical",
+                "Mechanical"
+            ])
+
+
+    # ============================================================
+    # LOAD DATA
+    # ============================================================
+
+    def load_data(self):
+
+        current_name = clean_doc_name(self.target) if isinstance(self.target, App.Document) else self.target.Label
+
+        # Description: try all storage locations used by Save/Rename macros
+        # Priority: first Body/Assembly .Description → doc.Description → doc.Comment → MP_Description
+        _ROOT_TYPES = ('PartDesign::Body', 'Assembly::AssemblyObject')
+
+        if isinstance(self.target, App.Document):
+            # 1) first Body or root Assembly object description
+            current_desc = ""
+            for obj in self.target.Objects:
+                if obj.TypeId in _ROOT_TYPES:
+                    current_desc = str(getattr(obj, 'Description', '') or '').strip()
+                    break
+            # 2) doc.Description (set by Save/Rename macros)
+            if not current_desc:
+                current_desc = str(getattr(self.target, 'Description', '') or '').strip()
+            # 3) doc.Comment (legacy)
+            if not current_desc:
+                current_desc = str(getattr(self.target, 'Comment', '') or '').strip()
+            # 4) saved MP_Description
+            if not current_desc:
+                current_desc = str(getattr(self.target, 'MP_Description', '') or '').strip()
+        else:
+            # Target is a Body/Assembly object
+            # 1) object's own Description
+            current_desc = str(getattr(self.target, 'Description', '') or '').strip()
+            # 2) owning doc sources
+            if not current_desc:
+                owner_doc = getattr(self.target, 'Document', None)
+                if owner_doc:
+                    # first Body or root Assembly in doc
+                    for obj in owner_doc.Objects:
+                        if obj.TypeId in _ROOT_TYPES:
+                            current_desc = str(getattr(obj, 'Description', '') or '').strip()
+                            break
+                    if not current_desc:
+                        current_desc = str(getattr(owner_doc, 'Description', '') or '').strip()
+                    if not current_desc:
+                        current_desc = str(getattr(owner_doc, 'Comment', '') or '').strip()
+            if not current_desc:
+                current_desc = str(getattr(self.target, 'MP_Description', '') or '').strip()
+
+        # Always use the current file/object name and description as source of truth
+        self.partNumber.setText(current_name)
+        self.description.setText(current_desc)
+        self.revision.setCurrentText(self.target.MP_Revision or "NR")
+
+        # Auto-compute weight from geometry + material density
+        auto_wt = compute_weight_kg(self.target)
+        if auto_wt is not None:
+            self.weight.setText(str(auto_wt))
+        elif self.target.MP_Weight:
+            self.weight.setText(str(self.target.MP_Weight))
+
+        # Restore BOM
+        if self.target.MP_BOMType == "S-BOM":
+            self.sbom.setChecked(True)
+        else:
+            self.mbom.setChecked(True)
+
+        # Restore Type & SubType
+        self.typeBox.setCurrentText(self.target.MP_Type or "")
+        self.type_changed(self.target.MP_Type or "")
+        self.typeSub.setCurrentText(self.target.MP_TypeSub or "")
+
+        # Restore others
+        self.identification.setCurrentText(self.target.MP_Identification or "")
+        self.category.setCurrentText(self.target.MP_Category or "")
+        # Auto-populate material from object's Material property
+        auto_mat = get_material_from_obj(self.target)
+        self.material.setText(auto_mat if auto_mat else (self.target.MP_Material or ""))
+        self.thk.setText(self.target.MP_THK or "")
+        self.aggregate.setText(self.target.MP_Aggregate or "")
+        self.update_thk_visibility()
+
+
+    # ============================================================
+    # SAVE DATA
+    # ============================================================
+
+    def save_data(self):
+
+        if not self.aggregate.text().strip():
+            QtWidgets.QMessageBox.warning(self, "Missing Aggregate", "Please Enter Aggregate Type")
+            return
+
+        self.target.MP_PartNumber = self.partNumber.text()
+        self.target.MP_Description = self.description.text()
+        self.target.MP_Revision = self.revision.currentText()
+
+        try:
+            self.target.MP_Weight = float(self.weight.text())
+        except:
+            self.target.MP_Weight = 0.0
+
+        self.target.MP_BOMType = "S-BOM" if self.sbom.isChecked() else "M-BOM"
+        self.target.MP_Type = self.typeBox.currentText()
+        self.target.MP_TypeSub = self.typeSub.currentText()
+        self.target.MP_Identification = self.identification.currentText()
+        self.target.MP_Category = self.category.currentText()
+        self.target.MP_Material = self.material.text()
+        self.target.MP_THK = self.thk.text().strip() if self.thk.isVisible() else ""
+        self.target.MP_Aggregate = self.aggregate.text().strip()
+
+        # Mirror all MP_ values onto every Body in the owning document so
+        # that resolve_link() finds them when the part is used in an assembly.
+        mp_values = {
+            'MP_PartNumber':    self.target.MP_PartNumber,
+            'MP_Description':   self.target.MP_Description,
+            'MP_Revision':      self.target.MP_Revision,
+            'MP_Weight':        self.target.MP_Weight,
+            'MP_BOMType':       self.target.MP_BOMType,
+            'MP_Type':          self.target.MP_Type,
+            'MP_TypeSub':       self.target.MP_TypeSub,
+            'MP_Identification':self.target.MP_Identification,
+            'MP_Category':      self.target.MP_Category,
+            'MP_Material':      self.target.MP_Material,
+            'MP_THK':           self.target.MP_THK,
+            'MP_Aggregate':     self.target.MP_Aggregate,
+        }
+        target_doc = getattr(self.target, 'Document', None) or App.ActiveDocument
+        sync_mp_to_bodies(target_doc, mp_values)
+
+        # Recompute/save the document that actually owns the target object.
+        # When opened from an assembly the target's document differs from
+        # App.ActiveDocument (the assembly doc).
+        target_doc.recompute()
+        target_doc.save()
+        self.accept()
+
+
+# ============================================================
+# RUN
+# ============================================================
+
+if App.ActiveDocument:
+    dlg = ModelDialog()
+    dlg.exec_()

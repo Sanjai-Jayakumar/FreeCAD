@@ -1,0 +1,330 @@
+"""
+BNC CAD – Manage Users (Admin Macro)
+=====================================
+Run this macro from inside BNC CAD (Tools > Macros) to add, remove,
+or change passwords for application users.
+
+Only users with the 'admin' role can perform these operations.
+"""
+
+import os
+import sys
+import FreeCAD
+import FreeCADGui
+from PySide import QtGui, QtCore
+
+# Locate the BNCAuth module
+_MOD_DIRS = [
+    os.path.join(os.path.dirname(FreeCAD.getResourceDir()), "Mod", "BNCAuth"),
+    os.path.join(FreeCAD.getUserAppDataDir(), "Mod", "BNCAuth"),
+]
+for _d in _MOD_DIRS:
+    if os.path.isdir(_d) and _d not in sys.path:
+        sys.path.insert(0, _d)
+        break
+
+from bnc_auth_core import UserDatabase
+
+# ---------------------------------------------------------------------------
+# Stylesheet (reuse login style)
+# ---------------------------------------------------------------------------
+_STYLE = """
+QDialog, QWidget {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+}
+QLabel {
+    color: #cdd6f4;
+    font-size: 13px;
+}
+QLabel#title {
+    color: #89b4fa;
+    font-size: 16px;
+    font-weight: bold;
+}
+QTableWidget {
+    background-color: #313244;
+    alternate-background-color: #2a2a3c;
+    border: 1px solid #45475a;
+    color: #cdd6f4;
+    gridline-color: #45475a;
+    selection-background-color: #89b4fa;
+    selection-color: #1e1e2e;
+}
+QTableWidget::item { padding: 4px 8px; }
+QHeaderView::section {
+    background-color: #45475a;
+    color: #cdd6f4;
+    padding: 4px;
+    border: none;
+}
+QLineEdit {
+    background-color: #313244;
+    border: 1px solid #45475a;
+    border-radius: 5px;
+    color: #cdd6f4;
+    padding: 5px 8px;
+    font-size: 12px;
+}
+QLineEdit:focus { border: 1px solid #89b4fa; }
+QComboBox {
+    background-color: #313244;
+    border: 1px solid #45475a;
+    border-radius: 5px;
+    color: #cdd6f4;
+    padding: 5px 8px;
+}
+QPushButton {
+    background-color: #45475a;
+    color: #cdd6f4;
+    border: none;
+    border-radius: 5px;
+    padding: 7px 14px;
+    font-size: 12px;
+}
+QPushButton:hover  { background-color: #585b70; }
+QPushButton#add_btn  { background-color: #a6e3a1; color: #1e1e2e; }
+QPushButton#add_btn:hover { background-color: #94d3a2; }
+QPushButton#del_btn  { background-color: #f38ba8; color: #1e1e2e; }
+QPushButton#del_btn:hover { background-color: #e07090; }
+QPushButton#pw_btn   { background-color: #fab387; color: #1e1e2e; }
+QPushButton#pw_btn:hover { background-color: #e09070; }
+"""
+
+
+# ---------------------------------------------------------------------------
+# Main Management Dialog
+# ---------------------------------------------------------------------------
+
+class ManageUsersDialog(QtGui.QDialog):
+
+    def __init__(self, db, current_user, parent=None):
+        super(ManageUsersDialog, self).__init__(parent)
+        self._db           = db
+        self._current_user = current_user
+        self._build_ui()
+        self._refresh_table()
+
+    def _build_ui(self):
+        self.setWindowTitle("BNC CAD – User Management")
+        self.setMinimumSize(550, 420)
+        self.setStyleSheet(_STYLE)
+
+        root = QtGui.QVBoxLayout(self)
+        root.setContentsMargins(20, 15, 20, 15)
+        root.setSpacing(12)
+
+        title = QtGui.QLabel("User Management")
+        title.setObjectName("title")
+        root.addWidget(title)
+
+        # --- Table ---
+        self.table = QtGui.QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Username", "Display Name", "Role"])
+        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setResizeMode(0, QtGui.QHeaderView.Stretch)
+        self.table.horizontalHeader().setResizeMode(1, QtGui.QHeaderView.Stretch)
+        self.table.horizontalHeader().setResizeMode(2, QtGui.QHeaderView.ResizeToContents)
+        self.table.setSelectionBehavior(QtGui.QAbstractItemView.SelectRows)
+        self.table.setEditTriggers(QtGui.QAbstractItemView.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        root.addWidget(self.table)
+
+        # --- Action buttons ---
+        btn_row = QtGui.QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        add_btn = QtGui.QPushButton("+ Add User")
+        add_btn.setObjectName("add_btn")
+        add_btn.clicked.connect(self._on_add)
+        btn_row.addWidget(add_btn)
+
+        pw_btn = QtGui.QPushButton("Change Password")
+        pw_btn.setObjectName("pw_btn")
+        pw_btn.clicked.connect(self._on_change_pw)
+        btn_row.addWidget(pw_btn)
+
+        del_btn = QtGui.QPushButton("Remove User")
+        del_btn.setObjectName("del_btn")
+        del_btn.clicked.connect(self._on_remove)
+        btn_row.addWidget(del_btn)
+
+        btn_row.addStretch()
+
+        close_btn = QtGui.QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+
+        root.addLayout(btn_row)
+
+    # ------------------------------------------------------------------
+
+    def _refresh_table(self):
+        users = self._db.list_users()
+        self.table.setRowCount(len(users))
+        for row, (uname, dname, role) in enumerate(users):
+            self.table.setItem(row, 0, QtGui.QTableWidgetItem(uname))
+            self.table.setItem(row, 1, QtGui.QTableWidgetItem(dname))
+            self.table.setItem(row, 2, QtGui.QTableWidgetItem(role))
+
+    def _selected_username(self):
+        row = self.table.currentRow()
+        if row < 0:
+            return None
+        item = self.table.item(row, 0)
+        return item.text() if item else None
+
+    # ------------------------------------------------------------------
+
+    def _on_add(self):
+        dlg = _AddUserDialog(self._db, self)
+        if dlg.exec_() == QtGui.QDialog.Accepted:
+            self._refresh_table()
+
+    def _on_remove(self):
+        username = self._selected_username()
+        if not username:
+            QtGui.QMessageBox.warning(self, "No Selection", "Please select a user to remove.")
+            return
+        if username == self._current_user:
+            QtGui.QMessageBox.warning(self, "Error", "You cannot remove your own account.")
+            return
+        if self._db.get_role(username) == "admin" and self._db.admin_count() <= 1:
+            QtGui.QMessageBox.warning(
+                self, "Error", "Cannot remove the last admin account."
+            )
+            return
+        reply = QtGui.QMessageBox.question(
+            self, "Confirm",
+            "Remove user '%s'? This cannot be undone." % username,
+            QtGui.QMessageBox.Yes | QtGui.QMessageBox.No,
+            QtGui.QMessageBox.No,
+        )
+        if reply == QtGui.QMessageBox.Yes:
+            self._db.remove_user(username)
+            self._refresh_table()
+
+    def _on_change_pw(self):
+        username = self._selected_username()
+        if not username:
+            QtGui.QMessageBox.warning(self, "No Selection", "Please select a user.")
+            return
+        from bnc_login_dialog import show_change_password_dialog
+        show_change_password_dialog(self._db, username, self)
+
+
+# ---------------------------------------------------------------------------
+# Add-User Dialog
+# ---------------------------------------------------------------------------
+
+class _AddUserDialog(QtGui.QDialog):
+
+    def __init__(self, db, parent=None):
+        super(_AddUserDialog, self).__init__(parent)
+        self._db = db
+        self._build_ui()
+
+    def _build_ui(self):
+        self.setWindowTitle("Add New User")
+        self.setFixedSize(340, 280)
+        self.setStyleSheet(_STYLE)
+
+        layout = QtGui.QVBoxLayout(self)
+        layout.setContentsMargins(25, 20, 25, 20)
+        layout.setSpacing(10)
+
+        layout.addWidget(QtGui.QLabel("Username"))
+        self.user_edit = QtGui.QLineEdit()
+        self.user_edit.setPlaceholderText("e.g. john.doe")
+        layout.addWidget(self.user_edit)
+
+        layout.addWidget(QtGui.QLabel("Display Name"))
+        self.name_edit = QtGui.QLineEdit()
+        self.name_edit.setPlaceholderText("e.g. John Doe")
+        layout.addWidget(self.name_edit)
+
+        layout.addWidget(QtGui.QLabel("Password"))
+        self.pw_edit = QtGui.QLineEdit()
+        self.pw_edit.setEchoMode(QtGui.QLineEdit.Password)
+        layout.addWidget(self.pw_edit)
+
+        layout.addWidget(QtGui.QLabel("Role"))
+        self.role_combo = QtGui.QComboBox()
+        self.role_combo.addItems(["user", "admin"])
+        layout.addWidget(self.role_combo)
+
+        self.err_label = QtGui.QLabel("")
+        self.err_label.setStyleSheet("color: #f38ba8;")
+        layout.addWidget(self.err_label)
+
+        btn_row = QtGui.QHBoxLayout()
+        cancel_btn = QtGui.QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+        add_btn = QtGui.QPushButton("Add")
+        add_btn.setObjectName("add_btn")
+        add_btn.clicked.connect(self._on_add)
+        btn_row.addWidget(add_btn)
+        layout.addLayout(btn_row)
+
+    def _on_add(self):
+        username = self.user_edit.text().strip()
+        name     = self.name_edit.text().strip()
+        password = self.pw_edit.text()
+        role     = self.role_combo.currentText()
+
+        if not username:
+            self.err_label.setText("Username is required.")
+            return
+        if not password:
+            self.err_label.setText("Password is required.")
+            return
+        if self._db.user_exists(username):
+            self.err_label.setText("Username '%s' already exists." % username)
+            return
+
+        try:
+            self._db.add_user(username, password, role=role, name=name)
+        except ValueError as exc:
+            self.err_label.setText(str(exc))
+            return
+
+        self.accept()
+
+
+# ---------------------------------------------------------------------------
+# Launch the dialog
+# ---------------------------------------------------------------------------
+
+def _get_current_user():
+    """
+    Retrieve the user logged in during this session.
+    BNCAuth stores it in FreeCAD's parameter tree on login.
+    """
+    try:
+        return FreeCAD.ParamGet(
+            "User parameter:BaseApp/Preferences/BNCAuth"
+        ).GetString("CurrentUser", "")
+    except Exception:
+        return ""
+
+
+current_user = _get_current_user()
+if not current_user:
+    QtGui.QMessageBox.critical(
+        FreeCADGui.getMainWindow(),
+        "Access Denied",
+        "No active BNC CAD session found.\nPlease restart the application."
+    )
+else:
+    role = UserDatabase().get_role(current_user)
+    if role != "admin":
+        QtGui.QMessageBox.critical(
+            FreeCADGui.getMainWindow(),
+            "Access Denied",
+            "Only administrators can manage users."
+        )
+    else:
+        db  = UserDatabase()
+        dlg = ManageUsersDialog(db, current_user, FreeCADGui.getMainWindow())
+        dlg.exec_()

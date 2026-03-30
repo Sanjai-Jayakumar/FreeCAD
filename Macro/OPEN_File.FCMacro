@@ -1,0 +1,93 @@
+import FreeCAD
+import os
+import re
+from PySide import QtGui, QtCore
+
+# -------------------------------------------------
+# WORKING DIRECTORY
+# -------------------------------------------------
+params = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/General")
+wd = params.GetString("WorkingDirectory", "")
+
+if not wd or not os.path.isdir(wd):
+    FreeCAD.Console.PrintError("Working Directory not set\n")
+    raise Exception("WD not set")
+
+# -------------------------------------------------
+# VERSION REGEX
+# -------------------------------------------------
+version_re = re.compile(r"(.+)\.(\d{3})\.FCStd$", re.IGNORECASE)
+
+def scan_versions(directory):
+    latest = {}
+    all_files = []
+
+    for f in os.listdir(directory):
+        m = version_re.match(f)
+        if not m:
+            continue
+
+        base, v = m.group(1), int(m.group(2))
+        full = os.path.join(directory, f)
+        all_files.append(full)
+
+        if base not in latest or v > latest[base][0]:
+            latest[base] = (v, full)
+
+    latest_files = [v[1] for v in latest.values()]
+    return latest_files, all_files
+
+# -------------------------------------------------
+# CUSTOM FILE DIALOG (NON-NATIVE)
+# -------------------------------------------------
+dlg = QtGui.QFileDialog(
+    None,
+    "Open File (Version Controlled)",
+    wd,
+    "FreeCAD Files (*.FCStd)"
+)
+
+# 🔑 IMPORTANT: disable native dialog
+dlg.setOption(QtGui.QFileDialog.DontUseNativeDialog, True)
+dlg.setFileMode(QtGui.QFileDialog.ExistingFile)
+dlg.setViewMode(QtGui.QFileDialog.Detail)
+
+# Checkbox
+chk = QtGui.QCheckBox("Show all versions")
+dlg.layout().addWidget(chk)
+
+# -------------------------------------------------
+# UPDATE FILE LIST
+# -------------------------------------------------
+def update_view():
+    dlg.setDirectory(dlg.directory())  # force refresh
+    current_dir = dlg.directory().absolutePath()
+
+    latest, all_files = scan_versions(current_dir)
+
+    if chk.isChecked():
+        dlg.setNameFilter("FreeCAD Files (*.FCStd)")
+    else:
+        # Hide all, then allow only latest
+        if latest:
+            patterns = " ".join(
+                [os.path.basename(f) for f in latest]
+            )
+            dlg.setNameFilter(f"Latest Versions ({patterns})")
+        else:
+            dlg.setNameFilter("FreeCAD Files (*.FCStd)")
+
+chk.stateChanged.connect(update_view)
+dlg.directoryEntered.connect(lambda _: update_view())
+
+update_view()
+
+# -------------------------------------------------
+# EXECUTE
+# -------------------------------------------------
+if dlg.exec_():
+    file_path = dlg.selectedFiles()[0]
+    FreeCAD.openDocument(file_path)
+    FreeCAD.Console.PrintMessage(
+        f"Opened: {os.path.basename(file_path)}\n"
+    )

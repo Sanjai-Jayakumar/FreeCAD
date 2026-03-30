@@ -1,0 +1,101 @@
+import FreeCAD
+import FreeCADGui
+from PySide import QtGui
+import os
+
+# -------------------------------------------------
+# READ CURRENT WORKING DIRECTORY
+# -------------------------------------------------
+params = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/General")
+working_dir = params.GetString("WorkingDirectory", os.path.expanduser("~"))
+
+doc = FreeCAD.ActiveDocument
+if not doc:
+    FreeCAD.Console.PrintError("No active document\n")
+    raise Exception("No active document")
+
+# -------------------------------------------------
+# GET BASE NAME
+# -------------------------------------------------
+def clean_name(name):
+    return name.replace(" ", "_")
+
+default_name = clean_name(doc.Label)
+
+# -------------------------------------------------
+# SAVE AS DIALOG
+# -------------------------------------------------
+dialog = QtGui.QFileDialog(
+    None,
+    "Save As (Version Controlled)",
+    working_dir,
+    "FreeCAD Files (*.FCStd)"
+)
+dialog.setAcceptMode(QtGui.QFileDialog.AcceptSave)
+dialog.selectFile(default_name)
+
+if not dialog.exec_():
+    raise Exception("Save cancelled")
+
+file_path = dialog.selectedFiles()[0]
+
+# -------------------------------------------------
+# UPDATE WORKING DIRECTORY IF CHANGED
+# -------------------------------------------------
+new_dir = os.path.dirname(file_path)
+if new_dir != working_dir:
+    params.SetString("WorkingDirectory", new_dir)
+    os.chdir(new_dir)
+
+# -------------------------------------------------
+# VERSION LOGIC
+# -------------------------------------------------
+base_name = os.path.basename(file_path).replace(".FCStd", "")
+base_path = os.path.join(new_dir, base_name)
+
+def latest_version(base):
+    v = 1
+    while os.path.exists(f"{base}.{v:03d}.FCStd"):
+        v += 1
+    return v - 1
+
+last_v = latest_version(base_path)
+
+# Parameter storage for undo tracking
+save_params = FreeCAD.ParamGet(
+    "User parameter:BaseApp/Preferences/VersionSave"
+)
+undo_key = f"{base_name}_Undo"
+
+undo_now = doc.UndoCount
+last_undo = save_params.GetInt(undo_key, -1)
+
+# -------------------------------------------------
+# SAVE AS WITH VERSIONING
+# -------------------------------------------------
+if last_v == 0:
+    path = f"{base_path}.001.FCStd"
+    doc.saveAs(path)
+    save_params.SetInt(undo_key, undo_now)
+    FreeCAD.Console.PrintMessage(
+        f"{base_name} → Saved as .001\n"
+    )
+else:
+    if undo_now != last_undo:
+        new_v = last_v + 1
+        path = f"{base_path}.{new_v:03d}.FCStd"
+        doc.saveAs(path)
+        save_params.SetInt(undo_key, undo_now)
+        FreeCAD.Console.PrintMessage(
+            f"{base_name} → Modified → Saved as .{new_v:03d}\n"
+        )
+    else:
+        path = f"{base_path}.{last_v:03d}.FCStd"
+        doc.saveAs(path)
+        FreeCAD.Console.PrintMessage(
+            f"{base_name} → No changes → Saved same version\n"
+        )
+
+FreeCAD.Console.PrintMessage(
+    f"✔ Saved in directory:\n{new_dir}\n"
+)

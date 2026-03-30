@@ -1,0 +1,634 @@
+# -*- coding: utf-8 -*-
+# InsertToleranceTable.FCMacro
+# Inserts standard tolerance/geometric tables into a FreeCAD TechDraw sheet.
+# Tables are inserted as SVG annotations that are movable and editable.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import TechDraw
+import TechDrawGui
+from PySide2 import QtWidgets, QtCore, QtGui
+import math
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  SVG TABLE BUILDER HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+FONT = "osifont"
+FS   = 3.0     # normal font-size  (mm)
+FSS  = 2.5     # small font-size   (mm)
+FST  = 2.8     # title font-size   (mm)
+RH   = 5.5     # row height (mm)
+TH   = 6.5     # title row height (mm)
+PAD      = 1.2    # cell horizontal padding (mm)
+CHAR_W   = 1.45   # approx mm per character at FSS
+MIN_COL  = 7.0    # minimum column width (mm)
+
+
+def _s(v):
+    """Format a float/int for SVG attribute."""
+    return f"{v:.3f}"
+
+
+def _xml_escape(s):
+    """Escape characters that are invalid inside SVG/XML text nodes."""
+    return (str(s)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;"))
+
+
+def _text(x, y, text, fs=FS, bold=False, anchor="middle"):
+    fw = "bold" if bold else "normal"
+    return (f'<text x="{_s(x)}" y="{_s(y)}" '
+            f'font-family="{FONT}" font-size="{_s(fs)}" '
+            f'font-weight="{fw}" text-anchor="{anchor}" '
+            f'dominant-baseline="middle">{_xml_escape(text)}</text>')
+
+
+def _rect(x, y, w, h, fill="none", sw=0.25):
+    return (f'<rect x="{_s(x)}" y="{_s(y)}" width="{_s(w)}" height="{_s(h)}" '
+            f'fill="{fill}" stroke="black" stroke-width="{_s(sw)}"/>')
+
+
+def _hline(x1, y, x2, sw=0.25):
+    return f'<line x1="{_s(x1)}" y1="{_s(y)}" x2="{_s(x2)}" y2="{_s(y)}" stroke="black" stroke-width="{_s(sw)}"/>'
+
+
+def _vline(x, y1, y2, sw=0.25):
+    return f'<line x1="{_s(x)}" y1="{_s(y1)}" x2="{_s(x)}" y2="{_s(y2)}" stroke="black" stroke-width="{_s(sw)}"/>'
+
+
+def compute_auto_cols(headers, rows):
+    """Auto-compute column widths (mm) from cell text content."""
+    num_cols = max((len(r) for r in rows), default=1)
+    col_w = [MIN_COL] * num_cols
+
+    # Pass 1 – data rows and single-span header cells
+    for row in rows:
+        for i, cell in enumerate(row):
+            text = cell[0] if isinstance(cell, tuple) else str(cell)
+            w = len(text) * CHAR_W + 2 * PAD
+            if w > col_w[i]:
+                col_w[i] = w
+
+    for hrow in headers:
+        ci = 0
+        for cell in hrow:
+            text, span = (cell[0], int(cell[1])) if isinstance(cell, tuple) else (str(cell), 1)
+            if span == 1:
+                w = len(text) * CHAR_W + 2 * PAD
+                if w > col_w[ci]:
+                    col_w[ci] = w
+            ci += span
+
+    # Pass 2 – spanned header cells: expand proportionally if needed
+    for hrow in headers:
+        ci = 0
+        for cell in hrow:
+            text, span = (cell[0], int(cell[1])) if isinstance(cell, tuple) else (str(cell), 1)
+            if span > 1:
+                w_needed  = len(text) * CHAR_W + 2 * PAD
+                w_current = sum(col_w[ci:ci + span])
+                if w_needed > w_current:
+                    extra = (w_needed - w_current) / span
+                    for j in range(ci, ci + span):
+                        col_w[j] += extra
+            ci += span
+
+    return col_w
+
+
+def build_svg(table_def):
+    """
+    table_def = {
+        "title"   : str,
+        "cols"    : [col_width_mm, ...],       # column widths
+        "headers" : [ [cell_text, ...], ...]   # list of header rows (merged cells use colspan via list of (text, span))
+        "rows"    : [ [cell_text, ...], ... ]  # data rows
+    }
+    Returns an SVG string (no xml declaration, just <svg>…</svg>).
+    """
+    header_rows = table_def.get("headers", [])
+    data_rows   = table_def.get("rows",    [])
+    title       = table_def.get("title",   "")
+
+    cols    = compute_auto_cols(header_rows, data_rows)
+    total_w = sum(cols)
+
+    # Ensure title text fits within the table width
+    if title:
+        title_min_w = len(title) * CHAR_W * (FST / FSS) + 2 * PAD
+        if title_min_w > total_w:
+            scale   = title_min_w / total_w
+            cols    = [c * scale for c in cols]
+            total_w = sum(cols)
+    num_rows = len(header_rows) + len(data_rows)
+    title_h  = TH if title else 0
+    total_h  = title_h + num_rows * RH
+
+    lines = []
+    lines.append(f'<svg xmlns="http://www.w3.org/2000/svg" '
+                 f'width="{_s(total_w)}mm" height="{_s(total_h)}mm" '
+                 f'viewBox="0 0 {_s(total_w)} {_s(total_h)}">')
+
+    # outer border
+    lines.append(_rect(0, 0, total_w, total_h, sw=0.4))
+
+    cy = 0.0
+
+    # title row
+    if title:
+        lines.append(_rect(0, cy, total_w, TH))
+        lines.append(_text(total_w / 2, cy + TH / 2, title, fs=FST, bold=True))
+        cy += TH
+
+    def _draw_row(row_cells, y, col_widths):
+        """Draw one row. row_cells is list of str or (str, span_count)."""
+        lines.append(_rect(0, y, total_w, RH))
+        cx = 0.0
+        ci = 0
+        for cell in row_cells:
+            if isinstance(cell, tuple):
+                text, span = cell
+            else:
+                text, span = cell, 1
+            cw = sum(col_widths[ci:ci+span])
+            lines.append(_rect(cx, y, cw, RH))
+            lines.append(_text(cx + cw / 2, y + RH / 2, str(text), fs=FSS))
+            cx += cw
+            ci += span
+
+    # header rows
+    for hr in header_rows:
+        _draw_row(hr, cy, cols)
+        cy += RH
+
+    # data rows
+    for dr in data_rows:
+        _draw_row(dr, cy, cols)
+        cy += RH
+
+    lines.append('</svg>')
+    return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  TABLE DEFINITIONS  (all data from images)
+# ─────────────────────────────────────────────────────────────────────────────
+
+TABLE_DEFS = {}
+
+# ── 1. GEOMETRIC TOL. FOR MACHINING ─────────────────────────────────────────
+TABLE_DEFS["GEOMETRIC TOL. FOR MACHINING"] = {
+    "title": "GEOMETRIC TOL. FOR MACHINING",
+    "cols": [14, 6, 6, 6,   6, 6, 6,   6, 6, 6,   6, 6, 6],
+    "headers": [
+        [("NOM DIM", 1),
+         ("STRIGHT, FLAT, PARELLEL", 3),
+         ("RUNOUT, CIRCULAR", 3),
+         ("SYMMETRY", 3),
+         ("PERPENDICULAR", 3)],
+        ["", "3", "2", "1",
+             "3", "2", "1",
+             "3", "2", "1",
+             "3", "2", "1"],
+    ],
+    "rows": [
+        ["≤4",      "0.08", "0.04", "0.02",  "",    "",    "",    "0.6", "0.4", "0.2",  "0.4", "0.2", "0.10"],
+        ["4–16",    "0.15", "0.08", "0.04",  "",    "",    "",    "0.6", "0.4", "0.2",  "0.6", "0.3", "0.15"],
+        ["16–23",   "0.30", "0.15", "0.08",  "0.3", "0.2", "0.1","0.8", "0.5", "0.3",  "0.8", "0.4", "0.20"],
+        ["63–250",  "0.60", "0.30", "0.15",  "",    "",    "",    "1.0", "0.6", "0.4",  "1.2", "0.6", "0.30"],
+        ["250–1000","1.20", "0.60", "0.30",  "",    "",    "",    "1.6", "0.8", "0.5",  "1.6", "0.8", "0.40"],
+    ],
+}
+
+# ── 2. FOR MACHINING (Angular degrees) ──────────────────────────────────────
+TABLE_DEFS["FOR MACHINING (ANGULAR)"] = {
+    "title": "FOR MACHINING",
+    "cols": [18, 22],
+    "headers": [
+        [("BASIC SIZE", 1), ("DEGREES", 1)],
+    ],
+    "rows": [
+        ["≤4",       "± 1°– 30'"],
+        ["16–32",    "± 1°– 30'"],
+        ["16–32",    "± 0°– 45'"],
+        ["32–63",    "± 0°– 30'"],
+        ["63–250",   "± 0°– 20'"],
+        ["250–1000", "± 0°– 15'"],
+    ],
+}
+
+# ── 3. TOL. FOR MACHINING ────────────────────────────────────────────────────
+TABLE_DEFS["TOL. FOR MACHINING"] = {
+    "title": "TOL.FOR MACHINING",
+    "cols": [12, 10, 10, 12,  10,  12, 12],
+    "headers": [
+        [("BASIC SIZE", 1),
+         ("OUT SIDE Ø", 1),
+         ("INSIDE Ø", 2),
+         ("LENGTH", 1),
+         ("CORNER", 2)],
+        ["", "", "BORING", "DRILLING", "± 0.1", "CHAMF", "ROUND"],
+    ],
+    "rows": [
+        ["≤1",      "-0.1",  "+0.1",  "+0.2",  "± 0.1", "± 0.25", "± 0.25"],
+        ["1–4",     "-0.1",  "+0.1",  "+0.2",  "± 0.1", "± 0.6",  "± 0.6" ],
+        ["4–16",    "-0.15", "+0.15", "+0.4",  "± 0.15","± 0.6",  "± 0.6" ],
+        ["16–63",   "-0.2",  "+0.2",  "+0.6",  "± 0.2", "–",      "–"     ],
+        ["63–250",  "-0.4",  "+0.4",  "–",     "± 0.4", "–",      "–"     ],
+        ["250–1000","-0.6",  "+0.6",  "–",     "± 0.6", "–",      "–"     ],
+    ],
+}
+
+# ── 4. TOL. FOR CASTING ──────────────────────────────────────────────────────
+TABLE_DEFS["TOL. FOR CASTING"] = {
+    "title": "TOL.FOR CASTING",
+    "cols": [12, 12, 10, 10,  14, 14],
+    "headers": [
+        [("BASIC SIZE", 1),
+         ("HIGH–PDC", 3),
+         ("SHELL CASTING", 1),
+         ("SAND CASTING", 1)],
+        ["", "LENGTH", "I.D", "O.D", "", ""],
+    ],
+    "rows": [
+        ["1–4",      "± 0.1", "+0.2", "-0.2", "± 0.15", "± 0.3"],
+        ["4–16",     "± 0.2", "+0.3", "-0.3", "± 0.3",  "± 0.5"],
+        ["16–63",    "± 0.3", "+0.4", "-0.4", "± 0.4",  "± 0.7"],
+        ["63–250",   "± 0.5", "+0.8", "-0.8", "± 0.7",  "± 1.2"],
+        ["250–1000", "± 0.8", "+1.2", "-1.2", "± 1.0",  "± 2.0"],
+    ],
+}
+
+# ── 5. TOL. FOR PRESSING ─────────────────────────────────────────────────────
+TABLE_DEFS["TOL. FOR PRESSING"] = {
+    "title": "TOL.FOR PRESSING",
+    "cols": [12, 12, 12, 12],
+    "headers": [
+        [("NOM DIMN", 1), ("LENGTH", 1), ("INSIDE Ø", 2)],
+        ["", "", "1≥2.3", "≥2.3"],
+    ],
+    "rows": [
+        ["≤4",     "± 0.3", "+0.2", "+0.4"],
+        ["4–16",   "± 0.5", "+0.4", "+0.8"],
+        ["16–63",  "± 0.7", "+0.6", "+1.2"],
+        ["63–250", "± 1.2", "+1.0", "+2.0"],
+        ["250–1000","± 2.0","+1.6", "+3.2"],
+    ],
+}
+
+# ── 6. TOL. FOR FORGING ──────────────────────────────────────────────────────
+TABLE_DEFS["TOL. FOR FORGING"] = {
+    "title": "TOL.FOR FORGING",
+    "cols": [14, 12, 12, 16],
+    "headers": [
+        [("NOM DIMN", 1), ("THICK", 1), ("LENGTH", 1), ("DEVIATION OF CENTURING", 1)],
+    ],
+    "rows": [
+        ["≤4",     "+0.4 / -0.2", "± 0.3",  ""],
+        ["4–16",   "+0.6 / -0.3", "± 0.4",  "0.5"],
+        ["16–63",  "+1.0 / -0.5", "± 0.5",  ""],
+        ["63–250", "+1.5 / -0.5", "± 1.0",  ""],
+    ],
+}
+
+# ── 7. POSITIONAL TOL. FOR CASTING ───────────────────────────────────────────
+TABLE_DEFS["POSITIONAL TOL. FOR CASTING"] = {
+    "title": "POSITIONAL TOL.FOR CASTING",
+    "cols": [14, 12, 12, 12],
+    "headers": [
+        [("NOM DIMN", 1), ("CASTING", 3)],
+        ["", "DIE", "SHELL", "SAND"],
+    ],
+    "rows": [
+        ["1–4",     "± 0.15", "± 0.4", "± 0.8"],
+        ["4–16",    "± 0.3",  "± 0.5", "± 1.0"],
+        ["16–63",   "± 0.4",  "± 0.6", "± 1.5"],
+        ["63–250",  "± 0.6",  "± 1.0", "± 1.8"],
+        ["250–1000","± 1.0",  "± 1.5", "± 2.5"],
+    ],
+}
+
+# ── 8. TOL. FOR WELDING ──────────────────────────────────────────────────────
+TABLE_DEFS["TOL. FOR WELDING"] = {
+    "title": "TOL.FOR WELDING",
+    "cols": [18, 18],
+    "headers": [
+        [("NOM DIMN", 1), ("LENGTH", 1)],
+    ],
+    "rows": [
+        ["≤4",    "± 0.4"],
+        ["4–16",  "± 0.6"],
+        ["16–63", "± 1.2"],
+        ["63–250","± 2.0"],
+        ["> 250", "± 3.2"],
+    ],
+}
+
+# ── 9. POSITIONAL TOL. FOR PRESSING ─────────────────────────────────────────
+TABLE_DEFS["POSITIONAL TOL. FOR PRESSING"] = {
+    "title": "POSITIONAL TOL.FOR PRESSING",
+    "cols": [20, 16],
+    "headers": [
+        [("NOM DIMN", 1), ("TOL.", 1)],
+    ],
+    "rows": [
+        ["≤16",   "± 0.1"],
+        ["16–63", "± 0.15"],
+        ["63–250","± 0.2"],
+        ["> 250", "± 0.3"],
+    ],
+}
+
+# ── 10. TOL. FOR PLASTIC ─────────────────────────────────────────────────────
+TABLE_DEFS["TOL. FOR PLASTIC"] = {
+    "title": "TOL.FOR PLASTIC",
+    "cols": [16, 12, 12, 12],
+    "headers": [
+        [("BASIC SIZE", 1), ("LENGTH", 1), ("I.D", 1), ("O.D", 1)],
+    ],
+    "rows": [
+        ["1–4",      "± 0.1", "+0.2", "-0.2"],
+        ["4–16",     "± 0.2", "+0.3", "-0.2"],
+        ["16–63",    "± 0.3", "+0.4", "-0.2"],
+        ["63–250",   "± 0.5", "+0.8", "-0.8"],
+        ["250–1000", "± 0.8", "+1.2", "-1.2"],
+    ],
+}
+
+# ── 11. TOL. FOR RUBBER ──────────────────────────────────────────────────────
+TABLE_DEFS["TOL. FOR RUBBER"] = {
+    "title": "TOL.FOR RUBBER",
+    "cols": [16, 16, 18],
+    "headers": [
+        [("NOM DIMN", 1), ("MOULDING", 1), ("EXTRUSION & OTHERS", 1)],
+    ],
+    "rows": [
+        ["3",       "± 0.3", "± 0.4"],
+        ["3–6",     "± 0.4", "± 0.5"],
+        ["6–10",    "± 0.5", "± 0.6"],
+        ["10–18",   "± 0.6", "± 0.8"],
+        ["18–30",   "± 0.8", "± 1.0"],
+        ["30–50",   "± 1.0", "± 1.5"],
+        ["50–80",   "± 1.2", "± 2.0"],
+        ["80–120",  "± 1.4", "± 2.5"],
+        ["120–180", "± 1.6", "± 3.0"],
+        ["180–250", "± 2.0", "± 4.0"],
+        ["250–315", "± 2.5", "± 5.0"],
+        ["315–400", "± 3.0", "± 6.0"],
+        ["400–500", "± 3.5", "± 7.0"],
+        ["> 500",   "± 0.8%","± 15%"],
+    ],
+}
+
+# ── 12. TOL. FOR LOST WAX PROCESS ────────────────────────────────────────────
+TABLE_DEFS["TOL. FOR LOST WAX PROCESS"] = {
+    "title": "TOL.FOR LOST WAX PROCESS",
+    "cols": [16, 14, 14],
+    "headers": [
+        [("BASIC SIZE", 1), ("Ø LG", 1), ("ROUNDING", 1)],
+    ],
+    "rows": [
+        ["0.3–1",   "± 0.10", "± 0.25"],
+        ["1–4",     "± 0.15", "± 0.30"],
+        ["4–18",    "± 0.20", "± 0.30"],
+        ["16–30",   "± 0.25", "± 0.40"],
+        ["30–50",   "± 0.30", "± 0.40"],
+        ["50–75",   "± 0.40", "± 0.50"],
+        ["75–100",  "± 0.50", "± 0.70"],
+        ["100–150", "± 0.60", "± 1.20"],
+        ["150–250", "± 1.00", "± 2.00"],
+        ["250–350", "± 1.20", "± 3.00"],
+    ],
+}
+
+# ── 13. ANGULAR & ROUGHNESS TOL. FOR LOST WAX PROCESS ───────────────────────
+TABLE_DEFS["ANGULAR & ROUGHNESS TOL. FOR LOST WAX"] = {
+    "title": "ANGULAR & ROUGHNESS TOL.FOR LOST WAX PROCESS",
+    "cols": [22, 24],
+    "headers": [
+        [("ANGLES", 1), ("SURFACE ROUGHNESS", 1)],
+    ],
+    "rows": [
+        ["± 1°", "R8 ≤ 6.4"],
+    ],
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  INSERT SVG AS TECHDRAW ANNOTATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+def insert_table_to_drawing(page, table_name):
+    """Create a DrawViewAnnotation (SVG symbol) on the given TechDraw page."""
+    doc = App.ActiveDocument
+
+    td = table_def = TABLE_DEFS[table_name]
+    svg_str = build_svg(table_def)
+
+    # Unique feature name
+    safe_name = "TolTable_" + "".join(c if c.isalnum() else "_" for c in table_name)
+    existing = [o.Name for o in doc.Objects]
+    counter = 1
+    candidate = safe_name
+    while candidate in existing:
+        candidate = f"{safe_name}_{counter}"
+        counter += 1
+    feature_name = candidate
+
+    # TechDraw SVG Symbol (movable annotation)
+    import tempfile, os
+    tmp = tempfile.NamedTemporaryFile(suffix=".svg", delete=False, mode="w", encoding="utf-8")
+    tmp.write('<?xml version="1.0" encoding="utf-8"?>\n')
+    tmp.write(svg_str)
+    tmp.close()
+
+    sym = doc.addObject("TechDraw::DrawViewSymbol", feature_name)
+    sym.Label = ""   # suppress the name shown below the table on the sheet
+    with open(tmp.name, "r", encoding="utf-8") as f:
+        sym.Symbol = f.read()
+    os.unlink(tmp.name)
+
+    page.addView(sym)
+
+    # Default position – centre of page
+    try:
+        sym.X = page.PageWidth  / 2
+        sym.Y = page.PageHeight / 2
+    except Exception:
+        sym.X = 100.0
+        sym.Y = 150.0
+
+    sym.Scale = 1.0
+    doc.recompute()
+    App.Console.PrintMessage(f"[ToleranceTable] Added '{table_name}' to '{page.Label}'\n")
+    return sym
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  DIALOG
+# ─────────────────────────────────────────────────────────────────────────────
+
+TABLE_LABELS = [
+    "GEOMETRIC TOL. FOR MACHINING",
+    "FOR MACHINING (ANGULAR)",
+    "TOL. FOR MACHINING",
+    "TOL. FOR CASTING",
+    "TOL. FOR PRESSING",
+    "TOL. FOR FORGING",
+    "POSITIONAL TOL. FOR CASTING",
+    "TOL. FOR WELDING",
+    "POSITIONAL TOL. FOR PRESSING",
+    "TOL. FOR PLASTIC",
+    "TOL. FOR RUBBER",
+    "TOL. FOR LOST WAX PROCESS",
+    "ANGULAR & ROUGHNESS TOL. FOR LOST WAX",
+]
+
+DISPLAY_LABELS = [
+    "1. GEOMETRIC TOL. FOR MACHINING",
+    "2. FOR MACHINING (Angular degrees)",
+    "3. TOL. FOR MACHINING",
+    "4. TOL. FOR CASTING",
+    "5. TOL. FOR PRESSING",
+    "6. TOL. FOR FORGING",
+    "7. POSITIONAL TOL. FOR CASTING",
+    "8. TOL. FOR WELDING",
+    "9. POSITIONAL TOL. FOR PRESSING",
+    "10. TOL. FOR PLASTIC",
+    "11. TOL. FOR RUBBER",
+    "12. TOL. FOR LOST WAX PROCESS",
+    "13. ANGULAR & ROUGHNESS TOL. FOR LOST WAX",
+]
+
+
+class ToleranceTableDialog(QtWidgets.QDialog):
+
+    def __init__(self, pages, parent=None):
+        super().__init__(parent or Gui.getMainWindow())
+        self.pages = pages
+        self._build_ui()
+
+    def _build_ui(self):
+        self.setWindowTitle("Insert Tolerance / Geometric Tables")
+        self.setMinimumWidth(460)
+        layout = QtWidgets.QVBoxLayout(self)
+
+        # Page selector
+        pg_row = QtWidgets.QHBoxLayout()
+        pg_row.addWidget(QtWidgets.QLabel("Target Drawing Sheet:"))
+        self.page_combo = QtWidgets.QComboBox()
+        for p in self.pages:
+            self.page_combo.addItem(p.Label, p)
+        pg_row.addWidget(self.page_combo, 1)
+        layout.addLayout(pg_row)
+
+        layout.addWidget(_separator())
+
+        # Table checkboxes
+        grp = QtWidgets.QGroupBox("Select Table(s) to Insert")
+        grp_lay = QtWidgets.QVBoxLayout(grp)
+        self.checkboxes = []
+        for display, key in zip(DISPLAY_LABELS, TABLE_LABELS):
+            cb = QtWidgets.QCheckBox(display)
+            cb.setProperty("table_key", key)
+            grp_lay.addWidget(cb)
+            self.checkboxes.append(cb)
+        layout.addWidget(grp)
+
+        # Select all / none
+        sel_row = QtWidgets.QHBoxLayout()
+        btn_all  = QtWidgets.QPushButton("Select All")
+        btn_none = QtWidgets.QPushButton("Clear All")
+        btn_all.clicked.connect(self._select_all)
+        btn_none.clicked.connect(self._clear_all)
+        sel_row.addWidget(btn_all)
+        sel_row.addWidget(btn_none)
+        sel_row.addStretch()
+        layout.addLayout(sel_row)
+
+        layout.addWidget(_separator())
+
+        # Buttons
+        btn_row = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        btn_row.button(QtWidgets.QDialogButtonBox.Ok).setText("Add Selected Tables")
+        btn_row.accepted.connect(self._on_add)
+        btn_row.rejected.connect(self.reject)
+        layout.addWidget(btn_row)
+
+    def _select_all(self):
+        for cb in self.checkboxes:
+            cb.setChecked(True)
+
+    def _clear_all(self):
+        for cb in self.checkboxes:
+            cb.setChecked(False)
+
+    def _on_add(self):
+        selected = [cb.property("table_key") for cb in self.checkboxes if cb.isChecked()]
+        if not selected:
+            QtWidgets.QMessageBox.warning(self, "No Selection",
+                                          "Please select at least one table.")
+            return
+
+        page_idx = self.page_combo.currentIndex()
+        page = self.page_combo.itemData(page_idx)
+
+        errors = []
+        for tname in selected:
+            try:
+                insert_table_to_drawing(page, tname)
+            except Exception as e:
+                errors.append(f"{tname}: {e}")
+
+        if errors:
+            QtWidgets.QMessageBox.warning(
+                self, "Some tables failed",
+                "The following tables could not be inserted:\n\n" + "\n".join(errors)
+            )
+        else:
+            QtWidgets.QMessageBox.information(
+                self, "Done",
+                f"{len(selected)} table(s) added to '{page.Label}'.\n\n"
+                "Tip: Double-click a table in the drawing to move/edit it, "
+                "or use the Data panel to adjust X/Y position and Scale."
+            )
+        self.accept()
+
+
+def _separator():
+    sep = QtWidgets.QFrame()
+    sep.setFrameShape(QtWidgets.QFrame.HLine)
+    sep.setFrameShadow(QtWidgets.QFrame.Sunken)
+    return sep
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  ENTRY POINT
+# ─────────────────────────────────────────────────────────────────────────────
+
+def main():
+    doc = App.ActiveDocument
+    if doc is None:
+        QtWidgets.QMessageBox.critical(None, "No Document",
+                                       "Please open a FreeCAD document first.")
+        return
+
+    # Collect TechDraw pages
+    pages = [o for o in doc.Objects if o.isDerivedFrom("TechDraw::DrawPage")]
+    if not pages:
+        QtWidgets.QMessageBox.critical(None, "No Drawing Sheet",
+                                       "No TechDraw drawing sheet found in the active document.\n"
+                                       "Please create or open a drawing sheet first.")
+        return
+
+    dlg = ToleranceTableDialog(pages)
+    dlg.exec_()
+
+
+main()

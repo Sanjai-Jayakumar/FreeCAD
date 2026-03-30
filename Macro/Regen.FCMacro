@@ -1,0 +1,505 @@
+# -*- coding: utf-8 -*-
+"""
+Regen Assembly Macro for FreeCAD 1.0.2 (Default Assembly Workbench)
+
+Two modes of operation:
+
+1. **After Rename** — Detects a pending rename map written by the Rename
+   macro, restores (reloads) affected documents from disk so that patched
+   XLink references, labels and joint sub-element names take effect, then
+   recomputes.  Does NOT reset placements (the saved positions are correct).
+
+2. **After Transform** — No rename map present.  Resets every part's
+   placement to identity and re-invokes the constraint solver so that
+   manually-moved parts snap back to their joint-defined positions.
+"""
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import os
+import json
+
+_ROOT_TYPES = ('PartDesign::Body', 'Assembly::AssemblyObject')
+_RENAME_MAP_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                '.rename_map.json')
+
+
+# ── Rename-map helpers (disk-based JSON file) ──────────────────────────
+
+def _get_pending_renames():
+    """Read all pending old_name -> new_name mappings from the shared
+    JSON file on disk."""
+    if not os.path.exists(_RENAME_MAP_FILE):
+        return {}
+    try:
+        with open(_RENAME_MAP_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _resolve_rename_chain(rename_map):
+    """Resolve transitive chains:  A->B, B->C  becomes  A->C, B->C."""
+    resolved = {}
+    for old, new in rename_map.items():
+        final = new
+        seen = {old}
+        while final in rename_map and final not in seen:
+            seen.add(final)
+            final = rename_map[final]
+        resolved[old] = final
+    return resolved
+
+
+def _clear_rename_map():
+    """Remove the rename-map file from disk."""
+    try:
+        if os.path.exists(_RENAME_MAP_FILE):
+            os.remove(_RENAME_MAP_FILE)
+    except Exception:
+        pass
+
+
+# ── Build body-label index across all open documents ────────────────────
+
+def _build_body_index():
+    """Return dict  {label: body_object}  for every first PartDesign::Body /
+    Assembly::AssemblyObject in each open document.  Skips docs that are
+    themselves assembly containers (they are not link targets)."""
+    index = {}
+    for d in App.listDocuments().values():
+        for obj in d.Objects:
+            if obj.TypeId in _ROOT_TYPES:
+                index[obj.Label] = obj
+                break           # only first root object per doc
+    return index
+
+
+# ── Link-label refresh (live — no rename map) ──────────────────────────
+
+def _refresh_link_labels_live(doc):
+    """Update link display labels from the live LinkedObject resolution.
+    Returns the number of labels updated."""
+    updated = 0
+    for obj in doc.Objects:
+        lo = getattr(obj, 'LinkedObject', None)
+        if lo is None:
+            continue
+        try:
+            linked_doc = lo.Document
+            if linked_doc is None or linked_doc.Name == doc.Name:
+                continue
+            for lobj in linked_doc.Objects:
+                if lobj.TypeId in _ROOT_TYPES:
+                    if obj.Label != lobj.Label:
+                        App.Console.PrintMessage(
+                            "Regen: [live] '{}' label '{}' -> '{}'\n"
+                            .format(obj.Name, obj.Label, lobj.Label))
+                        obj.Label = lobj.Label
+                        updated += 1
+                    break
+        except Exception as e:
+            App.Console.PrintWarning(
+                "Regen: [live] Error on '{}': {}\n".format(obj.Name, e))
+    return updated
+
+
+# ── Sync Model Parameters across links ──────────────────────────────────
+
+def _get_root_object(doc):
+    """Return the first PartDesign::Body or Assembly::AssemblyObject in doc."""
+    for obj in doc.Objects:
+        if obj.TypeId in _ROOT_TYPES:
+            return obj
+    return None
+
+
+def _sync_model_parameters(link_obj, source_obj):
+    """Copy all MP_* properties (and Description) from source_obj to link_obj.
+    Creates properties on the link if they don't exist yet."""
+    synced = 0
+    for prop in source_obj.PropertiesList:
+        if not prop.startswith("MP_") and prop != "Description":
+            continue
+        try:
+            src_val = getattr(source_obj, prop)
+        except Exception:
+            continue
+
+        # Create the property on the link object if missing
+        if prop not in link_obj.PropertiesList:
+            try:
+                prop_type = source_obj.getTypeIdOfProperty(prop)
+                link_obj.addProperty(prop_type, prop, "Model Parameters", "")
+            except Exception:
+                continue
+
+        try:
+            current_val = getattr(link_obj, prop)
+            if current_val != src_val:
+                setattr(link_obj, prop, src_val)
+                App.Console.PrintMessage(
+                    "Regen: [MP sync] {}.{}: '{}' -> '{}'\n"
+                    .format(link_obj.Label, prop, current_val, src_val))
+                synced += 1
+        except Exception as e:
+            App.Console.PrintWarning(
+                "Regen: [MP sync] Failed {}.{}: {}\n"
+                .format(link_obj.Label, prop, e))
+    return synced
+
+
+def _sync_model_parameters_all():
+    """For every open assembly, sync MP_* properties from linked parts'
+    root bodies to the assembly-side link objects."""
+    total = 0
+    for open_doc in list(App.listDocuments().values()):
+        for obj in open_doc.Objects:
+            lo = getattr(obj, 'LinkedObject', None)
+            if lo is None:
+                continue
+            try:
+                linked_doc = lo.Document
+                if linked_doc is None or linked_doc.Name == open_doc.Name:
+                    continue
+                root = _get_root_object(linked_doc)
+                if root is None:
+                    continue
+                total += _sync_model_parameters(obj, root)
+            except Exception:
+                pass
+
+    if total:
+        App.Console.PrintMessage(
+            "Regen: Synced {} Model Parameter(s) across links.\n".format(total))
+        # Save assemblies that were updated
+        for open_doc in list(App.listDocuments().values()):
+            try:
+                if open_doc.isTouched():
+                    open_doc.recompute()
+                    open_doc.purgeTouched()
+                    if open_doc.FileName:
+                        open_doc.save()
+            except Exception:
+                pass
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  MODE 1 — RENAME HANDLING
+# ════════════════════════════════════════════════════════════════════════
+
+def _handle_pending_renames():
+    """Process any pending rename map entries.
+    Returns True if renames were handled (caller should NOT reset placements).
+    Returns False if there was nothing to do."""
+    import re as _re
+
+    rename_map = _resolve_rename_chain(_get_pending_renames())
+    if not rename_map:
+        return False
+
+    App.Console.PrintMessage(
+        "Regen: Pending renames: {}\n".format(rename_map))
+
+    old_names = set(rename_map.keys())
+
+    # ── Helper: find or open the new-named part doc ───────────────────
+    def _find_or_open_new_doc(old_label, new_label):
+        """Return the document that now has the renamed body, opening it
+        from disk if not already in memory."""
+        # 1. Already open?
+        for d in list(App.listDocuments().values()):
+            try:
+                for obj in d.Objects:
+                    if obj.Label == new_label and obj.TypeId in _ROOT_TYPES:
+                        return d
+            except Exception:
+                pass
+
+        # 2. Search all open-doc directories on disk for new_label.*.ext.FCStd
+        search_dirs = set()
+        for d in list(App.listDocuments().values()):
+            try:
+                fp = str(d.FileName) if d.FileName else ''
+                if fp:
+                    search_dirs.add(os.path.dirname(fp))
+            except Exception:
+                pass
+
+        pat = _re.compile(
+            rf"^{_re.escape(new_label)}\.(\d{{3}})\.(prt|asm)\.FCStd$",
+            _re.IGNORECASE)
+        best_path, best_ver = None, -1
+        for sdir in search_dirs:
+            if not os.path.isdir(sdir):
+                continue
+            for fname in os.listdir(sdir):
+                m = pat.match(fname)
+                if m:
+                    ver = int(m.group(1))
+                    if ver > best_ver:
+                        best_ver = ver
+                        best_path = os.path.join(sdir, fname)
+
+        if best_path:
+            try:
+                App.Console.PrintMessage(
+                    "Regen: Opening renamed part '{}' ...\n"
+                    .format(os.path.basename(best_path)))
+                return App.openDocument(best_path)
+            except Exception as e:
+                App.Console.PrintWarning(
+                    "Regen: Could not open '{}': {}\n"
+                    .format(os.path.basename(best_path), e))
+        return None
+
+    # ── Step 1: Update assembly links in-memory then save ────────────
+    # This handles both scenarios:
+    #   A) Assembly was already saved with the part link and the XML was
+    #      patched on disk by the Rename macro => labels are stale in
+    #      memory, update + save to keep them consistent.
+    #   B) Assembly had an UNSAVED in-memory part link (e.g. part was
+    #      just inserted before rename) => disk has no link at all.
+    #      We MUST update in-memory here; closing and reopening would
+    #      lose the unsaved link.
+    for open_doc in list(App.listDocuments().values()):
+        try:
+            is_asm = any(o.TypeId == 'Assembly::AssemblyObject'
+                         for o in open_doc.Objects)
+            if not is_asm:
+                continue
+            has_stale = any(o.Label in old_names for o in open_doc.Objects)
+            if not has_stale:
+                continue
+
+            doc_fp = str(open_doc.FileName) if open_doc.FileName else ''
+            updated_count = 0
+
+            for obj in list(open_doc.Objects):
+                old_label = obj.Label
+                if old_label not in rename_map:
+                    continue
+                new_label = rename_map[old_label]
+
+                # Re-link the App::Link to the new-named document
+                new_doc = _find_or_open_new_doc(old_label, new_label)
+                if new_doc:
+                    new_root = _get_root_object(new_doc)
+                    if new_root and hasattr(obj, 'LinkedObject'):
+                        try:
+                            obj.LinkedObject = new_root
+                            App.Console.PrintMessage(
+                                "Regen:   Re-linked '{}' -> '{}' in '{}'\n"
+                                .format(old_label, new_label,
+                                        new_root.Document.Label))
+                        except Exception as e:
+                            App.Console.PrintWarning(
+                                "Regen:   Re-link failed for '{}': {}\n"
+                                .format(old_label, e))
+                else:
+                    App.Console.PrintWarning(
+                        "Regen:   New doc for '{}' not found; "
+                        "label-only update.\n".format(new_label))
+
+                obj.Label = new_label
+                updated_count += 1
+                App.Console.PrintMessage(
+                    "Regen:   Label updated: '{}' -> '{}'\n"
+                    .format(old_label, new_label))
+
+            if updated_count:
+                try:
+                    open_doc.recompute()
+                    if doc_fp and os.path.exists(doc_fp):
+                        open_doc.save()
+                        App.Console.PrintMessage(
+                            "Regen: Assembly saved: '{}'\n"
+                            .format(os.path.basename(doc_fp)))
+                except Exception as e:
+                    App.Console.PrintWarning(
+                        "Regen: Could not save assembly '{}': {}\n"
+                        .format(os.path.basename(doc_fp) if doc_fp else '?', e))
+        except Exception as ex:
+            App.Console.PrintWarning(
+                "Regen: Error processing doc: {}\n".format(ex))
+
+    # ── Step 2: Close stale part docs (file no longer exists on disk) ─
+    # Assembly is NOT closed — it was updated in-place above, so no
+    # "Link broken" errors here.
+    stale_docs = []
+    for open_doc in list(App.listDocuments().values()):
+        try:
+            fp = str(open_doc.FileName) if open_doc.FileName else ''
+            if fp and not os.path.exists(fp):
+                stale_docs.append((open_doc.Name, open_doc.Label))
+        except Exception:
+            pass
+
+    for doc_name, doc_label in stale_docs:
+        App.Console.PrintMessage(
+            "Regen: Closing stale doc '{}'\n".format(doc_label))
+        try:
+            App.closeDocument(doc_name)
+        except Exception as e:
+            App.Console.PrintWarning(
+                "Regen: Could not close '{}': {}\n".format(doc_label, e))
+
+    # ── Step 3: Recompute all open documents ─────────────────────────
+    for open_doc in list(App.listDocuments().values()):
+        try:
+            open_doc.recompute()
+        except Exception:
+            pass
+
+    # ── Step 4: Sync Model Parameters from linked parts ──────────────
+    _sync_model_parameters_all()
+
+    _clear_rename_map()
+    App.Console.PrintMessage("Regen: Rename map processed and cleared.\n")
+
+    # Refresh the 3-D view
+    try:
+        if Gui.ActiveDocument and Gui.ActiveDocument.ActiveView:
+            Gui.ActiveDocument.ActiveView.fitAll()
+    except Exception:
+        pass
+    Gui.updateGui()
+
+    App.Console.PrintMessage("Regen: Rename regeneration complete.\n")
+    return True
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  MODE 2 — TRANSFORM REGEN (reset placements + solve)
+# ════════════════════════════════════════════════════════════════════════
+
+def _regen_assembly_solver():
+    """Reset part placements and re-solve joints for every assembly in
+    the active document."""
+    doc = App.ActiveDocument
+    if doc is None:
+        App.Console.PrintError("Regen: No active document found.\n")
+        return
+
+    # Quick live-label refresh (no auto-save — just update in memory)
+    for open_doc in list(App.listDocuments().values()):
+        _refresh_link_labels_live(open_doc)
+
+    # ── Locate all assembly objects ─────────────────────────────────────
+    assemblies = []
+    for obj in doc.Objects:
+        if obj.TypeId == "Assembly::AssemblyObject":
+            assemblies.append(obj)
+
+    if not assemblies:
+        App.Console.PrintWarning(
+            "Regen: No Assembly::AssemblyObject found in this document.\n"
+        )
+        return
+
+    for assembly in assemblies:
+        App.Console.PrintMessage(
+            "Regen: Processing assembly '{}' ...\n".format(assembly.Label)
+        )
+
+        # ── Collect joints and movable parts ────────────────────────────
+        joints = []
+        parts = []
+        for child in assembly.Group:
+            if child.TypeId == "Assembly::JointGroup":
+                for j in child.Group:
+                    joints.append(j)
+            elif hasattr(child, "Placement") and "Origin" not in child.TypeId:
+                parts.append(child)
+
+        App.Console.PrintMessage(
+            "Regen:   Found {} part(s), {} joint(s).\n"
+            .format(len(parts), len(joints))
+        )
+
+        # ── Step 1: Reset every part's Placement to identity ────────────
+        for part in parts:
+            part.Placement = App.Placement()
+            App.Console.PrintMessage(
+                "Regen:   Reset placement of '{}'\n".format(part.Label)
+            )
+
+        # ── Step 2: Touch every joint to mark it dirty ──────────────────
+        for j in joints:
+            try:
+                j.touch()
+            except Exception:
+                pass
+
+        # ── Step 3: Touch the assembly itself ───────────────────────────
+        assembly.touch()
+
+        # ── Step 4: Invoke the constraint solver ────────────────────────
+        solved = False
+
+        # 4a – Try assembly.solve() directly
+        try:
+            if hasattr(assembly, "solve"):
+                assembly.solve()
+                solved = True
+                App.Console.PrintMessage(
+                    "Regen:   Solver executed via assembly.solve().\n"
+                )
+        except Exception as e:
+            App.Console.PrintWarning(
+                "Regen:   assembly.solve() failed ({}).\n".format(e)
+            )
+
+        # 4b – Fallback: GUI solver command
+        if not solved:
+            try:
+                Gui.ActiveDocument.setEdit(assembly, 0)
+                Gui.runCommand("Assembly_SolveAssembly", 0)
+                Gui.ActiveDocument.resetEdit()
+                solved = True
+                App.Console.PrintMessage(
+                    "Regen:   Solver executed via Assembly_SolveAssembly.\n"
+                )
+            except Exception:
+                pass
+
+        # 4c – Fallback: full document recompute
+        if not solved:
+            doc.recompute()
+            App.Console.PrintMessage(
+                "Regen:   Fallback: full document recompute.\n"
+            )
+
+    # ── Final recompute & view refresh ──────────────────────────────────
+    doc.recompute()
+
+    try:
+        Gui.ActiveDocument.ActiveView.fitAll()
+    except Exception:
+        pass
+    Gui.updateGui()
+
+    App.Console.PrintMessage("Regen: Assembly regeneration complete.\n")
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  ENTRY POINT
+# ════════════════════════════════════════════════════════════════════════
+
+def regen():
+    if App.ActiveDocument is None:
+        App.Console.PrintError("Regen: No active document found.\n")
+        return
+
+    # Mode 1: If there are pending renames, handle them and return.
+    #          Do NOT reset placements — the saved file has correct positions.
+    if _handle_pending_renames():
+        return
+
+    # Mode 2: No pending renames — reset placements and re-solve joints.
+    _regen_assembly_solver()
+
+
+# ── Execute ──────────────────────────────────────────────────────────────
+regen()
