@@ -70,3 +70,9 @@ files_to_translate.txt
 # pixi environments
 .pixi
 *.egg-info
+
+# BNC build artifacts
+build_log.txt
+full_build_log.txt
+install_log.txt
+sketcher_retry_log.txt

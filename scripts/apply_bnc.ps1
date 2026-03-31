@@ -142,7 +142,7 @@ if (Test-Path $systemCfg) {
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
 if ($DryRun) {
-    Write-Host "  DRY RUN complete — no files were written." -ForegroundColor Yellow
+    Write-Host "  DRY RUN complete - no files were written." -ForegroundColor Yellow
 } else {
     Write-Host "  BNC CAD overlay applied successfully!" -ForegroundColor Green
     Write-Host "  Next: Run build_bnc.ps1 or launch BNC CAD." -ForegroundColor Green
