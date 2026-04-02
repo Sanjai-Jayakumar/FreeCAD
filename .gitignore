@@ -76,3 +76,32 @@ build_log.txt
 full_build_log.txt
 install_log.txt
 sketcher_retry_log.txt
+rebuild.log
+rebuild_log.txt
+build_stderr.txt
+build_stdout.txt
+install_build.log
+fc_stdout.txt
+freecad_test*.log
+nsis_log.txt
+7z_log.txt
+HRMS_ref.drawio
+
+# BNC installer artifacts
+installer/*.7z
+installer/*.exe
+installer/*.exe.old
+installer/7zr.exe
+installer/7z_log.txt
+installer/nsis_*.txt
+installer/nsis_*.log
+installer/BNC_CAD.ico
+
+# BNC test scripts (not part of source)
+test_*.py
+
+# Backup files
+*.bak
+*.svg.bak
+install_log.txt
+sketcher_retry_log.txt
