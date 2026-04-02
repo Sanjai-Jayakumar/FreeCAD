@@ -1,0 +1,53 @@
+#!/bin/sh
+# BNC CAD — Git commit-msg hook
+# Enforces conventional commit message format locally before push.
+#
+# Install: copy this file to .git/hooks/commit-msg and make executable
+#   cp scripts/git-hooks/commit-msg .git/hooks/commit-msg
+#   chmod +x .git/hooks/commit-msg  (Linux/Mac)
+#
+# Format: type(scope): description
+# Types: feat|fix|refactor|docs|style|test|build|ci|chore|perf|revert
+
+COMMIT_MSG_FILE=$1
+COMMIT_MSG=$(head -1 "$COMMIT_MSG_FILE")
+
+# Allow merge commits and revert commits automatically
+if echo "$COMMIT_MSG" | grep -qE "^Merge |^Revert "; then
+  exit 0
+fi
+
+PATTERN='^(feat|fix|refactor|docs|style|test|build|ci|chore|perf|revert)(\([a-zA-Z0-9_-]+\))?: .{3,}'
+
+if ! echo "$COMMIT_MSG" | grep -qE "$PATTERN"; then
+  echo ""
+  echo "═══════════════════════════════════════════════════"
+  echo "  BNC CAD — COMMIT MESSAGE REJECTED"
+  echo "═══════════════════════════════════════════════════"
+  echo ""
+  echo "  Your message:  $COMMIT_MSG"
+  echo ""
+  echo "  Required format:  type(scope): description"
+  echo ""
+  echo "  Allowed types:"
+  echo "    feat     — New feature"
+  echo "    fix      — Bug fix"
+  echo "    refactor — Code change (no feature/fix)"
+  echo "    docs     — Documentation only"
+  echo "    style    — Formatting, whitespace, etc."
+  echo "    test     — Adding or fixing tests"
+  echo "    build    — Build system / dependencies"
+  echo "    ci       — CI/CD pipeline changes"
+  echo "    chore    — Maintenance tasks"
+  echo "    perf     — Performance improvement"
+  echo "    revert   — Revert a previous commit"
+  echo ""
+  echo "  Examples:"
+  echo "    feat(assembly): add BNC working directory tools"
+  echo "    fix(icons): replace SVG icon with PNG variants"
+  echo "    build(installer): update NSIS script for branding"
+  echo "    docs(readme): update build instructions"
+  echo ""
+  echo "═══════════════════════════════════════════════════"
+  exit 1
+fi

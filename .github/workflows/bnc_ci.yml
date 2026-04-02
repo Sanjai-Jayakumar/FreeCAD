@@ -1,0 +1,315 @@
+# BNC CAD — CI Pipeline
+# Runs on every push and pull request to the bnc-* branches.
+# Enforces commit conventions, code quality, and build verification.
+
+name: BNC CAD CI
+
+on:
+  push:
+    branches:
+      - 'bnc-*'
+  pull_request:
+    branches:
+      - 'bnc-*'
+
+concurrency:
+  group: bnc-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ──────────────────────────────────────────────
+  # 1. COMMIT LINT — Enforce Conventional Commits
+  # ──────────────────────────────────────────────
+  commit-lint:
+    name: "Commit Message Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate commit messages (Conventional Commits)
+        run: |
+          echo "::group::Checking commit messages"
+          FAILED=0
+          # Pattern: type(scope): description
+          # Allowed types: feat, fix, refactor, docs, style, test, build, ci, chore, perf, revert
+          PATTERN='^(feat|fix|refactor|docs|style|test|build|ci|chore|perf|revert)(\([a-zA-Z0-9_-]+\))?: .{3,}'
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            COMMITS=$(git log --format='%s' ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }})
+          else
+            COMMITS=$(git log --format='%s' -1)
+          fi
+
+          while IFS= read -r msg; do
+            if [ -z "$msg" ]; then continue; fi
+            if ! echo "$msg" | grep -qE "$PATTERN"; then
+              echo "::error::Invalid commit message: '$msg'"
+              echo "  Expected format: type(scope): description"
+              echo "  Allowed types: feat|fix|refactor|docs|style|test|build|ci|chore|perf|revert"
+              FAILED=1
+            else
+              echo "✓ $msg"
+            fi
+          done <<< "$COMMITS"
+
+          if [ $FAILED -eq 1 ]; then
+            echo "::error::Commit message validation failed. Use conventional commits format."
+            exit 1
+          fi
+          echo "::endgroup::"
+
+  # ──────────────────────────────────────────────
+  # 2. FILE GUARD — Block unwanted files
+  # ──────────────────────────────────────────────
+  file-guard:
+    name: "File Guard (Block Artifacts)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for forbidden file types
+        run: |
+          echo "::group::Scanning for forbidden files"
+          FORBIDDEN=0
+
+          # Block build artifacts, binaries, logs, and large files
+          PATTERNS=(
+            '\.exe$'
+            '\.7z$'
+            '\.zip$'
+            '\.msi$'
+            '\.dll$'
+            '\.lib$'
+            '\.obj$'
+            '\.pdb$'
+            '\.log$'
+            '\.bak$'
+            '_log\.txt$'
+            'build_log'
+            'install_log'
+            'nsis_.*\.txt$'
+            'HRMS_ref'
+          )
+
+          for pattern in "${PATTERNS[@]}"; do
+            MATCHES=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep -iE "$pattern" || true)
+            if [ -z "$MATCHES" ]; then
+              # Also check tracked files
+              MATCHES=$(git ls-files | grep -iE "$pattern" || true)
+            fi
+            if [ -n "$MATCHES" ]; then
+              echo "::warning::Forbidden file pattern '$pattern' matched:"
+              echo "$MATCHES"
+            fi
+          done
+
+          # Hard block: check staged files for .exe/.7z/.dll
+          STAGED_BLOCKED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -iE '\.(exe|7z|dll|pdb|msi)$' || true)
+          if [ -n "$STAGED_BLOCKED" ]; then
+            echo "::error::Binary/archive files must not be committed:"
+            echo "$STAGED_BLOCKED"
+            FORBIDDEN=1
+          fi
+
+          if [ $FORBIDDEN -eq 1 ]; then
+            exit 1
+          fi
+          echo "All clear — no forbidden files found."
+          echo "::endgroup::"
+
+  # ──────────────────────────────────────────────
+  # 3. PYTHON LINT — Check Python code quality
+  # ──────────────────────────────────────────────
+  python-lint:
+    name: "Python Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install linters
+        run: pip install flake8 pycodestyle
+
+      - name: Lint BNC Python files
+        run: |
+          echo "::group::Linting BNC Python modules"
+          # Lint BNC-specific modules and macros with relaxed rules
+          flake8 \
+            --max-line-length=120 \
+            --ignore=E501,W503,E402,E741,F401 \
+            --count \
+            --show-source \
+            --statistics \
+            src/Mod/Assembly/InitGui.py \
+            src/Mod/Assembly/Init.py \
+            src/Mod/Tux/InitGui.py \
+            Macro/*.FCMacro \
+            || true
+          echo "::endgroup::"
+
+      - name: Check for syntax errors (strict)
+        run: |
+          # This one MUST pass — no syntax errors allowed
+          flake8 \
+            --select=E9,F63,F7,F82 \
+            --show-source \
+            src/Mod/Assembly/InitGui.py \
+            src/Mod/Assembly/Init.py \
+            src/Mod/Tux/InitGui.py
+
+  # ──────────────────────────────────────────────
+  # 4. C++ LINT — Check C++ code quality
+  # ──────────────────────────────────────────────
+  cpp-check:
+    name: "C++ Static Analysis"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get changed C++ files
+        id: cpp-changes
+        run: |
+          FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -E '\.(cpp|h|hpp|cxx)$' || echo "")
+          echo "files=$FILES" >> $GITHUB_OUTPUT
+          if [ -z "$FILES" ]; then
+            echo "No C++ files changed."
+          else
+            echo "Changed C++ files:"
+            echo "$FILES"
+          fi
+
+      - name: Install cppcheck
+        if: steps.cpp-changes.outputs.files != ''
+        run: sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck on changed files
+        if: steps.cpp-changes.outputs.files != ''
+        run: |
+          echo "${{ steps.cpp-changes.outputs.files }}" | tr ' ' '\n' | while read -r f; do
+            if [ -f "$f" ]; then
+              echo "Checking: $f"
+              cppcheck --enable=warning,style --error-exitcode=0 --quiet "$f" 2>&1
+            fi
+          done
+
+  # ──────────────────────────────────────────────
+  # 5. XML / QRC VALIDATION
+  # ──────────────────────────────────────────────
+  xml-validate:
+    name: "XML / QRC Validation"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xmllint
+        run: sudo apt-get install -y libxml2-utils
+
+      - name: Validate QRC resource files
+        run: |
+          echo "::group::Validating XML/QRC files"
+          FAILED=0
+          for f in $(find src -name '*.qrc' -type f); do
+            if ! xmllint --noout "$f" 2>/dev/null; then
+              echo "::error file=$f::Invalid XML in $f"
+              FAILED=1
+            else
+              echo "✓ $f"
+            fi
+          done
+          if [ $FAILED -eq 1 ]; then exit 1; fi
+          echo "::endgroup::"
+
+  # ──────────────────────────────────────────────
+  # 6. NSIS INSTALLER SYNTAX CHECK
+  # ──────────────────────────────────────────────
+  nsis-check:
+    name: "NSIS Script Validation"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check NSIS script syntax
+        run: |
+          if [ -f "installer/BNC_CAD.nsi" ]; then
+            echo "Checking NSIS script for common issues..."
+            # Check for required sections
+            for section in "Section" "SectionEnd" "!define PRODUCT_NAME" "!define PRODUCT_VERSION"; do
+              if ! grep -q "$section" installer/BNC_CAD.nsi; then
+                echo "::warning::Missing expected NSIS directive: $section"
+              fi
+            done
+            # Check for balanced Section/SectionEnd
+            OPENS=$(grep -c "^Section " installer/BNC_CAD.nsi || echo 0)
+            CLOSES=$(grep -c "^SectionEnd" installer/BNC_CAD.nsi || echo 0)
+            if [ "$OPENS" != "$CLOSES" ]; then
+              echo "::error::Unbalanced Section/SectionEnd in NSIS script ($OPENS opens, $CLOSES closes)"
+              exit 1
+            fi
+            echo "✓ NSIS script structure looks valid ($OPENS sections)"
+          else
+            echo "No NSIS script found — skipping."
+          fi
+
+  # ──────────────────────────────────────────────
+  # 7. SVG ICON VALIDATION
+  # ──────────────────────────────────────────────
+  svg-check:
+    name: "SVG Icon Validation"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xmllint
+        run: sudo apt-get install -y libxml2-utils
+
+      - name: Validate SVG icons
+        run: |
+          FAILED=0
+          for f in $(git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -iE '\.svg$' || true); do
+            if [ -f "$f" ]; then
+              if ! xmllint --noout "$f" 2>/dev/null; then
+                echo "::error file=$f::Invalid SVG: $f"
+                FAILED=1
+              else
+                echo "✓ $f"
+              fi
+            fi
+          done
+          if [ $FAILED -eq 1 ]; then exit 1; fi
+          echo "All SVG files are valid XML."
+
+  # ──────────────────────────────────────────────
+  # 8. SIZE GUARD — Prevent large file commits
+  # ──────────────────────────────────────────────
+  size-guard:
+    name: "File Size Guard"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for oversized files (>5 MB)
+        run: |
+          MAX_SIZE_KB=5120
+          FAILED=0
+          for f in $(git diff --name-only HEAD~1 HEAD 2>/dev/null || true); do
+            if [ -f "$f" ]; then
+              SIZE_KB=$(du -k "$f" | cut -f1)
+              if [ "$SIZE_KB" -gt "$MAX_SIZE_KB" ]; then
+                echo "::error file=$f::File too large: $f (${SIZE_KB}KB > ${MAX_SIZE_KB}KB limit)"
+                FAILED=1
+              fi
+            fi
+          done
+          if [ $FAILED -eq 1 ]; then
+            echo "::error::Large files detected. Use .gitignore or Git LFS for binary assets."
+            exit 1
+          fi
+          echo "✓ All changed files are within size limits."

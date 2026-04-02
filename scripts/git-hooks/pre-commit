@@ -1,0 +1,61 @@
+#!/bin/sh
+# BNC CAD — Git pre-commit hook
+# Prevents committing forbidden files (binaries, logs, build artifacts).
+#
+# Install: copy this file to .git/hooks/pre-commit and make executable
+#   cp scripts/git-hooks/pre-commit .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit  (Linux/Mac)
+
+FORBIDDEN_PATTERNS='\.(exe|7z|zip|msi|dll|lib|obj|pdb|bak)$|_log\.txt$|build_log|install_log|nsis_.*\.txt$'
+MAX_FILE_SIZE_KB=5120
+
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+
+if [ -z "$STAGED_FILES" ]; then
+  exit 0
+fi
+
+BLOCKED=""
+OVERSIZED=""
+
+for file in $STAGED_FILES; do
+  # Check forbidden patterns
+  if echo "$file" | grep -qiE "$FORBIDDEN_PATTERNS"; then
+    BLOCKED="$BLOCKED\n  - $file"
+  fi
+
+  # Check file size
+  if [ -f "$file" ]; then
+    SIZE_KB=$(du -k "$file" 2>/dev/null | cut -f1)
+    if [ -n "$SIZE_KB" ] && [ "$SIZE_KB" -gt "$MAX_FILE_SIZE_KB" ]; then
+      OVERSIZED="$OVERSIZED\n  - $file (${SIZE_KB}KB)"
+    fi
+  fi
+done
+
+if [ -n "$BLOCKED" ] || [ -n "$OVERSIZED" ]; then
+  echo ""
+  echo "═══════════════════════════════════════════════════"
+  echo "  BNC CAD — COMMIT BLOCKED"
+  echo "═══════════════════════════════════════════════════"
+
+  if [ -n "$BLOCKED" ]; then
+    echo ""
+    echo "  Forbidden files staged for commit:"
+    echo -e "$BLOCKED"
+    echo ""
+    echo "  Remove them with: git reset HEAD <file>"
+  fi
+
+  if [ -n "$OVERSIZED" ]; then
+    echo ""
+    echo "  Oversized files (>${MAX_FILE_SIZE_KB}KB):"
+    echo -e "$OVERSIZED"
+    echo ""
+    echo "  Add to .gitignore or use Git LFS."
+  fi
+
+  echo ""
+  echo "═══════════════════════════════════════════════════"
+  exit 1
+fi

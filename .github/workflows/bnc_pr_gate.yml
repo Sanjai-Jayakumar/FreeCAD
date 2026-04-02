@@ -1,0 +1,145 @@
+# BNC CAD — Pull Request Quality Gate
+# This workflow runs on PRs to bnc-* branches and enforces strict quality rules.
+# ALL checks must pass before a PR can be merged.
+
+name: BNC CAD PR Gate
+
+on:
+  pull_request:
+    branches:
+      - 'bnc-*'
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # ──────────────────────────────────────────────
+  # 1. PR TITLE VALIDATION
+  # ──────────────────────────────────────────────
+  pr-title:
+    name: "PR Title Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title follows conventional commits
+        run: |
+          TITLE="${{ github.event.pull_request.title }}"
+          PATTERN='^(feat|fix|refactor|docs|style|test|build|ci|chore|perf|revert)(\([a-zA-Z0-9_-]+\))?: .{3,}'
+          if ! echo "$TITLE" | grep -qE "$PATTERN"; then
+            echo "::error::PR title must follow conventional commit format."
+            echo "  Got: '$TITLE'"
+            echo "  Expected: type(scope): description"
+            echo "  Types: feat|fix|refactor|docs|style|test|build|ci|chore|perf|revert"
+            echo ""
+            echo "Examples:"
+            echo "  feat(assembly): add BNC custom working directory tools"
+            echo "  fix(icons): replace SVG icon with PNG variants"
+            echo "  build(installer): update NSIS script for BNC branding"
+            exit 1
+          fi
+          echo "✓ PR title is valid: $TITLE"
+
+  # ──────────────────────────────────────────────
+  # 2. PR DESCRIPTION CHECK
+  # ──────────────────────────────────────────────
+  pr-description:
+    name: "PR Description Check"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify PR has a meaningful description
+        run: |
+          BODY_LENGTH=$(echo "${{ github.event.pull_request.body }}" | wc -c)
+          if [ "$BODY_LENGTH" -lt 30 ]; then
+            echo "::error::PR description is too short (${BODY_LENGTH} chars). Please describe your changes (minimum 30 characters)."
+            echo "Include: what changed, why it changed, and how to test."
+            exit 1
+          fi
+          echo "✓ PR description has sufficient detail (${BODY_LENGTH} chars)"
+
+  # ──────────────────────────────────────────────
+  # 3. CHANGE SCOPE VALIDATION
+  # ──────────────────────────────────────────────
+  change-scope:
+    name: "Change Scope Check"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify change scope is reasonable
+        run: |
+          CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} | wc -l)
+          echo "Files changed: $CHANGED"
+
+          if [ "$CHANGED" -gt 50 ]; then
+            echo "::warning::This PR changes $CHANGED files. Consider splitting into smaller PRs for easier review."
+          fi
+
+          if [ "$CHANGED" -eq 0 ]; then
+            echo "::error::This PR has no file changes."
+            exit 1
+          fi
+
+          echo "✓ Change scope: $CHANGED files"
+
+  # ──────────────────────────────────────────────
+  # 4. NO MERGE COMMITS
+  # ──────────────────────────────────────────────
+  no-merge-commits:
+    name: "No Merge Commits"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for merge commits
+        run: |
+          MERGES=$(git log --merges --format='%H %s' ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} || true)
+          if [ -n "$MERGES" ]; then
+            echo "::error::Merge commits found in PR. Please rebase instead of merging."
+            echo "$MERGES"
+            exit 1
+          fi
+          echo "✓ No merge commits found — clean history."
+
+  # ──────────────────────────────────────────────
+  # 5. PROTECTED PATH CHECK
+  # ──────────────────────────────────────────────
+  protected-paths:
+    name: "Protected Path Check"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for changes to protected upstream files
+        run: |
+          # These paths should rarely change in BNC — flag them for review
+          PROTECTED_PATHS=(
+            "CMakeLists.txt"
+            "LICENSE"
+            "SECURITY.md"
+            ".github/workflows/CI_master.yml"
+            ".github/workflows/CI_cleanup.yml"
+            ".github/workflows/build_release.yml"
+          )
+
+          CHANGED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }})
+          FLAGGED=0
+
+          for protected in "${PROTECTED_PATHS[@]}"; do
+            if echo "$CHANGED_FILES" | grep -qF "$protected"; then
+              echo "::warning file=$protected::Protected file modified: $protected — requires careful review"
+              FLAGGED=1
+            fi
+          done
+
+          if [ $FLAGGED -eq 1 ]; then
+            echo "::warning::Protected files were modified. Ensure these changes are intentional and won't break upstream sync."
+          else
+            echo "✓ No protected files modified."
+          fi
