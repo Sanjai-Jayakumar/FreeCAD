@@ -1,0 +1,90 @@
+# ─────────────────────────────────────────────────────────────
+# BNC CAD — Release Workflow
+# Triggered when a tag matching bnc-v* is pushed.
+# Creates a GitHub Release draft with auto-generated notes.
+# The installer binary must be uploaded manually (built locally).
+# ─────────────────────────────────────────────────────────────
+name: BNC Release
+
+on:
+  push:
+    tags:
+      - 'bnc-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#bnc-v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # Determine if this is a pre-release (rc, beta, alpha)
+          if echo "$VERSION" | grep -qE '(rc|beta|alpha)'; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate changelog from commits
+        id: changelog
+        run: |
+          # Find the previous bnc-v* tag
+          PREV_TAG=$(git tag -l 'bnc-v*' --sort=-v:refname | sed -n '2p')
+
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous BNC tag found — listing last 20 commits"
+            LOG=$(git log --oneline -20)
+          else
+            echo "Generating changelog since $PREV_TAG"
+            LOG=$(git log "$PREV_TAG"..HEAD --oneline)
+          fi
+
+          # Write to file for the release body
+          {
+            echo "## BNC CAD ${{ steps.version.outputs.version }}"
+            echo ""
+            echo "### Changes"
+            echo ""
+            echo "$LOG" | while IFS= read -r line; do
+              echo "- $line"
+            done
+            echo ""
+            echo "### Installation"
+            echo "1. Download \`BNC CAD.exe\` from the Assets below"
+            echo "2. Run the installer as Administrator"
+            echo "3. Follow the installation wizard"
+            echo "4. Launch from Desktop shortcut or Start Menu"
+            echo ""
+            echo "### System Requirements"
+            echo "- Windows 10/11 (64-bit)"
+            echo "- 4 GB RAM minimum (8 GB recommended)"
+            echo "- 3 GB free disk space"
+            echo "- OpenGL 3.0+ compatible graphics"
+            echo ""
+            echo "> **Note**: No additional software required — VC++ Runtime is bundled."
+          } > release_notes.md
+
+          cat release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "BNC CAD v${{ steps.version.outputs.version }}"
+          body_path: release_notes.md
+          draft: true
+          prerelease: ${{ steps.version.outputs.prerelease == 'true' }}
+          generate_release_notes: false
