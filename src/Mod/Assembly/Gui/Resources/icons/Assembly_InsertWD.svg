@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <!-- BNC: Insert from Working Directory - folder with arrow -->
+  <!-- Folder back -->
+  <path d="M6,14 L24,14 L28,10 L54,10 L54,14 L58,14 L58,52 L6,52 Z" fill="#f57900" stroke="#ce5c00" stroke-width="2" stroke-linejoin="round"/>
+  <!-- Folder front flap -->
+  <path d="M6,22 L58,22 L58,52 L6,52 Z" fill="#fcaf3e" stroke="#ce5c00" stroke-width="2" stroke-linejoin="round"/>
+  <!-- Folder tab -->
+  <path d="M6,14 L24,14 L28,18 L6,18 Z" fill="#f57900" stroke="#ce5c00" stroke-width="1.5" stroke-linejoin="round"/>
+  <!-- Arrow pointing into folder (download/insert) -->
+  <polygon points="32,26 42,38 36,38 36,48 28,48 28,38 22,38" fill="#eeeeec" stroke="#888a85" stroke-width="1.5" stroke-linejoin="round"/>
+</svg>

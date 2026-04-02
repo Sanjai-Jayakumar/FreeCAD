@@ -1,4 +1,4 @@
-﻿# SPDX-License-Identifier: LGPL-2.1-or-later
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # /**************************************************************************
 #                                                                           *
 #    Copyright (c) 2023 Ondsel <development@ondsel.com>                     *
@@ -20,6 +20,12 @@
 #    <https://www.gnu.org/licenses/>.                                       *
 #                                                                           *
 # **************************************************************************/
+
+import os as _os
+import FreeCAD as _fc
+_home = _fc.getHomePath()
+_os.add_dll_directory(_os.path.join(_home, 'lib'))
+_os.add_dll_directory(_os.path.join(_home, 'bin'))
 
 import Assembly_rc
 
@@ -1650,8 +1656,6 @@ class AssemblyWorkbench(Workbench):
             'Assembly_BOM',
         ]
 
-        self.appendMenu(
-            [QT_TRANSLATE_NOOP("Workbench", "&Assembly")],
         self.appendToolbar(QT_TRANSLATE_NOOP('Workbench', 'BNC Assembly Tools'), cmdListBNC)
 
         self.appendMenu(

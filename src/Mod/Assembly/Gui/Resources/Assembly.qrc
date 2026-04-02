@@ -37,5 +37,10 @@
         <file>preferences/Assembly.ui</file>
         <file>icons/Assembly_CreateJointDistance.svg</file>
         <file>icons/AssemblyWorkbench.svg</file>
+        <file>icons/Assembly_Create_part.svg</file>
+        <file>icons/Assembly_InsertWD.svg</file>
+        <file>icons/Assembly_Default.svg</file>
+        <file>icons/Assembly_Regen.svg</file>
+        <file>icons/Assembly_BOM.svg</file>
     </qresource>
 </RCC>

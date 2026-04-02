@@ -21,6 +21,12 @@
 #                                                                           *
 # **************************************************************************/
 
+import os as _os
+import FreeCAD as _fc
+_home = _fc.getHomePath()
+_os.add_dll_directory(_os.path.join(_home, 'lib'))
+_os.add_dll_directory(_os.path.join(_home, 'bin'))
+
 # Get the Parameter Group of this module
 ParGrp = App.ParamGet("System parameter:Modules").GetGroup("Assembly")
 
