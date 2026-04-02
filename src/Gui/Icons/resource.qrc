@@ -92,6 +92,10 @@
         <file>freecad-doc.png</file>
         <file>freecad-doc.svg</file>
         <file>freecad.svg</file>
+        <file>freecad-icon-16.png</file>
+        <file>freecad-icon-32.png</file>
+        <file>freecad-icon-48.png</file>
+        <file>freecad-icon-64.png</file>
         <file>freecadabout.png</file>
         <file>freecadaboutdev.png</file>
         <file>freecadsplash_2x.png</file>
@@ -333,6 +337,10 @@
         <file>list-remove.svg</file>
         <file>list-add.svg</file>
         <file>freecad.svg</file>
+        <file>freecad-icon-16.png</file>
+        <file>freecad-icon-32.png</file>
+        <file>freecad-icon-48.png</file>
+        <file>freecad-icon-64.png</file>
         <file>freecad-doc.png</file>
         <file>freecad-doc.svg</file>
         <file>bulb.svg</file>

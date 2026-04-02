@@ -2434,9 +2434,14 @@ void setAppNameAndIcon()
         QApplication::setApplicationName(QString::fromStdString(App::Application::getExecutableName()));
     }
 #ifndef Q_OS_MACOS
-    QApplication::setWindowIcon(
-        Gui::BitmapFactory().pixmap(App::Application::Config()["AppIcon"].c_str())
-    );
+    {
+        QIcon appIcon;
+        appIcon.addPixmap(Gui::BitmapFactory().pixmap("freecad-icon-16"), QIcon::Normal, QIcon::Off);
+        appIcon.addPixmap(Gui::BitmapFactory().pixmap("freecad-icon-32"), QIcon::Normal, QIcon::Off);
+        appIcon.addPixmap(Gui::BitmapFactory().pixmap("freecad-icon-48"), QIcon::Normal, QIcon::Off);
+        appIcon.addPixmap(Gui::BitmapFactory().pixmap("freecad-icon-64"), QIcon::Normal, QIcon::Off);
+        QApplication::setWindowIcon(appIcon);
+    }
 #endif
 }
 

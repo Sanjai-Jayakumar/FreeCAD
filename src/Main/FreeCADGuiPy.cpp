@@ -311,9 +311,12 @@ static QWidget* setupMainWindow()
 
         QIcon icon = qApp->windowIcon();
         if (icon.isNull()) {
-            qApp->setWindowIcon(
-                Gui::BitmapFactory().pixmap(App::Application::Config()["AppIcon"].c_str())
-            );
+            QIcon appIcon;
+            appIcon.addPixmap(Gui::BitmapFactory().pixmap("freecad-icon-16"), QIcon::Normal, QIcon::Off);
+            appIcon.addPixmap(Gui::BitmapFactory().pixmap("freecad-icon-32"), QIcon::Normal, QIcon::Off);
+            appIcon.addPixmap(Gui::BitmapFactory().pixmap("freecad-icon-48"), QIcon::Normal, QIcon::Off);
+            appIcon.addPixmap(Gui::BitmapFactory().pixmap("freecad-icon-64"), QIcon::Normal, QIcon::Off);
+            qApp->setWindowIcon(appIcon);
         }
         mw->setWindowIcon(qApp->windowIcon());
 
@@ -338,7 +341,7 @@ PyMOD_INIT_FUNC(FreeCADGui)
     try {
         // clang-format off
         Base::Interpreter().loadModule("FreeCAD");
-        App::Application::Config()["AppIcon"] = "freecad";
+        App::Application::Config()["AppIcon"] = "freecad-icon";
         App::Application::Config()["SplashScreen"] = "freecadsplash";
         App::Application::Config()["CopyrightInfo"] = fmt::format("\xc2\xa9 Juergen Riegel, Werner Mayer, Yorik van Havre and others 2001-{}\n", FCCopyrightYear);
         App::Application::Config()["LicenseInfo"] = "FreeCAD is free and open-source software licensed under the terms of LGPL2+ license.\n";
