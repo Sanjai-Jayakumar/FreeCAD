@@ -1,11 +1,11 @@
-; NSIS Modern UI installer for BNC CAD (FreeCAD 1.0.2)
+; NSIS Modern UI installer for BNC CAD 1.1 (custom FreeCAD 1.1 build)
 
 !include "MUI2.nsh"
 
 !define PRODUCT_NAME "BNC CAD"
-!define PRODUCT_VERSION "1.0.2"
+!define PRODUCT_VERSION "1.1"
 !define PRODUCT_PUBLISHER "BNC"
-!define INSTALL_ARCHIVE "BNC_CAD_1.0.2-conda-WithAddons.7z"
+!define INSTALL_ARCHIVE "BNC-CAD-Output.7z"
 !define PAYLOAD_EXTRACTOR "7zr.exe"
 !define OUTPUT_FILE "BNC CAD.exe"
 !define PRODUCT_REGKEY "Software\\${PRODUCT_NAME}"
@@ -14,23 +14,23 @@
 !define MUI_ICON "BNC_CAD.ico"
 !define MUI_UNICON "BNC_CAD.ico"
 !define MUI_FINISHPAGE_NOAUTOCLOSE
-!define MUI_FINISHPAGE_RUN "$INSTDIR\BNC_CAD_1.0.2\bin\BNCCAD.exe"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\bin\FreeCAD.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "Launch ${PRODUCT_NAME}"
 
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
 OutFile "${OUTPUT_FILE}"
 Icon "BNC_CAD.ico"
-InstallDir "C:\\BNC_CAD"
+InstallDir "$PROGRAMFILES\BNC_CAD"
 InstallDirRegKey HKLM "${PRODUCT_REGKEY}" "InstallLocation"
 RequestExecutionLevel admin
 SetCompress force
 SetCompressor /SOLID lzma
-VIProductVersion "1.0.2.0"
+VIProductVersion "1.1.0.0"
 VIAddVersionKey "ProductName" "${PRODUCT_NAME}"
 VIAddVersionKey "ProductVersion" "${PRODUCT_VERSION}"
 VIAddVersionKey "CompanyName" "${PRODUCT_PUBLISHER}"
 VIAddVersionKey "FileDescription" "${PRODUCT_NAME} Installer"
-VIAddVersionKey "FileVersion" "1.0.2.0"
+VIAddVersionKey "FileVersion" "1.1.0.0"
 VIAddVersionKey "LegalCopyright" "(c) 2026 ${PRODUCT_PUBLISHER}"
 
 !insertmacro MUI_PAGE_WELCOME
@@ -52,30 +52,20 @@ Section "${PRODUCT_NAME}" SEC01
   File "default_toolbar_layout.json"
   File "BNC_CAD.ico"
   
-  ; Include Auth Server files
-  SetOutPath "$INSTDIR\BNC_Auth_Server"
-  File "..\BNC_Auth_Server\simple_server.py"
-  File "..\BNC_Auth_Server\start_server.bat"
-  
   SetOutPath "$INSTDIR"
   
   DetailPrint "Extracting application files..."
-  nsExec::ExecToLog '"$INSTDIR\\7zr.exe" x "$INSTDIR\\BNC_CAD_1.0.2-conda-WithAddons.7z" -o"$INSTDIR" -y -aoa'
+  nsExec::ExecToLog '"$INSTDIR\\7zr.exe" x "$INSTDIR\\BNC-CAD-Output.7z" -o"$INSTDIR" -y -aoa'
   Pop $0
   StrCmp $0 "0" +3
     MessageBox MB_ICONSTOP "Extraction failed (error $0)."
     Abort
   Delete "$INSTDIR\\7zr.exe"
-  Delete "$INSTDIR\\BNC_CAD_1.0.2-conda-WithAddons.7z"
-  CopyFiles "$INSTDIR\\BNC_CAD.ico" "$INSTDIR\\BNC_CAD.ico"
+  Delete "$INSTDIR\\BNC-CAD-Output.7z"
 
-  ; Install Python dependencies for auth server
-  DetailPrint "Setting up authentication server..."
-  nsExec::ExecToLog 'pip install flask flask-cors bcrypt --quiet'
-  
-  ; Start Auth Server in background before first launch
-  DetailPrint "Starting authentication service..."
-  nsExec::Exec 'cmd /c start "" /min python "$INSTDIR\BNC_Auth_Server\simple_server.py"'
+  ; Remove old user.cfg so fresh defaults apply (Assembly enabled by default)
+  DetailPrint "Resetting workbench settings for fresh install..."
+  Delete "$APPDATA\\FreeCAD\\user.cfg"
 
   WriteRegStr HKLM "${PRODUCT_REGKEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKLM "${PRODUCT_REGKEY}" "Version" "${PRODUCT_VERSION}"
@@ -89,14 +79,10 @@ Section "${PRODUCT_NAME}" SEC01
   WriteRegDWORD HKLM "${PRODUCT_UNREG}" "NoRepair" 1
 
   CreateDirectory "$SMPROGRAMS\\${PRODUCT_NAME}"
-    CreateShortCut "$SMPROGRAMS\\${PRODUCT_NAME}\\${PRODUCT_NAME}.lnk" "$INSTDIR\\BNC_CAD_1.0.2\\bin\\BNCCAD.exe" "" "$INSTDIR\\BNC_CAD.ico"
-    CreateShortCut "$SMPROGRAMS\\${PRODUCT_NAME}\\Start Auth Server.lnk" "$INSTDIR\\BNC_Auth_Server\\start_server.bat" "" "$INSTDIR\\BNC_CAD.ico"
-    CreateShortCut "$DESKTOP\\${PRODUCT_NAME}.lnk" "$INSTDIR\\BNC_CAD_1.0.2\\bin\\BNCCAD.exe" "" "$INSTDIR\\BNC_CAD.ico"
+    CreateShortCut "$SMPROGRAMS\\${PRODUCT_NAME}\\${PRODUCT_NAME}.lnk" "$INSTDIR\\bin\\FreeCAD.exe" "" "$INSTDIR\\BNC_CAD.ico"
+    CreateShortCut "$DESKTOP\\${PRODUCT_NAME}.lnk" "$INSTDIR\\bin\\FreeCAD.exe" "" "$INSTDIR\\BNC_CAD.ico"
 
   WriteUninstaller "$INSTDIR\\Uninstall.exe"
-  
-  ; Add auth server to Windows startup (runs on login)
-  WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "BNC_CAD_Auth" 'cmd /c start "" /min python "$INSTDIR\BNC_Auth_Server\simple_server.py"'
 
   ; Import default toolbar layout for new users
   nsExec::ExecToLog 'powershell -Command "Copy-Item \"$INSTDIR\\default_toolbar_layout.json\" -Destination \"$APPDATA\\FreeCAD\\default_toolbar_layout.json\" -Force"'
@@ -106,15 +92,8 @@ SectionEnd
 Section "Uninstall"
   SetShellVarContext all
   
-  ; Kill auth server if running
-  nsExec::ExecToLog 'taskkill /f /im python.exe /fi "WINDOWTITLE eq BNC*" 2>nul'
-  
-  ; Remove from startup
-  DeleteRegValue HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "BNC_CAD_Auth"
-  
   Delete "$DESKTOP\\${PRODUCT_NAME}.lnk"
   Delete "$SMPROGRAMS\\${PRODUCT_NAME}\\${PRODUCT_NAME}.lnk"
-  Delete "$SMPROGRAMS\\${PRODUCT_NAME}\\Start Auth Server.lnk"
   RMDir "$SMPROGRAMS\\${PRODUCT_NAME}"
   RMDir /r "$INSTDIR"
   DeleteRegKey HKLM "${PRODUCT_UNREG}"
