@@ -85,3 +85,19 @@ try:
     FreeCAD.Console.PrintLog("BNC CAD: Force workbench toolbar module loaded\n")
 except Exception as e:
     FreeCAD.Console.PrintError(f"BNC CAD: Failed to load force workbench toolbar module: {str(e)}\n")
+
+# BNC CAD: Show Google Sign-In dialog on first launch
+try:
+    import BNCLoginDialog
+
+    def _bnc_show_login():
+        try:
+            BNCLoginDialog.show_login_if_needed()
+        except Exception as exc:
+            FreeCAD.Console.PrintError(f"BNC CAD: Login dialog error: {exc}\n")
+
+    from PySide import QtCore
+    QtCore.QTimer.singleShot(500, _bnc_show_login)
+    FreeCAD.Console.PrintLog("BNC CAD: Login dialog scheduled\n")
+except Exception as e:
+    FreeCAD.Console.PrintError(f"BNC CAD: Failed to load login dialog: {str(e)}\n")
