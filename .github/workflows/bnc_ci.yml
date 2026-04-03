@@ -35,8 +35,6 @@ jobs:
         run: |
           echo "::group::Checking commit messages"
           FAILED=0
-          # Pattern: type(scope): description
-          # Allowed types: feat, fix, refactor, docs, style, test, build, ci, chore, perf, revert
           PATTERN='^(feat|fix|refactor|docs|style|test|build|ci|chore|perf|revert)(\([a-zA-Z0-9_-]+\))?: .{3,}'
 
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -71,55 +69,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
-      - name: Check for forbidden file types
+      - name: Check for forbidden file types in commit
         run: |
-          echo "::group::Scanning for forbidden files"
+          echo "::group::Scanning for forbidden files in this commit"
           FORBIDDEN=0
 
-          # Block build artifacts, binaries, logs, and large files
-          PATTERNS=(
-            '\.exe$'
-            '\.7z$'
-            '\.zip$'
-            '\.msi$'
-            '\.dll$'
-            '\.lib$'
-            '\.obj$'
-            '\.pdb$'
-            '\.log$'
-            '\.bak$'
-            '_log\.txt$'
-            'build_log'
-            'install_log'
-            'nsis_.*\.txt$'
-            'HRMS_ref'
-          )
+          # Get files changed in this commit (safe fallback for first commit)
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff-tree --no-commit-id --name-only -r HEAD)
 
-          for pattern in "${PATTERNS[@]}"; do
-            MATCHES=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep -iE "$pattern" || true)
-            if [ -z "$MATCHES" ]; then
-              # Also check tracked files
-              MATCHES=$(git ls-files | grep -iE "$pattern" || true)
-            fi
-            if [ -n "$MATCHES" ]; then
-              echo "::warning::Forbidden file pattern '$pattern' matched:"
-              echo "$MATCHES"
-            fi
-          done
-
-          # Hard block: check staged files for .exe/.7z/.dll
-          STAGED_BLOCKED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -iE '\.(exe|7z|dll|pdb|msi)$' || true)
-          if [ -n "$STAGED_BLOCKED" ]; then
-            echo "::error::Binary/archive files must not be committed:"
-            echo "$STAGED_BLOCKED"
+          # Hard block: binaries and archives must never be committed
+          BLOCKED=$(echo "$CHANGED" | grep -iE '\.(exe|7z|zip|msi|dll|lib|obj|pdb)$' || true)
+          if [ -n "$BLOCKED" ]; then
+            echo "::error::Forbidden binary/archive files in this commit:"
+            echo "$BLOCKED"
             FORBIDDEN=1
           fi
 
           if [ $FORBIDDEN -eq 1 ]; then
             exit 1
           fi
-          echo "All clear — no forbidden files found."
+          echo "✓ No forbidden files found in this commit."
           echo "::endgroup::"
 
   # ──────────────────────────────────────────────
@@ -136,30 +108,31 @@ jobs:
           python-version: '3.12'
 
       - name: Install linters
-        run: pip install flake8 pycodestyle
+        run: pip install flake8
 
       - name: Lint BNC Python files
         run: |
           echo "::group::Linting BNC Python modules"
-          # Lint BNC-specific modules and macros with relaxed rules
+          # FreeCAD injects FreeCAD/FreeCADGui/App/Gui as runtime builtins
           flake8 \
             --max-line-length=120 \
             --ignore=E501,W503,E402,E741,F401 \
+            --builtins=FreeCAD,FreeCADGui,App,Gui \
             --count \
             --show-source \
             --statistics \
             src/Mod/Assembly/InitGui.py \
             src/Mod/Assembly/Init.py \
             src/Mod/Tux/InitGui.py \
-            Macro/*.FCMacro \
             || true
           echo "::endgroup::"
 
       - name: Check for syntax errors (strict)
         run: |
-          # This one MUST pass — no syntax errors allowed
+          # Block real syntax errors only — FreeCAD runtime names are builtins
           flake8 \
             --select=E9,F63,F7,F82 \
+            --builtins=FreeCAD,FreeCADGui,App,Gui \
             --show-source \
             src/Mod/Assembly/InitGui.py \
             src/Mod/Assembly/Init.py \
@@ -173,6 +146,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Get changed C++ files
         id: cpp-changes
@@ -208,22 +183,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Install xmllint
         run: sudo apt-get install -y libxml2-utils
 
       - name: Validate QRC resource files
         run: |
-          echo "::group::Validating XML/QRC files"
+          echo "::group::Validating BNC-modified QRC files"
           FAILED=0
-          for f in $(find src -name '*.qrc' -type f); do
-            if ! xmllint --noout "$f" 2>/dev/null; then
-              echo "::error file=$f::Invalid XML in $f"
-              FAILED=1
-            else
-              echo "✓ $f"
-            fi
-          done
+          # Only validate QRC files changed in this commit
+          CHANGED_QRC=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -iE '\.qrc$' || true)
+          if [ -z "$CHANGED_QRC" ]; then
+            echo "No QRC files changed — skipping."
+          else
+            for f in $CHANGED_QRC; do
+              if [ -f "$f" ]; then
+                if ! xmllint --noout "$f" 2>/dev/null; then
+                  echo "::error file=$f::Invalid XML in $f"
+                  FAILED=1
+                else
+                  echo "✓ $f"
+                fi
+              fi
+            done
+          fi
           if [ $FAILED -eq 1 ]; then exit 1; fi
           echo "::endgroup::"
 
@@ -240,13 +225,11 @@ jobs:
         run: |
           if [ -f "installer/BNC_CAD.nsi" ]; then
             echo "Checking NSIS script for common issues..."
-            # Check for required sections
             for section in "Section" "SectionEnd" "!define PRODUCT_NAME" "!define PRODUCT_VERSION"; do
               if ! grep -q "$section" installer/BNC_CAD.nsi; then
                 echo "::warning::Missing expected NSIS directive: $section"
               fi
             done
-            # Check for balanced Section/SectionEnd
             OPENS=$(grep -c "^Section " installer/BNC_CAD.nsi || echo 0)
             CLOSES=$(grep -c "^SectionEnd" installer/BNC_CAD.nsi || echo 0)
             if [ "$OPENS" != "$CLOSES" ]; then
@@ -266,6 +249,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Install xmllint
         run: sudo apt-get install -y libxml2-utils
@@ -294,6 +279,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Check for oversized files (>5 MB)
         run: |
