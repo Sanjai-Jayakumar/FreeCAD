@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect x="0" y="0" width="64" height="64" fill="none"/>
+  <!-- Origin dot -->
+  <circle cx="32" cy="36" r="4" fill="#333333"/>
+  <!-- X axis (red) - going right -->
+  <line x1="32" y1="36" x2="58" y2="48" stroke="#E53935" stroke-width="3" stroke-linecap="round"/>
+  <polygon points="58,48 52,44 54,50" fill="#E53935"/>
+  <!-- Y axis (green) - going left -->
+  <line x1="32" y1="36" x2="6" y2="48" stroke="#43A047" stroke-width="3" stroke-linecap="round"/>
+  <polygon points="6,48 12,44 10,50" fill="#43A047"/>
+  <!-- Z axis (blue) - going up -->
+  <line x1="32" y1="36" x2="32" y2="8" stroke="#1E88E5" stroke-width="3" stroke-linecap="round"/>
+  <polygon points="32,8 28,14 36,14" fill="#1E88E5"/>
+  <!-- Labels -->
+  <text x="58" y="56" font-size="9" font-weight="bold" fill="#E53935" text-anchor="middle">X</text>
+  <text x="6" y="56" font-size="9" font-weight="bold" fill="#43A047" text-anchor="middle">Y</text>
+  <text x="32" y="7" font-size="9" font-weight="bold" fill="#1E88E5" text-anchor="middle">Z</text>
+</svg>

@@ -86,18 +86,45 @@ try:
 except Exception as e:
     FreeCAD.Console.PrintError(f"BNC CAD: Failed to load force workbench toolbar module: {str(e)}\n")
 
-# BNC CAD: Show Google Sign-In dialog on first launch
+# BNC CAD: Pipe Bending toolbar — visible ONLY in Part Design workbench
 try:
-    import BNCLoginDialog
+    import BNCPipeBendingToolbar
+    from PySide import QtCore as _pb_qtc
+    _pb_qtc.QTimer.singleShot(2500, BNCPipeBendingToolbar.init)
+    FreeCAD.Console.PrintLog("BNC CAD: Pipe Bending toolbar scheduled\n")
+except Exception as e:
+    FreeCAD.Console.PrintError(f"BNC CAD: Failed to setup Pipe Bending toolbar: {str(e)}\n")
 
-    def _bnc_show_login():
+# BNC CAD: Bounce workbench to force PartDesign toolbars to appear on startup
+# activateWorkbench() is a no-op when the target is already active, so we must
+# switch away first, then back, to trigger C++ setupToolBars().
+try:
+    def _bnc_refresh_partdesign_toolbars():
         try:
-            BNCLoginDialog.show_login_if_needed()
+            import FreeCADGui
+            active = FreeCADGui.activeWorkbench()
+            if active and active.__class__.__name__ == "PartDesignWorkbench":
+                FreeCADGui.activateWorkbench("NoneWorkbench")
+                FreeCADGui.activateWorkbench("PartDesignWorkbench")
+                FreeCAD.Console.PrintLog("BNC CAD: PartDesign toolbars refreshed via bounce\n")
         except Exception as exc:
-            FreeCAD.Console.PrintError(f"BNC CAD: Login dialog error: {exc}\n")
+            FreeCAD.Console.PrintError(f"BNC CAD: Toolbar refresh error: {exc}\n")
 
     from PySide import QtCore
-    QtCore.QTimer.singleShot(500, _bnc_show_login)
-    FreeCAD.Console.PrintLog("BNC CAD: Login dialog scheduled\n")
+    QtCore.QTimer.singleShot(2000, _bnc_refresh_partdesign_toolbars)
+    FreeCAD.Console.PrintLog("BNC CAD: PartDesign toolbar refresh scheduled\n")
+except Exception as e:
+    FreeCAD.Console.PrintError(f"BNC CAD: Failed to schedule toolbar refresh: {str(e)}\n")
+
+# BNC CAD: Show Google Sign-In dialog on launch
+# NOTE: Must use QTimer.singleShot (static) — the same approach that works for
+# the toolbar bounce above.  FreeCAD loads InitGui.py via exec(), so any Python
+# QTimer *instance* created here is garbage-collected before it can fire.
+# IMPORTANT: Do NOT define helper functions here — exec() scope cleanup will
+# garbage-collect them before the timer fires, causing NameError.
+# All login logic lives in BNCLoginScheduler.py to avoid this.
+try:
+    import BNCLoginScheduler
+    BNCLoginScheduler.schedule()
 except Exception as e:
     FreeCAD.Console.PrintError(f"BNC CAD: Failed to load login dialog: {str(e)}\n")

@@ -7,14 +7,30 @@ import os
 import sys
 import json
 import hashlib
+import re
 import secrets
 import base64
 import webbrowser
 import http.server
 import threading
 import urllib.parse
+import urllib.error
 
 import FreeCAD
+import FreeCADGui
+
+# ─── Debug log (written to %TEMP% so we can diagnose first-launch issues) ─────
+_LOG_PATH = os.path.join(os.environ.get("TEMP", os.path.expanduser("~")), "bnc_cad_login.log")
+
+def _dbg(msg):
+    """Append a timestamped line to the debug log file."""
+    try:
+        import datetime
+        ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        with open(_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
 
 try:
     from PySide import QtCore, QtGui
@@ -65,25 +81,26 @@ def logout():
 
 
 # ─── OAuth Config ─────────────────────────────────────────────────────────────
-# Replace these with your real Google OAuth 2.0 credentials.
-# Create them at https://console.cloud.google.com/apis/credentials
+# OAuth credentials are loaded from bnc_oauth.json in the user's FreeCAD data dir.
+# Create the file with: {"client_id": "YOUR_ID", "client_secret": "YOUR_SECRET"}
+# Get credentials at https://console.cloud.google.com/apis/credentials
 _OAUTH_CONFIG_FILE = os.path.join(FreeCAD.getUserAppDataDir(), "bnc_oauth.json")
-
-# Default placeholder values — users/admins drop their own bnc_oauth.json
-_DEFAULT_CLIENT_ID = "YOUR_CLIENT_ID.apps.googleusercontent.com"
-_DEFAULT_CLIENT_SECRET = "YOUR_CLIENT_SECRET"
 
 
 def _oauth_config():
-    """Load OAuth client id/secret from config file or fall back to defaults."""
+    """Load OAuth client id/secret from config file."""
     if os.path.isfile(_OAUTH_CONFIG_FILE):
         try:
             with open(_OAUTH_CONFIG_FILE, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-            return cfg.get("client_id", _DEFAULT_CLIENT_ID), cfg.get("client_secret", _DEFAULT_CLIENT_SECRET)
+            cid = cfg.get("client_id", "")
+            csec = cfg.get("client_secret", "")
+            if cid and csec:
+                return cid, csec
         except (json.JSONDecodeError, OSError):
             pass
-    return _DEFAULT_CLIENT_ID, _DEFAULT_CLIENT_SECRET
+    FreeCAD.Console.PrintWarning("BNC CAD: OAuth config not found. Place bnc_oauth.json in " + FreeCAD.getUserAppDataDir() + "\n")
+    return "", ""
 
 
 # ─── PKCE + OAuth Flow ───────────────────────────────────────────────────────
@@ -175,6 +192,9 @@ _GOOGLE_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="18" height=
   <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
 </svg>"""
 
+# ─── BNC Logo PNG path ────────────────────────────────────────────────────────
+_BNC_LOGO_PNG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "freecad-icon-64.png")
+
 
 # ─── Login Dialog ─────────────────────────────────────────────────────────────
 class BNCLoginDialog(QtWidgets.QDialog):
@@ -188,12 +208,15 @@ class BNCLoginDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Sign in to BNC CAD")
-        self.setFixedSize(460, 560)
+        self.setFixedSize(460, 720)
         self.setWindowFlags(
             QtCore.Qt.Dialog
             | QtCore.Qt.WindowTitleHint
+            | QtCore.Qt.WindowCloseButtonHint
             | QtCore.Qt.CustomizeWindowHint
+            | QtCore.Qt.WindowStaysOnTopHint
         )
+        self.setWindowModality(QtCore.Qt.ApplicationModal)
 
         self._build_ui()
         self._apply_styles()
@@ -205,7 +228,22 @@ class BNCLoginDialog(QtWidgets.QDialog):
         layout.setSpacing(0)
 
         # Top spacer
-        layout.addSpacing(20)
+        layout.addSpacing(10)
+
+        # ── BNC Logo ──
+        logo_icon = QtWidgets.QLabel()
+        logo_icon.setAlignment(QtCore.Qt.AlignCenter)
+        png_pixmap = QtGui.QPixmap(_BNC_LOGO_PNG)
+        if not png_pixmap.isNull():
+            scaled = png_pixmap.scaled(
+                QtCore.QSize(80, 80),
+                QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation,
+            )
+            logo_icon.setPixmap(scaled)
+        layout.addWidget(logo_icon)
+
+        layout.addSpacing(12)
 
         # ── Logo / Brand area ──
         logo_label = QtWidgets.QLabel()
@@ -241,6 +279,12 @@ class BNCLoginDialog(QtWidgets.QDialog):
 
         layout.addSpacing(36)
 
+        # ── Google section container (hidden when OTP is shown) ──
+        self._google_container = QtWidgets.QWidget()
+        gc_layout = QtWidgets.QVBoxLayout(self._google_container)
+        gc_layout.setContentsMargins(0, 0, 0, 0)
+        gc_layout.setSpacing(0)
+
         # ── Google Sign-In button ──
         self._google_btn = QtWidgets.QPushButton("  Sign in with Google")
         self._google_btn.setCursor(QtCore.Qt.PointingHandCursor)
@@ -256,16 +300,116 @@ class BNCLoginDialog(QtWidgets.QDialog):
             self._google_btn.setIconSize(QtCore.QSize(20, 20))
 
         self._google_btn.clicked.connect(self._on_google_signin)
-        layout.addWidget(self._google_btn)
+        gc_layout.addWidget(self._google_btn)
 
-        layout.addSpacing(16)
+        gc_layout.addSpacing(12)
 
-        # ── Status label (spinner / errors) ──
-        self._status = QtWidgets.QLabel("")
-        self._status.setAlignment(QtCore.Qt.AlignCenter)
-        self._status.setWordWrap(True)
-        self._status.setStyleSheet("font-size: 12px; color: #d32f2f;")
-        layout.addWidget(self._status)
+        # ── Google status label ──
+        self._google_status = QtWidgets.QLabel("")
+        self._google_status.setAlignment(QtCore.Qt.AlignCenter)
+        self._google_status.setWordWrap(True)
+        self._google_status.setStyleSheet("font-size: 12px; color: #d32f2f;")
+        gc_layout.addWidget(self._google_status)
+
+        gc_layout.addSpacing(12)
+
+        # ── OR divider ──
+        divider_layout = QtWidgets.QHBoxLayout()
+        divider_layout.setSpacing(12)
+        line_left = QtWidgets.QFrame()
+        line_left.setFrameShape(QtWidgets.QFrame.HLine)
+        line_left.setStyleSheet("color: #dadce0; background-color: #dadce0; max-height: 1px;")
+        or_label = QtWidgets.QLabel("OR")
+        or_label.setStyleSheet("font-size: 12px; font-weight: 600; color: #999;")
+        or_label.setAlignment(QtCore.Qt.AlignCenter)
+        line_right = QtWidgets.QFrame()
+        line_right.setFrameShape(QtWidgets.QFrame.HLine)
+        line_right.setStyleSheet("color: #dadce0; background-color: #dadce0; max-height: 1px;")
+        divider_layout.addWidget(line_left)
+        divider_layout.addWidget(or_label)
+        divider_layout.addWidget(line_right)
+        gc_layout.addLayout(divider_layout)
+
+        layout.addWidget(self._google_container)
+
+        layout.addSpacing(12)
+
+        # ── Email input ──
+        self._email_input = QtWidgets.QLineEdit()
+        self._email_input.setPlaceholderText("Enter your work email")
+        self._email_input.setMinimumHeight(44)
+        self._email_input.setObjectName("emailInput")
+        self._email_input.returnPressed.connect(self._on_email_continue)
+        layout.addWidget(self._email_input)
+
+        layout.addSpacing(6)
+
+        # ── Email error label ──
+        self._email_error = QtWidgets.QLabel("")
+        self._email_error.setAlignment(QtCore.Qt.AlignLeft)
+        self._email_error.setWordWrap(True)
+        self._email_error.setStyleSheet("font-size: 11px; color: #d32f2f; padding-left: 4px;")
+        self._email_error.setVisible(False)
+        layout.addWidget(self._email_error)
+
+        layout.addSpacing(8)
+
+        # ── Continue with Email button ──
+        self._email_btn = QtWidgets.QPushButton("Continue with Email")
+        self._email_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self._email_btn.setMinimumHeight(44)
+        self._email_btn.setObjectName("emailBtn")
+        self._email_btn.clicked.connect(self._on_email_continue)
+        layout.addWidget(self._email_btn)
+
+        layout.addSpacing(8)
+
+        # ── Email status label ──
+        self._email_status = QtWidgets.QLabel("")
+        self._email_status.setAlignment(QtCore.Qt.AlignCenter)
+        self._email_status.setWordWrap(True)
+        self._email_status.setStyleSheet("font-size: 12px; color: #666;")
+        layout.addWidget(self._email_status)
+
+        layout.addSpacing(4)
+
+        # ── OTP section (hidden until email is validated) ──
+        self._otp_container = QtWidgets.QWidget()
+        otp_layout = QtWidgets.QVBoxLayout(self._otp_container)
+        otp_layout.setContentsMargins(0, 0, 0, 0)
+        otp_layout.setSpacing(8)
+
+        otp_label = QtWidgets.QLabel("Enter the 6-digit code sent to your email")
+        otp_label.setAlignment(QtCore.Qt.AlignCenter)
+        otp_label.setWordWrap(True)
+        otp_label.setStyleSheet("font-size: 13px; color: #3c4043;")
+        otp_layout.addWidget(otp_label)
+
+        self._otp_input = QtWidgets.QLineEdit()
+        self._otp_input.setPlaceholderText("000000")
+        self._otp_input.setMinimumHeight(48)
+        self._otp_input.setMaxLength(6)
+        self._otp_input.setAlignment(QtCore.Qt.AlignCenter)
+        self._otp_input.setObjectName("otpInput")
+        self._otp_input.returnPressed.connect(self._on_otp_submit)
+        otp_layout.addWidget(self._otp_input)
+
+        self._otp_error = QtWidgets.QLabel("")
+        self._otp_error.setAlignment(QtCore.Qt.AlignCenter)
+        self._otp_error.setWordWrap(True)
+        self._otp_error.setStyleSheet("font-size: 11px; color: #d32f2f;")
+        self._otp_error.setVisible(False)
+        otp_layout.addWidget(self._otp_error)
+
+        self._otp_submit_btn = QtWidgets.QPushButton("Submit")
+        self._otp_submit_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self._otp_submit_btn.setMinimumHeight(44)
+        self._otp_submit_btn.setObjectName("otpSubmitBtn")
+        self._otp_submit_btn.clicked.connect(self._on_otp_submit)
+        otp_layout.addWidget(self._otp_submit_btn)
+
+        self._otp_container.setVisible(False)
+        layout.addWidget(self._otp_container)
 
         layout.addStretch()
 
@@ -280,14 +424,6 @@ class BNCLoginDialog(QtWidgets.QDialog):
         layout.addWidget(footer)
 
         layout.addSpacing(10)
-
-        # ── Skip link ──
-        skip_btn = QtWidgets.QPushButton("Continue without signing in")
-        skip_btn.setObjectName("skipBtn")
-        skip_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        skip_btn.setFlat(True)
-        skip_btn.clicked.connect(self._on_skip)
-        layout.addWidget(skip_btn, alignment=QtCore.Qt.AlignCenter)
 
     # ── Stylesheet (Claude Desktop-like) ─────────────────────────────────
     def _apply_styles(self):
@@ -309,42 +445,289 @@ class BNCLoginDialog(QtWidgets.QDialog):
             #googleBtn:hover {
                 background-color: #f7f8f8;
                 border-color: #c6c9cc;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.08);
             }
             #googleBtn:pressed {
                 background-color: #eef0f2;
                 border-color: #b0b3b6;
             }
 
-            #skipBtn {
-                color: #1a73e8;
-                font-size: 12px;
-                border: none;
-                padding: 6px 12px;
+            #emailInput {
+                border: 1.5px solid #dadce0;
+                border-radius: 8px;
+                padding: 0 14px;
+                font-size: 14px;
+                color: #3c4043;
+                background-color: #ffffff;
                 font-family: "Segoe UI", Roboto, Arial, sans-serif;
             }
-            #skipBtn:hover {
-                color: #1557b0;
-                text-decoration: underline;
+            #emailInput:focus {
+                border-color: #1a73e8;
             }
+
+            #emailBtn {
+                background-color: #1a73e8;
+                color: #ffffff;
+                border: none;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 500;
+                padding: 0 24px;
+                font-family: "Segoe UI", Roboto, Arial, sans-serif;
+            }
+            #emailBtn:hover {
+                background-color: #1565c0;
+            }
+            #emailBtn:pressed {
+                background-color: #0d47a1;
+            }
+            #emailBtn:disabled {
+                background-color: #93c5fd;
+            }
+
+            #otpInput {
+                border: 1.5px solid #dadce0;
+                border-radius: 8px;
+                padding: 0 14px;
+                font-size: 24px;
+                font-weight: 600;
+                letter-spacing: 12px;
+                color: #1a1a2e;
+                background-color: #ffffff;
+                font-family: "Segoe UI", Roboto, Arial, sans-serif;
+            }
+            #otpInput:focus {
+                border-color: #1a73e8;
+            }
+
+            #otpSubmitBtn {
+                background-color: #1a73e8;
+                color: #ffffff;
+                border: none;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 500;
+                padding: 0 24px;
+                font-family: "Segoe UI", Roboto, Arial, sans-serif;
+            }
+            #otpSubmitBtn:hover {
+                background-color: #1565c0;
+            }
+            #otpSubmitBtn:pressed {
+                background-color: #0d47a1;
+            }
+            #otpSubmitBtn:disabled {
+                background-color: #93c5fd;
+            }
+
         """)
 
     # ── Actions ──────────────────────────────────────────────────────────
+    # ── API Config ───────────────────────────────────────────────────────
+    _REGISTER_URL = "https://bnc-ai.com/api/designing-users/public/register"
+    _VERIFY_OTP_URL = "https://bnc-ai.com/api/designing-users/public/verify-otp"
+    _API_KEY = "dt_159391eaf5d473b843d92dc765b2668a386d756d54302c4a5951b7d38f6a558a"
+
+    # ── Email validation ─────────────────────────────────────────────────
+    _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+    def _on_email_continue(self):
+        """Validate email and call register API, then show OTP on success."""
+        email = self._email_input.text().strip()
+
+        # Clear previous state
+        self._email_error.setVisible(False)
+        self._email_status.setText("")
+
+        # Validation
+        if not email:
+            self._email_error.setText("Email address is required.")
+            self._email_error.setVisible(True)
+            self._email_input.setFocus()
+            return
+
+        if not self._EMAIL_RE.match(email):
+            self._email_error.setText("Please enter a valid email address.")
+            self._email_error.setVisible(True)
+            self._email_input.setFocus()
+            return
+
+        # Show loading state
+        self._email_btn.setEnabled(False)
+        self._email_btn.setText("Sending…")
+        self._email_input.setEnabled(False)
+        self._email_status.setStyleSheet("font-size: 12px; color: #666;")
+        self._email_status.setText("Registering…")
+        QtWidgets.QApplication.processEvents()
+
+        # Call the register API
+        try:
+            import urllib.request
+            payload = json.dumps({"email": email, "project_id": 1}).encode("utf-8")
+            req = urllib.request.Request(
+                self._REGISTER_URL,
+                data=payload,
+                method="POST",
+            )
+            req.add_header("Content-Type", "application/json")
+            req.add_header("x-api-key", self._API_KEY)
+
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                body = json.loads(resp.read())
+
+            status = body.get("status", "")
+            if status == "success":
+                # Store email and API response data for OTP submission
+                self._pending_email = email
+                self._pending_api_data = body.get("data", [{}])
+
+                # Hide Google section and email button, show OTP panel
+                self._google_container.setVisible(False)
+                self._email_btn.setVisible(False)
+                self._email_input.setEnabled(False)
+                self._email_status.setStyleSheet("font-size: 12px; color: #2e7d32;")
+                self._email_status.setText(f"OTP sent to {email}")
+
+                self._otp_container.setVisible(True)
+                self._otp_input.setFocus()
+                FreeCAD.Console.PrintMessage(f"BNC CAD: OTP requested for {email}\n")
+            else:
+                # API returned error status
+                msg = body.get("message", "Registration failed. Please try again.")
+                self._email_error.setText(msg)
+                self._email_error.setVisible(True)
+                self._email_btn.setEnabled(True)
+                self._email_btn.setText("Continue with Email")
+                self._email_input.setEnabled(True)
+                self._email_input.setFocus()
+                self._email_status.setText("")
+                FreeCAD.Console.PrintWarning(f"BNC CAD: Register API error — {msg}\n")
+
+        except urllib.error.HTTPError as http_err:
+            # Try to parse error body from server
+            msg = "Registration failed. Please try again."
+            try:
+                err_body = json.loads(http_err.read())
+                msg = err_body.get("message", msg)
+            except Exception:
+                pass
+            self._email_error.setText(msg)
+            self._email_error.setVisible(True)
+            self._email_btn.setEnabled(True)
+            self._email_btn.setText("Continue with Email")
+            self._email_input.setEnabled(True)
+            self._email_input.setFocus()
+            self._email_status.setText("")
+            FreeCAD.Console.PrintError(f"BNC CAD: Register HTTP error {http_err.code} — {msg}\n")
+
+        except Exception as exc:
+            self._email_error.setText(f"Network error: {exc}")
+            self._email_error.setVisible(True)
+            self._email_btn.setEnabled(True)
+            self._email_btn.setText("Continue with Email")
+            self._email_input.setEnabled(True)
+            self._email_input.setFocus()
+            self._email_status.setText("")
+            FreeCAD.Console.PrintError(f"BNC CAD: Register API exception — {exc}\n")
+
+    def _on_otp_submit(self):
+        """Validate the 6-digit OTP via API and sign in."""
+        otp = self._otp_input.text().strip()
+        self._otp_error.setVisible(False)
+
+        # Validation: must be exactly 6 digits
+        if not otp or len(otp) != 6 or not otp.isdigit():
+            self._otp_error.setText("Please enter a valid 6-digit code.")
+            self._otp_error.setVisible(True)
+            self._otp_input.setFocus()
+            return
+
+        # Disable while verifying
+        self._otp_submit_btn.setEnabled(False)
+        self._otp_submit_btn.setText("Verifying…")
+        self._otp_input.setEnabled(False)
+        QtWidgets.QApplication.processEvents()
+
+        email = self._pending_email
+
+        # Call verify-otp API
+        try:
+            import urllib.request
+            payload = json.dumps({"email": email, "otp": otp}).encode("utf-8")
+            req = urllib.request.Request(
+                self._VERIFY_OTP_URL,
+                data=payload,
+                method="POST",
+            )
+            req.add_header("Content-Type", "application/json")
+            req.add_header("x-api-key", self._API_KEY)
+
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                body = json.loads(resp.read())
+
+            status = body.get("status", "")
+            if status == "success":
+                # Save verified email to local storage
+                data = body.get("data", {})
+                user_info = {
+                    "email": data.get("email", email),
+                    "name": data.get("email", email).split("@")[0].replace(".", " ").title(),
+                    "picture": "",
+                    "login_method": "email",
+                    "verified": data.get("verified", True),
+                }
+                _save_session(user_info)
+
+                self._otp_error.setVisible(False)
+                self._email_status.setStyleSheet("font-size: 12px; color: #2e7d32;")
+                self._email_status.setText("Account verified successfully!")
+                FreeCAD.Console.PrintMessage(
+                    f"BNC CAD: Account verified for {user_info['email']}\n"
+                )
+                self.login_successful.emit(user_info)
+                QtCore.QTimer.singleShot(800, self.accept)
+            else:
+                # API returned error status
+                msg = body.get("message", "OTP verification failed. Please try again.")
+                self._otp_error.setText(msg)
+                self._otp_error.setVisible(True)
+                self._otp_submit_btn.setEnabled(True)
+                self._otp_submit_btn.setText("Submit")
+                self._otp_input.setEnabled(True)
+                self._otp_input.setFocus()
+                FreeCAD.Console.PrintWarning(f"BNC CAD: OTP verify error — {msg}\n")
+
+        except urllib.error.HTTPError as http_err:
+            msg = "OTP verification failed. Please try again."
+            try:
+                err_body = json.loads(http_err.read())
+                msg = err_body.get("message", msg)
+            except Exception:
+                pass
+            self._otp_error.setText(msg)
+            self._otp_error.setVisible(True)
+            self._otp_submit_btn.setEnabled(True)
+            self._otp_submit_btn.setText("Submit")
+            self._otp_input.setEnabled(True)
+            self._otp_input.setFocus()
+            FreeCAD.Console.PrintError(f"BNC CAD: OTP verify HTTP error {http_err.code} — {msg}\n")
+
+        except Exception as exc:
+            self._otp_error.setText(f"Network error: {exc}")
+            self._otp_error.setVisible(True)
+            self._otp_submit_btn.setEnabled(True)
+            self._otp_submit_btn.setText("Submit")
+            self._otp_input.setEnabled(True)
+            self._otp_input.setFocus()
+            FreeCAD.Console.PrintError(f"BNC CAD: OTP verify exception — {exc}\n")
+
     def _on_google_signin(self):
         """Start Google OAuth 2.0 PKCE flow."""
         client_id, _ = _oauth_config()
-        if client_id == _DEFAULT_CLIENT_ID:
-            self._status.setStyleSheet("font-size: 12px; color: #d32f2f;")
-            self._status.setText(
-                "OAuth not configured. Place your bnc_oauth.json\n"
-                f"in: {FreeCAD.getUserAppDataDir()}"
-            )
-            return
 
         self._google_btn.setEnabled(False)
         self._google_btn.setText("  Opening browser…")
-        self._status.setStyleSheet("font-size: 12px; color: #666;")
-        self._status.setText("Waiting for sign-in in your browser…")
+        self._google_status.setStyleSheet("font-size: 12px; color: #666;")
+        self._google_status.setText("Waiting for sign-in in your browser…")
 
         # Generate PKCE pair
         self._verifier, challenge = _generate_pkce()
@@ -388,14 +771,15 @@ class BNCLoginDialog(QtWidgets.QDialog):
             return  # Still waiting
 
         self._poll_timer.stop()
-        self._status.setText("Verifying…")
+        self._google_status.setText("Verifying…")
 
         try:
             user_info = _exchange_code(code, self._verifier)
             if user_info and user_info.get("email"):
+                user_info["login_method"] = "google"
                 _save_session(user_info)
-                self._status.setStyleSheet("font-size: 12px; color: #2e7d32;")
-                self._status.setText(f"Signed in as {user_info['name']}")
+                self._google_status.setStyleSheet("font-size: 12px; color: #2e7d32;")
+                self._google_status.setText(f"Signed in as {user_info['name']}")
                 FreeCAD.Console.PrintMessage(
                     f"BNC CAD: Signed in as {user_info['email']}\n"
                 )
@@ -403,24 +787,20 @@ class BNCLoginDialog(QtWidgets.QDialog):
                 QtCore.QTimer.singleShot(800, self.accept)
                 return
             else:
-                self._status.setStyleSheet("font-size: 12px; color: #d32f2f;")
-                self._status.setText("Sign-in failed. Please try again.")
+                self._google_status.setStyleSheet("font-size: 12px; color: #d32f2f;")
+                self._google_status.setText("Sign-in failed. Please try again.")
         except Exception as e:
-            self._status.setStyleSheet("font-size: 12px; color: #d32f2f;")
-            self._status.setText(f"Error: {e}")
+            self._google_status.setStyleSheet("font-size: 12px; color: #d32f2f;")
+            self._google_status.setText(f"Error: {e}")
             FreeCAD.Console.PrintError(f"BNC CAD: OAuth error — {e}\n")
 
         self._google_btn.setEnabled(True)
         self._google_btn.setText("  Sign in with Google")
 
-    def _on_skip(self):
-        """Allow user to continue without signing in."""
-        FreeCAD.Console.PrintMessage("BNC CAD: User skipped sign-in\n")
-        self.reject()
-
     def closeEvent(self, event):
-        """Prevent closing with X — user must choose an action."""
-        event.ignore()
+        """Close button exits the entire application — login is required."""
+        FreeCAD.Console.PrintMessage("BNC CAD: User closed login — exiting application\n")
+        QtWidgets.QApplication.instance().quit()
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
@@ -430,14 +810,29 @@ def show_login_if_needed():
     Called once during BNC CAD startup.
     Returns True if signed in, False if skipped.
     """
+    _dbg("show_login_if_needed() called")
     if is_logged_in():
         info = get_user_info()
+        _dbg(f"Already signed in as {info.get('email', '?')}")
         FreeCAD.Console.PrintMessage(
             f"BNC CAD: Already signed in as {info.get('email', '?')}\n"
         )
         return True
 
+    _dbg("Not logged in — creating dialog")
     mw = FreeCADGui.getMainWindow() if hasattr(FreeCADGui, "getMainWindow") else None
+    _dbg(f"Main window: {mw}, visible: {mw.isVisible() if mw else 'N/A'}")
     dialog = BNCLoginDialog(mw)
+    _dbg("Dialog created, calling raise_ / activateWindow / exec_")
+    dialog.raise_()
+    dialog.activateWindow()
     result = dialog.exec_()
-    return result == QtWidgets.QDialog.Accepted
+    _dbg(f"exec_() returned: {result} (Accepted={QtWidgets.QDialog.Accepted})")
+    if result != QtWidgets.QDialog.Accepted:
+        # User closed the dialog without signing in — exit the app
+        FreeCAD.Console.PrintMessage("BNC CAD: Login required — exiting\n")
+        _dbg("Login not accepted — quitting")
+        QtWidgets.QApplication.instance().quit()
+        return False
+    _dbg("Login accepted")
+    return True

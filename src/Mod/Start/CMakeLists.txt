@@ -40,7 +40,7 @@ set(Start_Scripts
 
 if (BUILD_GUI)
     add_subdirectory(Gui)
-    list(APPEND Start_Scripts InitGui.py StartMigrator.py BNCLoginDialog.py)
+    list(APPEND Start_Scripts InitGui.py StartMigrator.py BNCLoginDialog.py freecad-icon-64.png)
 endif (BUILD_GUI)
 
 add_custom_target(StartScripts ALL

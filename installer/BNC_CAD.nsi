@@ -23,8 +23,7 @@ Icon "BNC_CAD.ico"
 InstallDir "$PROGRAMFILES\BNC_CAD"
 InstallDirRegKey HKLM "${PRODUCT_REGKEY}" "InstallLocation"
 RequestExecutionLevel admin
-SetCompress force
-SetCompressor /SOLID lzma
+SetCompress off
 VIProductVersion "1.1.0.0"
 VIAddVersionKey "ProductName" "${PRODUCT_NAME}"
 VIAddVersionKey "ProductVersion" "${PRODUCT_VERSION}"
@@ -55,13 +54,13 @@ Section "${PRODUCT_NAME}" SEC01
   SetOutPath "$INSTDIR"
   
   DetailPrint "Extracting application files..."
-  nsExec::ExecToLog '"$INSTDIR\\7zr.exe" x "$INSTDIR\\BNC-CAD-Output.7z" -o"$INSTDIR" -y -aoa'
+  nsExec::ExecToLog '"$INSTDIR\7zr.exe" x "$INSTDIR\BNC-CAD-Output.7z" -o"$INSTDIR" -y -aoa'
   Pop $0
   StrCmp $0 "0" +3
     MessageBox MB_ICONSTOP "Extraction failed (error $0)."
     Abort
-  Delete "$INSTDIR\\7zr.exe"
-  Delete "$INSTDIR\\BNC-CAD-Output.7z"
+  Delete "$INSTDIR\7zr.exe"
+  Delete "$INSTDIR\BNC-CAD-Output.7z"
 
   ; Remove old user.cfg so fresh defaults apply (Assembly enabled by default)
   DetailPrint "Resetting workbench settings for fresh install..."
@@ -98,4 +97,12 @@ Section "Uninstall"
   RMDir /r "$INSTDIR"
   DeleteRegKey HKLM "${PRODUCT_UNREG}"
   DeleteRegKey HKLM "${PRODUCT_REGKEY}"
+
+  ; Remove saved BNC CAD auth session (email/login data)
+  ; Must switch to current-user context so $APPDATA points to the real user folder
+  ; FreeCAD 1.1 stores user data under APPDATA/FreeCAD/v1-1/
+  SetShellVarContext current
+  Delete "$APPDATA\FreeCAD\v1-1\bnc_auth.json"
+  Delete "$APPDATA\FreeCAD\bnc_auth.json"
+  SetShellVarContext all
 SectionEnd
