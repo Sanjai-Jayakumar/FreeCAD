@@ -1,4 +1,4 @@
-<a href="https://freecad.org"><img src="/src/Gui/Icons/freecad.svg" height="100px" width="100px"></a>
+<a href="https://freecad.org"><img src="/src/Gui/Icons/freecad-icon-48.png" height="100px" width="100px"></a>
 
 ### Your own 3D Parametric Modeler
 

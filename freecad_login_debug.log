@@ -1,0 +1,286 @@
+﻿Msg: FreeCAD 1.1.0, Libs: 1.1.0R44814 (Git)
+(C) 2001-2026 FreeCAD contributors
+FreeCAD is free and open-source software licensed under the terms of LGPL2+ license.
+
+Log: Time = 2026-Apr-07 17:10:39
+Log: AboutImage = freecadabout
+Log: AppDataSkipVendor = true
+Log: AppHomePath = C:\BNC-CAD-Output\
+Log: AppIcon = freecad-icon
+Log: AppTempPath = C:/Users/dsk12/AppData/Local/Temp\
+Log: BOOST_VERSION = 1_87
+Log: BinPath = C:\BNC-CAD-Output\bin\
+Log: BuildRepositoryURL = git://github.com/Sanjai-Jayakumar/FreeCAD.git bnc-1.1
+Log: BuildRevision = 44814 (Git)
+Log: BuildRevisionBranch = bnc-1.1
+Log: BuildRevisionDate = 2026/04/03 08:39:49
+Log: BuildRevisionHash = 6e193027a0e0d26ae2beca9fca5dc150b5601d73
+Log: BuildVersionMajor = 1
+Log: BuildVersionMinor = 1
+Log: BuildVersionPoint = 0
+Log: BuildVersionSuffix = 
+Log: Console = 0
+Log: CopyrightInfo = (C) 2001-2026 FreeCAD contributors
+FreeCAD is free and open-source software licensed under the terms of LGPL2+ license.
+
+
+Log: Debug = 0
+Log: DesktopFileName = org.freecad.FreeCAD
+Log: DocPath = C:\BNC-CAD-Output\doc\
+Log: EIGEN_VERSION = 3.4.0
+Log: ExeName = FreeCAD
+Log: ExeVendor = FreeCAD
+Log: ExeVersion = 1.1.0
+Log: LoggingConsole = 1
+Log: LoggingFile = 1
+Log: LoggingFileName = D:\BNC-FreeCAD\freecad_login_debug.log
+Log: MaintainerUrl = https://freecad.org
+Log: OCC_VERSION = 7.8.1
+Log: PATH = c:\Users\dsk12\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\debugCommand;c:\Users\dsk12\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\copilotCli;C:\Users\dsk12\AppData\Local\Programs\Microsoft VS Code;C:\Program Files\Autodesk\AliasSurface2026.0\bin;C:\Program Files\Autodesk\AliasSurface2025.1\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\dotnet\;C:\Program Files\cursor\resources\app\bin;C:\Program Files\nodejs\;C:\Program Files\CMake\bin;C:\Users\dsk12\.local\bin;C:\Users\dsk12\AppData\Local\Microsoft\WindowsApps;C:\Users\dsk12\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\dsk12\AppData\Local\Programs\Git\cmd;C:\Users\dsk12\AppData\Roaming\npm;C:\Users\dsk12\AppData\Local\Python\bin
+Log: PYSIDE_VERSION = 6.8.3
+Log: PYTHON_VERSION = 3.12.10
+Log: PythonSearchPath = C:\BNC-CAD-Output\bin\python312.zip;C:\BNC-CAD-Output\bin\DLLs;C:\BNC-CAD-Output\bin\Lib;C:\BNC-CAD-Output\bin;C:\BNC-CAD-Output\bin\Lib\site-packages
+Log: QT_VERSION = 6.8.3
+Log: RunMode = Gui
+Log: SMESH_VERSION = 7.7.1.0
+Log: SplashAlignment = Bottom|Left
+Log: SplashInfoColor = #000000
+Log: SplashInfoPosition = 6,75
+Log: SplashScreen = freecadsplash
+Log: SplashTextColor = #418FDE
+Log: SplashWarningColor = #CA333B
+Log: StartWorkbench = PartDesignWorkbench
+Log: SystemParameter = C:\Users\dsk12\AppData\Roaming\FreeCAD\v1-1\system.cfg
+Log: UserAppData = C:\Users\dsk12\AppData\Roaming\FreeCAD\v1-1\
+Log: UserCachePath = C:/Users/dsk12/AppData/Local/cache\FreeCAD\Cache\
+Log: UserConfigPath = C:\Users\dsk12\AppData\Roaming\FreeCAD\v1-1\
+Log: UserHomePath = C:/Users/dsk12
+Log: UserMacroPath = C:\Users\dsk12\AppData\Roaming\FreeCAD\v1-1\Macro\
+Log: UserParameter = C:\Users\dsk12\AppData\Roaming\FreeCAD\v1-1\user.cfg
+Log: Verbose = 
+Log: XERCESC_VERSION = 3.2.5
+Log: Create Application
+Log: Run App init script
+Log: Init: starting App::FreeCADInit.py
+Log: Init:   Searching for modules...
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\AddonManager\.\... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Assembly... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\BIM... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\BNCCustomTools(Init.py not found)... ignore
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\BNCGlobal(Init.py not found)... ignore
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\BNCMCP(Init.py not found)... ignore
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\BNC_Init(Init.py not found)... ignore
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\CAM... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Draft... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Fem... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Help(Init.py not found)... ignore
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Idf... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Import... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Inspection... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Material... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Measure... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Mesh... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\MeshPart... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\OpenSCAD... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Part... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\PartDesign... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Plot(Init.py not found)... ignore
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Points... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\ReverseEngineering... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Robot... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Show(Init.py not found)... ignore
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Sketcher... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Spreadsheet... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Start... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Surface... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\TechDraw... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Test... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Tux(Init.py not found)... ignore
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Web... done
+Log: Using C:\BNC-CAD-Output\Mod as module path!
+Log: System path after init:
+Log:    C:\BNC-CAD-Output\bin
+Log:    C:\BNC-CAD-Output\Mod\AddonManager
+Log:    C:\BNC-CAD-Output\Mod\AddonManager\.\
+Log:    C:\BNC-CAD-Output\Mod\Assembly
+Log:    C:\BNC-CAD-Output\Mod\BIM
+Log:    C:\BNC-CAD-Output\Mod\BNCCustomTools
+Log:    C:\BNC-CAD-Output\Mod\BNCGlobal
+Log:    C:\BNC-CAD-Output\Mod\BNCMCP
+Log:    C:\BNC-CAD-Output\Mod\BNC_Init
+Log:    C:\BNC-CAD-Output\Mod\CAM
+Log:    C:\BNC-CAD-Output\Mod\Draft
+Log:    C:\BNC-CAD-Output\Mod\Fem
+Log:    C:\BNC-CAD-Output\Mod\Help
+Log:    C:\BNC-CAD-Output\Mod\Idf
+Log:    C:\BNC-CAD-Output\Mod\Import
+Log:    C:\BNC-CAD-Output\Mod\Inspection
+Log:    C:\BNC-CAD-Output\Mod\Material
+Log:    C:\BNC-CAD-Output\Mod\Measure
+Log:    C:\BNC-CAD-Output\Mod\Mesh
+Log:    C:\BNC-CAD-Output\Mod\MeshPart
+Log:    C:\BNC-CAD-Output\Mod\OpenSCAD
+Log:    C:\BNC-CAD-Output\Mod\Part
+Log:    C:\BNC-CAD-Output\Mod\PartDesign
+Log:    C:\BNC-CAD-Output\Mod\Plot
+Log:    C:\BNC-CAD-Output\Mod\Points
+Log:    C:\BNC-CAD-Output\Mod\ReverseEngineering
+Log:    C:\BNC-CAD-Output\Mod\Robot
+Log:    C:\BNC-CAD-Output\Mod\Show
+Log:    C:\BNC-CAD-Output\Mod\Sketcher
+Log:    C:\BNC-CAD-Output\Mod\Spreadsheet
+Log:    C:\BNC-CAD-Output\Mod\Start
+Log:    C:\BNC-CAD-Output\Mod\Surface
+Log:    C:\BNC-CAD-Output\Mod\TechDraw
+Log:    C:\BNC-CAD-Output\Mod\Test
+Log:    C:\BNC-CAD-Output\Mod\Tux
+Log:    C:\BNC-CAD-Output\Mod\Web
+Log:    c:\Users\dsk12\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\debugCommand
+Log:    c:\Users\dsk12\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\copilotCli
+Log:    C:\Users\dsk12\AppData\Local\Programs\Microsoft VS Code
+Log:    C:\Program Files\Autodesk\AliasSurface2026.0\bin
+Log:    C:\Program Files\Autodesk\AliasSurface2025.1\bin
+Log:    C:\Windows\system32
+Log:    C:\Windows
+Log:    C:\Windows\System32\Wbem
+Log:    C:\Windows\System32\WindowsPowerShell\v1.0\
+Log:    C:\Windows\System32\OpenSSH\
+Log:    C:\Program Files\dotnet\
+Log:    C:\Program Files\cursor\resources\app\bin
+Log:    C:\Program Files\nodejs\
+Log:    C:\Program Files\CMake\bin
+Log:    C:\Users\dsk12\.local\bin
+Log:    C:\Users\dsk12\AppData\Local\Microsoft\WindowsApps
+Log:    C:\Users\dsk12\AppData\Local\Programs\Microsoft VS Code\bin
+Log:    C:\Users\dsk12\AppData\Local\Programs\Git\cmd
+Log:    C:\Users\dsk12\AppData\Roaming\npm
+Log:    C:\Users\dsk12\AppData\Local\Python\bin
+Log: Init: App::FreeCADInit.py done
+Log: Init: Creating Gui::Application and QApplication
+Log: Local server 'FreeCAD' started
+Log: OpenGL version is: 4.6 (4.6.0 NVIDIA 560.94)
+Log: Run Gui init script
+Log: Init: Running FreeCADGuiInit.py start script...
+Log: Init:   Searching modules
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\AddonManager\.\... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Assembly... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\BIM... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\BNCCustomTools(InitGui.py not found)... ignore
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\BNCGlobal(InitGui.py not found)... ignore
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\BNCMCP(InitGui.py not found)... ignore
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\BNC_Init(InitGui.py not found)... ignore
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\CAM... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Draft... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Fem... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Help... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Idf(InitGui.py not found)... ignore
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Import... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Inspection... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Material... done
+Log: Loading Material module… done
+Log: Module: Part
+Log: Loading Part module... done
+Log: Loading Measure module… done
+Log: Loading GUI of Measure module… done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Measure... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Mesh... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\MeshPart... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\OpenSCAD... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Part... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\PartDesign... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Plot(InitGui.py not found)... ignore
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Points... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\ReverseEngineering... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Robot... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Show(InitGui.py not found)... ignore
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Sketcher... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Spreadsheet... done
+Log: Std_SetWorkingDirectory command registered
+Log: BNC CAD: Set Working Directory command registered
+Log: BNC CAD: Persistent toolbar module loaded
+Log: BNC CAD: Version Save command registered
+Log: Std_VersionOpen command registered
+Log: BNC CAD: Version Open command registered
+Log: Std_VersionSaveAs command registered
+Log: BNC CAD: Version Save As command registered
+Wrn: Could not set workbench selector default: HasParameter
+Log: ✓ BNC document observer registered
+Log: BNC CAD: Theme configuration module loaded
+Log: BNC CAD: Theme configuration loaded
+Log: BNC CAD: Help menu hide module loaded
+Log: BNC CAD: Help menu hide module loaded
+Log: BNC CAD: Workbench toolbar enforcement started
+Log: BNC CAD: Force workbench toolbar module loaded
+Log: BNC CAD: Force workbench toolbar module loaded
+Log: BNC CAD: PartDesign toolbar refresh scheduled
+Log: BNC CAD: Login dialog scheduled (singleShot 3s)
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Start... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Surface... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\TechDraw... done
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Test... done
+Wrn: Theme migration helper missing; proceeding without renaming legacy OpenTheme files.
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Tux... failed
+Log: ----------------------------------------------------------------------------------------------------
+Log: Traceback (most recent call last):
+  File "<string>", line 237, in RunInitGuiPy
+  File "C:\BNC-CAD-Output\Mod\Tux\InitGui.py", line 273, in <module>
+    _initialise_theme()
+  File "C:\BNC-CAD-Output\Mod\Tux\InitGui.py", line 258, in _initialise_theme
+    theme_settings = _theme_settings()
+                     ^^^^^^^^^^^^^^^
+NameError: name '_theme_settings' is not defined
+Log: ----------------------------------------------------------------------------------------------------
+Err: During initialization the error "name '_theme_settings' is not defined" occurred in C:\BNC-CAD-Output\Mod\Tux\InitGui.py
+Err: Look into the log file for further information
+Log: Init:      Initializing C:\BNC-CAD-Output\Mod\Web(InitGui.py not found)... ignore
+Log: All modules with GUIs using InitGui.py are now initialized
+Log: All modules with GUIs initialized using pkgutil are now initialized
+Log: Init: Loading FreeCAD GUI
+Log: Ignoring unknown Assembly4p1Workbench workbench found in user preferences.
+Log: Ignoring unknown CablesWorkbench workbench found in user preferences.
+Log: Ignoring unknown CurvedShapesWB workbench found in user preferences.
+Log: Ignoring unknown CurvesWorkbench workbench found in user preferences.
+Log: Ignoring unknown FastenersWorkbench workbench found in user preferences.
+Log: Ignoring unknown SMWorkbench workbench found in user preferences.
+Log: Ignoring unknown Assembly4p1Workbench workbench found in user preferences.
+Log: Init: Running FreeCADGuiInit.py start script... done
+Log: BNC: Clearing all old background color settings...
+Msg: ✓ BNC CAD gray background refreshed
+Log: Init: Activating default workbench PartDesignWorkbench
+Log: Loading Sketcher module… done
+Log: Loading Part Design module… done
+Log: Loading GUI of Material module… done
+Log: Loading GUI of Part module… done
+Log: Loading GUI of Sketcher module… done
+Log: Loading GUI of Part Design module… done
+Log: Init: Showing main window
+Log: Main window restored
+Log: Show main window
+Log: Toolbars restored
+Log: Init: Entering event loop
+Log: Init: Executing event loop…
+Log: Init: Processing command line files
+Log: ✓ SET_WD icon loaded: C:\BNC-CAD-Output\\Mod\Start\Resources\icons\SET_WD.svg
+Log: ✓ save icon loaded: C:\BNC-CAD-Output\\Mod\Start\Resources\icons\save.svg
+Log: ✓ Open icon loaded: C:\BNC-CAD-Output\\Mod\Start\Resources\icons\Open.svg
+Log: ✓ save_as icon loaded: C:\BNC-CAD-Output\\Mod\Start\Resources\icons\save_as.svg
+Log: ✓ Rename icon loaded: C:\BNC-CAD-Output\\Mod\Start\Resources\icons\Rename.svg
+Log: ✓ Apply_Material icon loaded: C:\BNC-CAD-Output\\Mod\Start\Resources\icons\Apply_Material.svg
+Log: ✓ Mass_Properties icon loaded: C:\BNC-CAD-Output\\Mod\Start\Resources\icons\Mass_Properties.svg
+Log: ✓ Model_Parameters icon loaded: C:\BNC-CAD-Output\\Mod\Start\Resources\icons\Model_Parameters.svg
+Msg: BNC CAD: Plane_Display.png loaded from C:\BNC-CAD-Output\\Mod\Start\Resources\icons\Plane_Display.png
+Msg: ✓ BNC Custom toolbar created with 9 buttons
+Log: BNC CAD: PartDesign toolbars refreshed via bounce
+Msg: BNC CAD: Login timer fired
+Wrn: Unknown property box-shadow
+Wrn: Unknown property box-shadow
+Msg: BNC CAD: User closed login — exiting application
+Log: Hide main window
+Msg: BNC CAD: Login required — exiting
+Log: Finish: Event loop left
+Log: Destruct Gui::Application
+Log: FreeCAD terminating...
+Log: Saving system parameter...
+Log: Saving system parameter...done
+Log: Saving user parameter...
+Log: Saving user parameter...done
