@@ -319,6 +319,7 @@ void ViewProviderPartExt::onChanged(const App::Property* prop)
     // to freeze the GUI
     // https://forum.freecad.org/viewtopic.php?f=3&t=24912&p=195613
     if (prop == &Deviation) {
+        lastRenderedShape = {};
         if (isUpdateForced() || Visibility.getValue()) {
             updateVisual();
         }
@@ -327,6 +328,7 @@ void ViewProviderPartExt::onChanged(const App::Property* prop)
         }
     }
     if (prop == &AngularDeflection) {
+        lastRenderedShape = {};
         if (isUpdateForced() || Visibility.getValue()) {
             updateVisual();
         }
@@ -1471,7 +1473,7 @@ void ViewProviderPartExt::updateVisual()
 {
     TopoDS_Shape shape = getRenderedShape().getShape();
 
-    if (lastRenderedShape.IsPartner(shape)) {
+    if (!VisualTouched && lastRenderedShape.IsPartner(shape)) {
         return;
     }
 

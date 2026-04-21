@@ -29,6 +29,7 @@
 #include <Inventor/details/SoPointDetail.h>
 #include <Inventor/events/SoKeyboardEvent.h>
 #include <Inventor/nodes/SoCamera.h>
+#include <Inventor/nodes/SoShapeHints.h>
 
 #include <QApplication>
 #include <QFontMetricsF>
@@ -504,7 +505,13 @@ SoSketchFaces::SoSketchFaces(){
     material->diffuseColor.connectFrom(&color);
     material->transparency.connectFrom(&transparency);
 
+    // Enable two-sided lighting so faces are visible from both sides
+    auto* shapeHints = new SoShapeHints;
+    shapeHints->shapeType = SoShapeHints::UNKNOWN_SHAPE_TYPE;
+    shapeHints->vertexOrdering = SoShapeHints::COUNTERCLOCKWISE;
+
     SoSeparator::addChild(material);
+    SoSeparator::addChild(shapeHints);
     SoSeparator::addChild(coords);
     SoSeparator::addChild(norm);
     SoSeparator::addChild(faceset);
@@ -3385,7 +3392,8 @@ bool ViewProviderSketch::getDetailPath(
             auto len = pPath->getLength();
             if (append) {
                 pPath->append(pcRoot);
-                pPath->append(pcModeSwitch);
+                pPath->append(pcAnnotation);
+                pPath->append(pcSketchFacesToggle);
             }
 
             if (!ViewProvider2DObject::getDetailPath(realName, pPath, false, det)) {

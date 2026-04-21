@@ -5807,7 +5807,8 @@ void DocumentItem::selectItems(SelectionReason reason)
     }
     else if (item->selected) {
         if (sync) {
-            if (item->selected == 2 && showItem(item, false, reason == SR_FORCE_EXPAND)) {
+            if ((item->selected == 2 || reason == SR_FORCE_EXPAND)
+                && showItem(item, false, reason == SR_FORCE_EXPAND)) {
                 // This means newly selected and can auto expand
                 if (!newSelect) {
                     newSelect = item;
@@ -5871,7 +5872,7 @@ void DocumentItem::selectAllInstances(const ViewProviderDocumentObject& vpd)
 {
     ViewParentMap parentMap;
     auto pObject = vpd.getObject();
-    if (ObjectMap.find(pObject) == ObjectMap.end()) {
+    if (!ObjectMap.contains(pObject)) {
         return;
     }
 
@@ -5908,7 +5909,9 @@ void DocumentItem::selectAllInstances(const ViewProviderDocumentObject& vpd)
     getTree()->blockSelection(lock);
     if (first) {
         treeWidget()->scrollToItem(first);
-        updateSelection();
+        // updateSelection();  // commented out - it was incorrectly deselecting
+        // ...newly selected items because their qt selection state wasn't
+        // ...yet synchronized when updateItemSelection() checked them
     }
 }
 
@@ -5933,7 +5936,7 @@ bool DocumentItem::showItem(DocumentObjectItem* item, bool select, bool force)
     }
 
     if (parent->type() == TreeWidget::ObjectType) {
-        if (!showItem(static_cast<DocumentObjectItem*>(parent), false)) {
+        if (!showItem(static_cast<DocumentObjectItem*>(parent), false, force)) {
             return false;
         }
         auto pitem = static_cast<DocumentObjectItem*>(parent);
