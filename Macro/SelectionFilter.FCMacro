@@ -1,0 +1,293 @@
+# -*- coding: utf-8 -*-
+# =============================================================================
+# SelectionFilter.FCMacro
+# FreeCAD 1.1 | Python 3.11 | PySide2/6 | Windows
+#
+# Creo-style Selection Filter — persistent combo in the status bar.
+# Run once: embeds a "Filter: Geometry" combo next to the nav-style dropdown.
+# Click the combo to open the filter list and pick a type.
+#
+# Filtering works via a per-event Selection Observer (no SelectionGate).
+# This ensures rubber-band drag-box selections are also filtered.
+# The observer is re-registered on every macro run so the latest code is
+# always active without needing a FreeCAD restart.
+# =============================================================================
+
+__title__   = "SelectionFilter"
+__author__  = "BNC"
+__version__ = "5.0.0"
+__date__    = "2026-04-10"
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide6 import QtWidgets, QtCore, QtGui
+    from PySide6.QtCore import Qt
+except ImportError:
+    from PySide2 import QtWidgets, QtCore, QtGui
+    from PySide2.QtCore import Qt
+
+
+# =============================================================================
+# Attributes stored on main window to survive Python GC between macro runs
+# =============================================================================
+_PROP_WIDGET   = "_sel_filter_widget"
+_PROP_OBSERVER = "_sel_filter_observer"
+
+
+# =============================================================================
+# Selection Gates
+# =============================================================================
+
+class _AllGate:
+    def allow(self, doc, obj, sub): return True
+
+class _EdgeGate:
+    def allow(self, doc, obj, sub):
+        return bool(sub) and sub.startswith("Edge")
+
+class _FaceGate:
+    def allow(self, doc, obj, sub):
+        return bool(sub) and sub.startswith("Face")
+
+class _VertexGate:
+    def allow(self, doc, obj, sub):
+        return bool(sub) and sub.startswith("Vertex")
+
+class _DatumGate:
+    _TYPES = (
+        "App::Plane", "App::Line", "App::Point",
+        "PartDesign::Plane", "PartDesign::Line",
+        "PartDesign::Point", "PartDesign::CoordinateSystem",
+        "Part::DatumPlane", "Part::DatumLine", "Part::DatumPoint",
+    )
+    def allow(self, doc, obj, sub):
+        if obj is None: return False
+        return any(obj.TypeId.startswith(t) for t in self._TYPES)
+
+class _CurveGate:
+    def allow(self, doc, obj, sub):
+        if bool(sub) and sub.startswith("Edge"): return True
+        if obj is None: return False
+        t = obj.TypeId
+        return any(x in t for x in ("Wire", "Curve", "Spline", "Sketch"))
+
+class _QuiltGate:
+    def allow(self, doc, obj, sub):
+        if bool(sub) and sub.startswith("Face"): return True
+        if obj is None: return False
+        t = obj.TypeId
+        return any(x in t for x in ("Shell", "Surface", "Loft"))
+
+class _BodyGate:
+    _TYPES = (
+        "PartDesign::Body", "App::Part",
+        "Part::Feature", "Assembly::AssemblyObject",
+    )
+    def allow(self, doc, obj, sub):
+        if obj is None: return False
+        return any(obj.TypeId.startswith(t) for t in self._TYPES) and not bool(sub)
+
+class _AnnotationGate:
+    _TYPES = ("TechDraw::", "Draft::Text", "Draft::Annotation", "App::Annotation")
+    def allow(self, doc, obj, sub):
+        if obj is None: return False
+        return any(obj.TypeId.startswith(t) for t in self._TYPES)
+
+class _SketchGate:
+    def allow(self, doc, obj, sub):
+        if obj is None: return False
+        return "Sketcher" in obj.TypeId
+
+class _FeatureGate:
+    def allow(self, doc, obj, sub): return not bool(sub)
+
+
+# =============================================================================
+# Filter registry
+# =============================================================================
+
+FILTERS = [
+    ("Geometry",      _AllGate()),
+    ("Edge",          _EdgeGate()),
+    ("Surface",       _FaceGate()),
+    ("Datums",        _DatumGate()),
+    ("Curve",         _CurveGate()),
+    ("Quilt",         _QuiltGate()),
+    ("Body",          _BodyGate()),
+    ("Annotation",    _AnnotationGate()),
+    ("Vertex",        _VertexGate()),
+    ("Sketch Region", _SketchGate()),
+    ("Feature",       _FeatureGate()),
+]
+FILTER_NAMES = [f[0] for f in FILTERS]
+FILTER_GATES = [f[1] for f in FILTERS]
+
+
+# =============================================================================
+# Selection Observer  —  per-event, with reentry guard
+#
+# For every addSelection event:
+#   • sub is non-empty ("Edge1", "Vertex3" …)  →  check gate against that sub
+#   • sub is empty "" (whole-object drag in 3-D view) → check gate with sub=""
+#
+# Removal uses removeSelection(obj, sub) with the EXACT sub string so that
+# only that specific selection entry is removed; other sub-elements of the
+# same object (e.g. valid Vertex picks) are NOT touched.
+#
+# The _active flag blocks the observer from reacting to its own removal calls.
+# =============================================================================
+
+class _SelectionObserver:
+
+    def __init__(self):
+        self._active = False        # reentry guard
+
+    def addSelection(self, doc, obj_name, sub, pos):
+        if self._active:
+            return
+        mw  = Gui.getMainWindow()
+        w   = getattr(mw, _PROP_WIDGET, None)
+        idx = w.combo.currentIndex() if w else 0
+        if idx == 0:
+            return                  # "Geometry" — no filter active
+        gate = FILTER_GATES[idx]
+        try:
+            doc_obj = App.getDocument(doc) if doc else App.ActiveDocument
+            obj     = doc_obj.getObject(obj_name) if doc_obj else None
+            # sub may be "" (whole-object) or "Edge1"/"Vertex3" etc.
+            # IMPORTANT: never remove sub="" entries — calling
+            # removeSelection(obj, "") wipes ALL sub-elements for that
+            # object, including valid ones (e.g. Vertex picks in Sketcher).
+            if not sub:
+                return
+            if not gate.allow(doc, obj, sub):
+                _sub = sub
+                QtCore.QTimer.singleShot(
+                    0, lambda o=obj, s=_sub: self._remove(o, s))
+        except Exception:
+            pass
+
+    def _remove(self, obj, sub):
+        """Remove exactly one named sub-element — never wipes other subs."""
+        if not sub:
+            return  # safety net: never call removeSelection(obj, "")
+        self._active = True
+        try:
+            Gui.Selection.removeSelection(obj, sub)
+        except Exception:
+            pass
+        finally:
+            self._active = False
+
+    # ── required stubs ────────────────────────────────────────────────────
+    def removeSelection(self, doc, obj, sub):    pass
+    def setSelection(self, doc):                 pass
+    def clearSelection(self, doc):               pass
+    
+    def setPreselection(self, doc, obj, sub):
+        """Filter preselection (mouse hover highlighting)"""
+        try:
+            mw  = Gui.getMainWindow()
+            w   = getattr(mw, _PROP_WIDGET, None)
+            idx = w.combo.currentIndex() if w else 0
+            if idx == 0:
+                return  # "Geometry" — no filter active
+            
+            gate = FILTER_GATES[idx]
+            doc_obj = App.getDocument(doc) if doc else App.ActiveDocument
+            obj_ref = doc_obj.getObject(obj) if doc_obj else None
+            
+            # Block preselection if it doesn't match the filter
+            if not gate.allow(doc, obj_ref, sub):
+                Gui.Selection.removePreselection()
+        except Exception:
+            pass
+    
+    def removePreselection(self, doc, obj, sub): pass
+
+
+# =============================================================================
+# Status-bar widget
+# =============================================================================
+
+class _FilterWidget(QtWidgets.QWidget):
+    """Label + combo embedded permanently in the FreeCAD status bar."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("SelFilterWidget")
+
+        lbl = QtWidgets.QLabel("Filter:")
+
+        self.combo = QtWidgets.QComboBox(self)
+        self.combo.setObjectName("SelFilterCombo")
+        self.combo.setMinimumWidth(115)
+        self.combo.setMaximumHeight(22)
+        self.combo.setToolTip(
+            "Selection Filter\n"
+            "Restricts single-click and drag-box selections to the chosen type.\n"
+            "'Geometry' = no filter (select anything)."
+        )
+        for name in FILTER_NAMES:
+            self.combo.addItem(name)
+
+        row = QtWidgets.QHBoxLayout(self)
+        row.setContentsMargins(4, 0, 4, 0)
+        row.setSpacing(3)
+        row.addWidget(lbl)
+        row.addWidget(self.combo)
+        self.setLayout(row)
+
+        self.combo.currentIndexChanged.connect(self._on_changed)
+
+    def _on_changed(self, index):
+        mw   = Gui.getMainWindow()
+        name = FILTER_NAMES[index]
+        if index == 0:
+            mw.statusBar().showMessage("Selection Filter: OFF", 3000)
+        else:
+            mw.statusBar().showMessage(f"Selection Filter: {name}", 3000)
+
+
+# =============================================================================
+# Entry point
+# Always re-registers a fresh observer so the latest code is active.
+# Widget is only created once (idempotent across re-runs).
+# =============================================================================
+
+# Check if main window is available (safety check for auto-run)
+try:
+    mw = Gui.getMainWindow()
+    if not mw:
+        App.Console.PrintWarning("Main window not available for Selection Filter\n")
+    else:
+        # ── Re-register observer every run (ensures latest code is always active) ──
+        old_obs = getattr(mw, _PROP_OBSERVER, None)
+        if old_obs is not None:
+            try:
+                Gui.Selection.removeObserver(old_obs)
+            except Exception:
+                pass
+
+        obs = _SelectionObserver()
+        Gui.Selection.addObserver(obs)
+        setattr(mw, _PROP_OBSERVER, obs)
+
+        # ── Widget: create once, then just open the popup on re-run ────────────────
+        existing = getattr(mw, _PROP_WIDGET, None)
+        if existing is not None:
+            # Only show popup if manually executed (not on startup)
+            # Check if we're in auto-run mode by looking for a marker
+            if not getattr(mw, '_sel_filter_auto_run', False):
+                existing.combo.showPopup()
+        else:
+            w = _FilterWidget()
+            mw.statusBar().addPermanentWidget(w)
+            setattr(mw, _PROP_WIDGET, w)
+            App.Console.PrintMessage("Selection Filter widget added to status bar\n")
+except Exception as e:
+    App.Console.PrintError(f"Selection Filter error: {e}\n")
+    import traceback
+    App.Console.PrintError(traceback.format_exc())

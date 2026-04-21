@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect x="0" y="0" width="64" height="64" fill="none"/>
+  <!-- Main datum point (central circle) -->
+  <circle cx="32" cy="32" r="6" fill="#FF6F00" stroke="#D84315" stroke-width="2"/>
+  <!-- Cross lines through point -->
+  <line x1="14" y1="32" x2="24" y2="32" stroke="#FF6F00" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="40" y1="32" x2="50" y2="32" stroke="#FF6F00" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="32" y1="14" x2="32" y2="24" stroke="#FF6F00" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="32" y1="40" x2="32" y2="50" stroke="#FF6F00" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Additional smaller datum points (showing multiple points) -->
+  <circle cx="18" cy="18" r="3" fill="#FFA726" stroke="#E65100" stroke-width="1.5"/>
+  <circle cx="46" cy="18" r="3" fill="#FFA726" stroke="#E65100" stroke-width="1.5"/>
+  <circle cx="18" cy="46" r="3" fill="#FFA726" stroke="#E65100" stroke-width="1.5"/>
+  <circle cx="46" cy="46" r="3" fill="#FFA726" stroke="#E65100" stroke-width="1.5"/>
+  <!-- Label -->
+  <text x="32" y="62" font-size="8" font-weight="bold" fill="#FF6F00" text-anchor="middle">PT</text>
+</svg>

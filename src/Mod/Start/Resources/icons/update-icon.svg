@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle -->
+  <circle cx="32" cy="32" r="28" fill="#0F62FE" stroke="#0A4AB8" stroke-width="2"/>
+  
+  <!-- Download arrow -->
+  <g fill="white">
+    <!-- Arrow shaft -->
+    <rect x="28" y="18" width="8" height="20" rx="1"/>
+    
+    <!-- Arrow head -->
+    <path d="M 32 42 L 22 32 L 27 32 L 27 30 L 37 30 L 37 32 L 42 32 Z"/>
+    
+    <!-- Base line -->
+    <rect x="20" y="44" width="24" height="3" rx="1.5"/>
+  </g>
+  
+  <!-- Circular arrow hint (update symbol) -->
+  <path d="M 48 24 A 16 16 0 0 0 32 16 L 32 12 L 26 17 L 32 22 L 32 18 A 12 12 0 0 1 44 24" 
+        fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+</svg>

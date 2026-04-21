@@ -40,7 +40,29 @@ set(Start_Scripts
 
 if (BUILD_GUI)
     add_subdirectory(Gui)
-    list(APPEND Start_Scripts InitGui.py StartMigrator.py BNCLoginDialog.py freecad-icon-64.png)
+    list(APPEND Start_Scripts 
+        InitGui.py 
+        StartMigrator.py 
+        BNCLoginDialog.py 
+        BNCLoginScheduler.py
+        BNCNetworkCheck.py
+        BNCPipeBendingToolbar.py
+        BNCThemeConfig.py
+        CommandStdSetWorkingDirectory.py
+        CommandStdVersionOpen.py
+        CommandStdVersionSave.py
+        CommandStdVersionSaveAs.py
+        EnforceWorkbenchSelector.py
+        ForceWorkbenchToolbar.py
+        HideHelpMenu.py
+        AddSetWDButton.py
+        UpdateChecker.py
+        UpdateUI.py
+        CommandCheckForUpdates.py
+        UPDATE_SYSTEM_README.md
+        test_update_system.py
+        freecad-icon-64.png
+    )
 endif (BUILD_GUI)
 
 add_custom_target(StartScripts ALL
@@ -57,4 +79,13 @@ install(
         ${Start_Scripts}
         DESTINATION
         Mod/Start
+)
+
+install(
+        DIRECTORY
+        Resources
+        DESTINATION
+        Mod/Start
+        FILES_MATCHING
+        PATTERN "*.svg"
 )

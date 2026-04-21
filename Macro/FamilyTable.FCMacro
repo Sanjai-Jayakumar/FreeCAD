@@ -1,0 +1,1552 @@
+# -*- coding: utf-8 -*-
+# FamilyTable.FCMacro  –  v4
+"""
+FamilyTable.FCMacro  v4
+=======================
+Creo-like Family Table for FreeCAD 1.0 / 1.1
+
+Works in TWO contexts:
+
+  PartDesign  – scan Body features, suppress/resize per instance
+  Assembly    – scan assembly components (App::Link / sub-assemblies),
+                 toggle presence per instance
+
+Layout (items as rows, instances as columns):
+  ┌─────────────────────┬──────────────┬──────────────┬──────────────┐
+  │ Feature / Instance  │  mainbody    │  new_1       │  no_chamfer  │
+  ├─────────────────────┼──────────────┼──────────────┼──────────────┤
+  │ Pad                 │  ☑  10.0     │  ☑  20.0     │  ☑  10.0     │
+  │ Pad001              │  ☐   —       │  ☑   5.0     │  ☑  10.0     │  ← PartDesign
+  │ Chamfer             │  ☐   —       │  ☑   1.0     │  ☐   —       │
+  └─────────────────────┴──────────────┴──────────────┴──────────────┘
+
+  ┌─────────────────────┬──────────────┬──────────────┐
+  │ Component / Inst    │  Config_A    │  Config_B    │
+  ├─────────────────────┼──────────────┼──────────────┤
+  │ Bracket (Part)      │  ☑           │  ☑           │
+  │ Cover (Part)        │  ☑           │  ☐           │  ← Assembly
+  │ SubAsm_Motor (S-A)  │  ☐           │  ☑           │
+  └─────────────────────┴──────────────┴──────────────┘
+
+Context auto-detection order:
+  1. Use current selection (Body / Assembly / feature in Body / link in Assembly)
+  2. If both exist in document → ask user
+  3. First Body or Assembly found in document
+
+Variants saved as:
+  PartDesign:  <out_dir>/<name>.<ver>.prt.FCStd
+  Assembly:    <out_dir>/<name>.<ver>.asm.FCStd
+"""
+
+from __future__ import annotations
+
+import FreeCAD
+import FreeCADGui
+import os
+import json
+import csv
+import shutil
+import re
+
+try:
+    from PySide2 import QtCore, QtGui, QtWidgets
+except ModuleNotFoundError:
+    from PySide6 import QtCore, QtGui, QtWidgets
+
+
+# ── Constants ──────────────────────────────────────────────────────────────────
+
+VARIANTS_DIR = "Variants"
+FILE_EXT     = ".prt.FCStd"     # part variant file extension
+ASM_FILE_EXT = ".asm.FCStd"     # assembly variant file extension
+ASM_OBJ_TYPE = "Assembly::AssemblyObject"
+
+FEATURE_DIM_PROP: dict[str, str] = {
+    "PartDesign::Pad":             "Length",
+    "PartDesign::Pocket":          "Length",
+    "PartDesign::Hole":            "Diameter",
+    "PartDesign::Fillet":          "Radius",
+    "PartDesign::Chamfer":         "Size",
+    "PartDesign::Revolution":      "Angle",
+    "PartDesign::Groove":          "Angle",
+    "PartDesign::Draft":           "Angle",
+    "PartDesign::Thickness":       "Value",
+    "PartDesign::LinearPattern":   "Occurrences",
+    "PartDesign::PolarPattern":    "Occurrences",
+    "PartDesign::AdditivePipe":    "",
+    "PartDesign::SubtractivePipe": "",
+    "PartDesign::AdditiveLoft":    "",
+    "PartDesign::SubtractiveLoft": "",
+    "PartDesign::Mirrored":        "",
+    "PartDesign::Boolean":         "",
+}
+
+_SKIP_PREFIXES = (
+    "Sketcher::", "App::", "PartDesign::Body",
+    "PartDesign::Point", "PartDesign::Line", "PartDesign::Plane",
+    "PartDesign::CoordinateSystem", "Spreadsheet::",
+    "TechDraw::", "Mesh::", "Path::",
+)
+
+# ── Table layout constants ─────────────────────────────────────────────────────
+
+_ROW_NAMES   = 0
+_FEAT_OFFSET = 1
+_COL_FEAT    = 0
+_INST_OFFSET = 1
+_COL_FEAT_W  = 215
+_INST_COL_W  = 148
+# Minimum dialog width driven by the 3-column button grid:
+#   3 cols * 140 px min-width  +  2 gaps * 8 px  +  frame margins 16 px  +  layout margins 20 px
+_BTN_GRID_MIN_W = 3 * 140 + 2 * 8 + 16 + 20  # = 488 px
+
+_C = {
+    "corner_bg":   "#2c3e50",
+    "corner_fg":   "#ecf0f1",
+    "inst_hdr_bg": "#34495e",
+    "inst_hdr_fg": "#ecf0f1",
+    "feat_even":   "#e8ecf1",
+    "feat_odd":    "#d8dfe9",
+    "feat_fg":     "#1a2940",
+    "row_even":    "#f7f9fb",
+    "row_odd":     "#edf1f5",
+    "dep_badge":   "#e74c3c",
+}
+
+
+# ── FeatureInfo (PartDesign) ───────────────────────────────────────────────────
+
+class FeatureInfo:
+    """Descriptor for one PartDesign feature."""
+
+    __slots__ = ("name", "label", "type_id", "dim_prop", "dim_value", "sketch_name")
+
+    def __init__(
+        self, name: str, label: str, type_id: str,
+        dim_prop: str, dim_value: float, sketch_name: str,
+    ) -> None:
+        self.name        = name
+        self.label       = label
+        self.type_id     = type_id
+        self.dim_prop    = dim_prop
+        self.dim_value   = dim_value
+        self.sketch_name = sketch_name
+
+    @property
+    def has_dim(self) -> bool:
+        return bool(self.dim_prop)
+
+    @property
+    def short_type(self) -> str:
+        return self.type_id.split("::")[-1]
+
+
+# ── ComponentInfo (Assembly) ───────────────────────────────────────────────────
+
+class ComponentInfo:
+    """
+    Descriptor for one component (App::Link) inside an Assembly.
+
+    Exposes the same interface as FeatureInfo so the same dialog and
+    cell widgets work for both PartDesign and Assembly contexts.
+    """
+
+    __slots__ = ("name", "label", "linked_label", "comp_type")
+
+    def __init__(
+        self, name: str, label: str,
+        linked_label: str, comp_type: str,
+    ) -> None:
+        self.name         = name          # FreeCAD internal object name (link)
+        self.label        = label         # user label on the link object
+        self.linked_label = linked_label  # label of the referenced part / sub-asm
+        self.comp_type    = comp_type     # "Part" | "Sub-Assembly" | "Component"
+
+    # ── FeatureInfo-compatible interface (assembly items have no dimension) ──
+
+    @property
+    def has_dim(self) -> bool:
+        return False
+
+    @property
+    def dim_prop(self) -> str:
+        return ""
+
+    @property
+    def dim_value(self) -> float:
+        return 0.0
+
+    @property
+    def sketch_name(self) -> str:
+        return ""
+
+    @property
+    def short_type(self) -> str:
+        return self.comp_type
+
+
+# ── BodyScanner ────────────────────────────────────────────────────────────────
+
+class BodyScanner:
+    """Scans a PartDesign::Body and returns FeatureInfo list + dependency map."""
+
+    @classmethod
+    def scan(
+        cls, doc
+    ) -> tuple[list[FeatureInfo], dict[str, list[str]], object]:
+        body = cls._find_body(doc)
+        if body is None:
+            raise RuntimeError(
+                "No PartDesign Body found.\n"
+                "Create a Body first (Part Design › Body)."
+            )
+        features: list[FeatureInfo] = [
+            cls._describe(obj)
+            for obj in body.Group
+            if cls._should_include(obj)
+        ]
+        feat_names = {f.name for f in features}
+        dependents: dict[str, list[str]] = {f.name: [] for f in features}
+        for f_info in features:
+            obj      = doc.getObject(f_info.name)
+            ref_name = cls._extract_name(getattr(obj, "Base", None)) if obj else ""
+            if ref_name and ref_name in feat_names:
+                dependents[ref_name].append(f_info.name)
+        return features, dependents, body
+
+    @classmethod
+    def _find_body(cls, doc) -> object | None:
+        sel = FreeCADGui.Selection.getSelection()
+        for obj in sel:
+            if obj.TypeId == "PartDesign::Body":
+                return obj
+        for obj in sel:
+            p = cls._parent_body(doc, obj)
+            if p:
+                return p
+        for obj in doc.Objects:
+            if obj.TypeId == "PartDesign::Body":
+                return obj
+        return None
+
+    @staticmethod
+    def _parent_body(doc, obj) -> object | None:
+        for c in doc.Objects:
+            if (
+                c.TypeId == "PartDesign::Body"
+                and hasattr(c, "Group")
+                and obj in c.Group
+            ):
+                return c
+        return None
+
+    @classmethod
+    def _should_include(cls, obj) -> bool:
+        tid = obj.TypeId
+        for p in _SKIP_PREFIXES:
+            if tid.startswith(p):
+                return False
+        return tid.startswith("PartDesign::")
+
+    @classmethod
+    def _describe(cls, obj) -> FeatureInfo:
+        type_id  = obj.TypeId
+        dim_prop = FEATURE_DIM_PROP.get(type_id, "")
+        if not dim_prop:
+            for c in ("Length", "Radius", "Size", "Diameter", "Angle", "Value"):
+                if hasattr(obj, c):
+                    dim_prop = c
+                    break
+        dim_value = 0.0
+        if dim_prop:
+            raw = getattr(obj, dim_prop, None)
+            if raw is not None:
+                try:
+                    dim_value = float(raw)
+                except (TypeError, ValueError):
+                    pass
+        sketch_name = cls._extract_name(getattr(obj, "Profile", None)) or ""
+        return FeatureInfo(
+            name=obj.Name, label=obj.Label, type_id=type_id,
+            dim_prop=dim_prop, dim_value=dim_value, sketch_name=sketch_name,
+        )
+
+    @staticmethod
+    def _extract_name(attr) -> str:
+        if attr is None:
+            return ""
+        if isinstance(attr, (list, tuple)):
+            return attr[0].Name if len(attr) >= 1 and hasattr(attr[0], "Name") else ""
+        return attr.Name if hasattr(attr, "Name") else ""
+
+
+# ── AssemblyScanner ────────────────────────────────────────────────────────────
+
+class AssemblyScanner:
+    """
+    Scans an Assembly::AssemblyObject and returns ComponentInfo list.
+
+    Includes all direct App::Link children (parts and sub-assemblies).
+    """
+
+    @classmethod
+    def scan(cls, doc) -> tuple[list[ComponentInfo], object]:
+        asm = cls._find_assembly(doc)
+        if asm is None:
+            raise RuntimeError(
+                "No Assembly found in the active document.\n"
+                "Open an Assembly document or create one first."
+            )
+        components: list[ComponentInfo] = []
+        group = getattr(asm, "Group", []) or []
+        for obj in group:
+            # Accept App::Link and Assembly::AssemblyLink
+            is_link = obj.TypeId in ("App::Link", "Assembly::AssemblyLink")
+            has_linked = hasattr(obj, "LinkedObject") and obj.LinkedObject is not None
+            if not (is_link or has_linked):
+                continue
+            linked = getattr(obj, "LinkedObject", None)
+            if linked is None:
+                continue
+            linked_label = getattr(linked, "Label", obj.Label) or obj.Label
+            linked_tid   = getattr(linked, "TypeId", "")
+            if linked_tid == ASM_OBJ_TYPE:
+                comp_type = "Sub-Assembly"
+            elif (
+                linked_tid.startswith("PartDesign::")
+                or linked_tid in ("App::Part", "Part::Feature", "Part::Body")
+            ):
+                comp_type = "Part"
+            else:
+                comp_type = "Component"
+            components.append(
+                ComponentInfo(
+                    name=obj.Name,
+                    label=obj.Label,
+                    linked_label=linked_label,
+                    comp_type=comp_type,
+                )
+            )
+        return components, asm
+
+    @classmethod
+    def _find_assembly(cls, doc) -> object | None:
+        sel = FreeCADGui.Selection.getSelection()
+        for obj in sel:
+            if obj.TypeId == ASM_OBJ_TYPE:
+                return obj
+        # Check if selected object lives inside an assembly group
+        for obj in sel:
+            for candidate in doc.Objects:
+                if (
+                    candidate.TypeId == ASM_OBJ_TYPE
+                    and hasattr(candidate, "Group")
+                    and obj in candidate.Group
+                ):
+                    return candidate
+        for obj in doc.Objects:
+            if obj.TypeId == ASM_OBJ_TYPE:
+                return obj
+        return None
+
+
+# ── FeatureCellWidget ──────────────────────────────────────────────────────────
+
+class FeatureCellWidget(QtWidgets.QWidget):
+    """
+    Cell:  [ ☑ checkbox ]  [ dim override lineEdit ]
+
+    In Assembly mode (has_dim=False) only the checkbox is shown.
+    """
+
+    activeChanged = QtCore.Signal(str, bool)
+
+    def __init__(
+        self,
+        feature_name: str,
+        active: bool = True,
+        size: str = "",
+        has_dim: bool = True,
+        row_bg: str = "#f7f9fb",
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._feature_name = feature_name
+
+        self.setAutoFillBackground(True)
+        pal = self.palette()
+        pal.setColor(self.backgroundRole(), QtGui.QColor(row_bg))
+        self.setPalette(pal)
+
+        lay = QtWidgets.QHBoxLayout(self)
+        lay.setSpacing(4)
+
+        self._chk = QtWidgets.QCheckBox()
+        self._chk.setChecked(active)
+        action_word   = "Active"     if has_dim else "Included"
+        suppress_word = "Suppressed" if has_dim else "Excluded"
+        self._chk.setToolTip(f"☑  {action_word}\n☐  {suppress_word}")
+
+        if has_dim:
+            # PartDesign: left-aligned checkbox + dimension override edit
+            lay.setContentsMargins(5, 1, 5, 1)
+            lay.addWidget(self._chk)
+            self._edit = QtWidgets.QLineEdit(size)
+            self._edit.setFixedWidth(70)
+            self._edit.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            self._edit.setPlaceholderText("default")
+            self._edit.setToolTip(
+                "Dimension override for this instance.\n"
+                "Blank = keep the master document value."
+            )
+            self._edit.setEnabled(active)
+            self._edit.setStyleSheet(
+                "QLineEdit{border:1px solid #b0bec5;border-radius:3px;"
+                "background:#fff;padding:1px 3px;}"
+                "QLineEdit:disabled{background:#e0e0e0;color:#888;}"
+            )
+            lay.addWidget(self._edit)
+            lay.addStretch()
+        else:
+            # Assembly: centered checkbox only (no dimension)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.addStretch()
+            lay.addWidget(self._chk)
+            lay.addStretch()
+            self._edit = None
+
+        self._chk.stateChanged.connect(self._on_state)
+
+    @property
+    def active(self) -> bool:
+        return self._chk.isChecked()
+
+    @active.setter
+    def active(self, value: bool) -> None:
+        self._chk.blockSignals(True)
+        self._chk.setChecked(value)
+        self._chk.blockSignals(False)
+        if self._edit:
+            self._edit.setEnabled(value)
+
+    @property
+    def size_text(self) -> str:
+        return self._edit.text().strip() if self._edit else ""
+
+    @size_text.setter
+    def size_text(self, v: str) -> None:
+        if self._edit:
+            self._edit.setText(v)
+
+    def _on_state(self) -> None:
+        is_active = self._chk.isChecked()
+        if self._edit:
+            self._edit.setEnabled(is_active)
+        self.activeChanged.emit(self._feature_name, is_active)
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _vsep() -> QtWidgets.QFrame:
+    s = QtWidgets.QFrame()
+    s.setFrameShape(QtWidgets.QFrame.VLine)
+    s.setFrameShadow(QtWidgets.QFrame.Sunken)
+    return s
+
+
+def safe_filename(name: str) -> str:
+    return re.sub(r'[\\/:*?"<>|]', "_", name).strip()
+
+
+def require_active_doc():
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        raise RuntimeError("No active document. Open a FreeCAD document first.")
+    return doc
+
+
+def parse_float(text: str) -> float:
+    try:
+        return float(text.strip())
+    except ValueError:
+        raise ValueError(f"'{text.strip()}' is not a valid number.")
+
+
+def _next_version_path(out_dir: str, base_name: str, file_ext: str) -> tuple[str, int]:
+    """
+    Scan *out_dir* for  <base_name>.<NNN><file_ext>  files and return
+    (path_for_next_version, version_number).
+
+    Examples (file_ext = '.prt.FCStd')
+    ------------------------------------
+    No files exist            → BRKT.001.prt.FCStd   (v1)
+    BRKT.001 exists           → BRKT.002.prt.FCStd   (v2)
+    BRKT.001 + BRKT.002 exist → BRKT.003.prt.FCStd   (v3)
+
+    The base_name never changes across versions so PDM treats all
+    versions as the same logical part / assembly.
+    """
+    ext_escaped = re.escape(file_ext)
+    pattern = re.compile(
+        r"^" + re.escape(base_name) + r"\.(\d{3})" + ext_escaped + r"$",
+        re.IGNORECASE,
+    )
+    highest = 0
+    try:
+        for entry in os.listdir(out_dir):
+            m = pattern.match(entry)
+            if m:
+                highest = max(highest, int(m.group(1)))
+    except OSError:
+        pass
+    next_ver = highest + 1
+    filename = f"{base_name}.{next_ver:03d}{file_ext}"
+    return os.path.join(out_dir, filename), next_ver
+
+
+# ── VariantGenerator (PartDesign) ──────────────────────────────────────────────
+
+class VariantGenerator:
+    """
+    Generates PartDesign variants  (<name>.<ver>.prt.FCStd).
+
+    Two-pass suppression strategy
+    ──────────────────────────────
+    Pass 1 (REVERSE Body order)
+        Suppress DressUp features (Fillet / Chamfer) BEFORE their base Pads.
+        This prevents FreeCAD from trying to resolve edge references on
+        geometry that is already gone, eliminating 'missing element' errors.
+    Pass 2 (forward order)
+        Apply dimension overrides to active features.
+    Pass 3
+        Copy master Comment / set variant Label for PDM compatibility.
+    """
+
+    def __init__(
+        self, master_doc, out_dir: str, features: list[FeatureInfo],
+    ) -> None:
+        self._master   = master_doc
+        self._out_dir  = out_dir
+        self._features = features
+
+    def generate_one(self, instance: dict) -> tuple[str, int]:
+        base_name     = safe_filename(instance["name"])
+        dest, version = _next_version_path(self._out_dir, base_name, FILE_EXT)
+        shutil.copy2(self._master.FileName, dest)
+
+        vdoc  = FreeCAD.openDocument(dest)
+        vname = vdoc.Name
+        try:
+            feat_states = instance["features"]
+
+            # Pass 1 – suppress in REVERSE order (leaves before bases)
+            for f_info in reversed(self._features):
+                state     = feat_states.get(f_info.name, {})
+                is_active = state.get("active", True)
+                obj       = vdoc.getObject(f_info.name)
+                if obj is None:
+                    continue
+                if hasattr(obj, "Suppressed"):
+                    obj.Suppressed = not is_active
+                if not is_active and f_info.sketch_name:
+                    sk = vdoc.getObject(f_info.sketch_name)
+                    if sk and hasattr(sk, "ViewObject") and sk.ViewObject:
+                        sk.ViewObject.Visibility = False
+
+            # Pass 2 – dimension overrides (forward order, active only)
+            for f_info in self._features:
+                state     = feat_states.get(f_info.name, {})
+                is_active = state.get("active", True)
+                size_text = state.get("size", "").strip()
+                if not is_active or not size_text or not f_info.dim_prop:
+                    continue
+                obj = vdoc.getObject(f_info.name)
+                if obj is None:
+                    continue
+                try:
+                    setattr(obj, f_info.dim_prop, parse_float(size_text))
+                except (ValueError, AttributeError):
+                    pass
+
+            # Pass 3 – description + identity
+            master_comment = getattr(self._master, "Comment", "") or ""
+            stamp          = f"[Family Table variant  v{version:03d}]"
+            vdoc.Comment   = (master_comment + ("\n" if master_comment else "") + stamp)
+            vdoc.Label     = base_name   # stable name across versions
+
+            vdoc.recompute()
+            vdoc.save()
+        finally:
+            FreeCAD.closeDocument(vname)
+            try:
+                FreeCAD.setActiveDocument(self._master.Name)
+            except Exception:
+                pass
+        return dest, version
+
+
+# ── AssemblyVariantGenerator ───────────────────────────────────────────────────
+
+class AssemblyVariantGenerator:
+    """
+    Generates Assembly variants  (<name>.<ver>.asm.FCStd).
+
+    For each component (App::Link) in the assembly:
+      • Suppressed = True / Visibility = False → component excluded
+      • Suppressed = False / Visibility = True → component included
+
+    Uses Suppressed property (FreeCAD ≥ 1.1) with Visibility as fallback.
+    There are no dimension overrides in assembly mode.
+    """
+
+    def __init__(
+        self, master_doc, out_dir: str, components: list[ComponentInfo],
+    ) -> None:
+        self._master     = master_doc
+        self._out_dir    = out_dir
+        self._components = components
+
+    def generate_one(self, instance: dict) -> tuple[str, int]:
+        base_name     = safe_filename(instance["name"])
+        dest, version = _next_version_path(self._out_dir, base_name, ASM_FILE_EXT)
+        shutil.copy2(self._master.FileName, dest)
+
+        vdoc  = FreeCAD.openDocument(dest)
+        vname = vdoc.Name
+        try:
+            for comp in self._components:
+                state     = instance["features"].get(comp.name, {})
+                is_active = state.get("active", True)
+                obj       = vdoc.getObject(comp.name)
+                if obj is None:
+                    continue
+                # Suppressed property (preferred – FreeCAD 1.1+)
+                if hasattr(obj, "Suppressed"):
+                    obj.Suppressed = not is_active
+                # Always sync ViewObject visibility
+                if hasattr(obj, "ViewObject") and obj.ViewObject:
+                    obj.ViewObject.Visibility = is_active
+
+            # Description + identity
+            master_comment = getattr(self._master, "Comment", "") or ""
+            stamp          = f"[Family Table variant  v{version:03d}]"
+            vdoc.Comment   = (master_comment + ("\n" if master_comment else "") + stamp)
+            vdoc.Label     = base_name
+
+            vdoc.recompute()
+            vdoc.save()
+        finally:
+            FreeCAD.closeDocument(vname)
+            try:
+                FreeCAD.setActiveDocument(self._master.Name)
+            except Exception:
+                pass
+        return dest, version
+
+
+# ── FamilyTableDialog ──────────────────────────────────────────────────────────
+
+class FamilyTableDialog(QtWidgets.QDialog):
+    """
+    Transposed Family Table dialog.
+
+    Shared by both PartDesign and Assembly contexts.
+
+    mode = "partdesign"
+        items      = list[FeatureInfo]
+        dependents = cascade map (Fillet auto-suppresses when its Pad is off)
+        cells      = checkbox + optional dimension override
+
+    mode = "assembly"
+        items      = list[ComponentInfo]
+        dependents = {} (no cascade)
+        cells      = checkbox only (no dimension)
+    """
+
+    def __init__(
+        self,
+        items: list,
+        dependents: dict[str, list[str]],
+        mode: str = "partdesign",
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__(parent or FreeCADGui.getMainWindow())
+        self._items      = items
+        self._dependents = dependents
+        self._mode       = mode         # "partdesign" | "assembly"
+        self._item_row: dict[str, int] = {
+            item.name: (_FEAT_OFFSET + i) for i, item in enumerate(items)
+        }
+        self._cascade_guard = False
+
+        suffix = "Assembly" if mode == "assembly" else "Part Design"
+        self.setWindowTitle(f"Family Table  —  FreeCAD  [{suffix}]")
+        n = len(items)
+        self.setMinimumWidth(_BTN_GRID_MIN_W)
+        self.resize(
+            _BTN_GRID_MIN_W,
+            min(190 + 28 * n, 720),
+        )
+        self.setWindowFlags(
+            self.windowFlags()
+            | QtCore.Qt.Window
+            | QtCore.Qt.WindowMinMaxButtonsHint
+        )
+        self._build_ui()
+        self._load_json()
+        self._fit_width()
+
+    # ── UI ─────────────────────────────────────────────────────────────
+
+    def _build_ui(self) -> None:
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(10, 10, 10, 8)
+        root.setSpacing(6)
+
+        # ── Info bar ──────────────────────────────────────────────────
+        doc = FreeCAD.ActiveDocument
+        if doc and doc.FileName:
+            fname = os.path.basename(doc.FileName)
+        elif doc:
+            fname = doc.Name + "  (unsaved)"
+        else:
+            fname = "—"
+
+        if self._mode == "assembly":
+            asm       = AssemblyScanner._find_assembly(doc) if doc else None
+            ctx_label = f"Assembly: <b>{asm.Label if asm else '—'}</b>"
+            badge_txt = "ASSEMBLY"
+        else:
+            asm       = None
+            body      = BodyScanner._find_body(doc) if doc else None
+            ctx_label = f"Body: <b>{body.Label if body else '—'}</b>"
+            badge_txt = "PART DESIGN"
+        info_bg   = "#eef2f7"
+        badge_col = "#1263a8"
+
+        badge = (
+            f"<span style='background:{badge_col};color:#fff;"
+            f"border-radius:3px;padding:1px 6px;font-size:10px;'>"
+            f"{badge_txt}</span>"
+        )
+        info = QtWidgets.QLabel(
+            f"{badge}&nbsp;&nbsp;"
+            f"File: <b>{fname}</b>"
+            f"&nbsp;│&nbsp;{ctx_label}"
+            f"&nbsp;│&nbsp;Items: <b>{len(self._items)}</b>"
+        )
+        info.setTextFormat(QtCore.Qt.RichText)
+        info.setStyleSheet(
+            f"padding:4px 8px;background:{info_bg};font-size:11px;"
+            "border:1px solid #b0bec5;border-radius:3px;"
+        )
+        root.addWidget(info)
+
+        # ── Table ─────────────────────────────────────────────────────
+        n_rows = _FEAT_OFFSET + len(self._items)
+        self._table = QtWidgets.QTableWidget(n_rows, 1)
+        self._table.horizontalHeader().setVisible(False)
+        self._table.verticalHeader().setVisible(False)
+        self._table.setShowGrid(True)
+        self._table.setAlternatingRowColors(False)
+        self._table.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self._table.setEditTriggers(
+            QtWidgets.QAbstractItemView.DoubleClicked
+            | QtWidgets.QAbstractItemView.SelectedClicked
+            | QtWidgets.QAbstractItemView.EditKeyPressed
+        )
+        self._table.setHorizontalScrollMode(
+            QtWidgets.QAbstractItemView.ScrollPerPixel
+        )
+        self._table.setVerticalScrollMode(
+            QtWidgets.QAbstractItemView.ScrollPerPixel
+        )
+        grid_col = _C["feat_even"]
+        self._table.setStyleSheet(
+            f"QTableWidget{{gridline-color:{grid_col};border:1px solid {grid_col};}}"
+            "QTableWidget::item:selected{background:#1a6eb5;color:#fff;}"
+        )
+        table_h = 30 + 28 * len(self._items) + 4
+        self._table.setFixedHeight(table_h)
+        root.addWidget(self._table)
+
+        self._populate_item_col()
+
+        # ── Dependency legend (PartDesign only) ───────────────────────
+        if self._mode == "partdesign":
+            dep_parts: list[str] = []
+            for item in self._items:
+                deps = self._dependents.get(item.name, [])
+                if deps:
+                    dep_colour = _C["dep_badge"]
+                    dep_labels = [
+                        next((x.label for x in self._items if x.name == d), d)
+                        for d in deps
+                    ]
+                    dep_parts.append(
+                        f"<b>{item.label}</b> ⇢ "
+                        f"<span style='color:{dep_colour}'>"
+                        + ", ".join(dep_labels)
+                        + "</span>"
+                    )
+            if dep_parts:
+                legend = QtWidgets.QLabel(
+                    "<b>Auto-suppress:</b>&nbsp;&nbsp;"
+                    + "&nbsp;&nbsp;│&nbsp;&nbsp;".join(dep_parts)
+                )
+                legend.setTextFormat(QtCore.Qt.RichText)
+                legend.setWordWrap(True)
+                legend.setStyleSheet(
+                    "font-size:9px;color:#546e7a;padding:2px 4px;"
+                    "background:#f8f9fb;border:1px solid #dde;border-radius:2px;"
+                )
+                root.addWidget(legend)
+
+        # ── Assembly hint ─────────────────────────────────────────────
+        if self._mode == "assembly":
+            part_bg = _C["corner_bg"]
+            sub_bg  = _C["inst_hdr_bg"]
+            def _badge(bg: str, text: str) -> str:
+                return (
+                    f"<span style='background:{bg};color:#ecf0f1;"
+                    "border-radius:3px;padding:0 5px;font-size:9px;'>"
+                    f"{text}</span>"
+                )
+            part_b = _badge(part_bg, 'Part')
+            sub_b  = _badge(sub_bg,  'Sub-Assembly')
+            hint = QtWidgets.QLabel(
+                f"{part_b} / {sub_b}"
+                "&nbsp; labels show what each row links to.&nbsp;&nbsp;│&nbsp;&nbsp;"
+                "<b>☑</b>&nbsp;= included&nbsp;&nbsp;"
+                "<b>☐</b>&nbsp;= excluded (visibility off)"
+            )
+            hint.setTextFormat(QtCore.Qt.RichText)
+            hint.setStyleSheet(
+                "font-size:9px;color:#1a2940;padding:3px 6px;"
+                "background:#eef2f7;border:1px solid #b0bec5;border-radius:3px;"
+            )
+            root.addWidget(hint)
+
+        # ── Button bar ────────────────────────────────────────────────
+        btn_frame = QtWidgets.QFrame()
+        btn_frame.setFrameShape(QtWidgets.QFrame.StyledPanel)
+
+        def _btn(
+            text: str, color: str = "", tooltip: str = "",
+            min_w: int = 130,
+        ) -> QtWidgets.QPushButton:
+            b = QtWidgets.QPushButton(text)
+            b.setMinimumWidth(min_w)
+            b.setSizePolicy(
+                QtWidgets.QSizePolicy.Expanding,
+                QtWidgets.QSizePolicy.Fixed,
+            )
+            if color:
+                b.setStyleSheet(
+                    f"QPushButton{{background:{color};color:#fff;"
+                    f"font-weight:bold;border-radius:4px;padding:5px 14px;}}"
+                    f"QPushButton:hover{{background:{color};opacity:0.9;}}"
+                )
+            else:
+                b.setStyleSheet(
+                    "QPushButton{border:1px solid #b0bec5;border-radius:4px;"
+                    "padding:5px 14px;background:#f5f7fa;}"
+                    "QPushButton:hover{background:#e8ecf0;}"
+                )
+            if tooltip:
+                b.setToolTip(tooltip)
+            return b
+
+        gen_colour    = "#1263a8"
+        self._btn_add = _btn("＋ Add Instance",      tooltip="Add a new variant column")
+        self._btn_del = _btn("－ Delete Instance",    tooltip="Delete selected column(s)")
+        self._btn_exp = _btn("↑ Export CSV",          tooltip="Export instances to CSV")
+        self._btn_imp = _btn("↓ Import CSV",          tooltip="Import instances from CSV")
+        self._btn_gen = _btn("⚙  Generate Variants",  color=gen_colour, min_w=160)
+        self._btn_cls = _btn("Close",                  color="#b83216", min_w=90)
+
+        # ┌─────────────────┬─────────────────┬───────────────────────┐
+        # │ ＋ Add Instance  │ ↑ Export CSV    │ ⚙  Generate Variants  │
+        # │ － Delete Inst.  │ ↓ Import CSV    │        Close          │
+        # └─────────────────┴─────────────────┴───────────────────────┘
+        grid = QtWidgets.QGridLayout()
+        grid.setContentsMargins(8, 6, 8, 6)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(4)
+
+        # col 0 – instance management
+        grid.addWidget(self._btn_add, 0, 0)
+        grid.addWidget(self._btn_del, 1, 0)
+
+        # col 1 – CSV
+        grid.addWidget(self._btn_exp, 0, 1)
+        grid.addWidget(self._btn_imp, 1, 1)
+
+        # col 2 – primary actions (stretch to fill remaining width)
+        grid.addWidget(self._btn_gen, 0, 2)
+        grid.addWidget(self._btn_cls, 1, 2)
+
+        # equal column widths for cols 0 & 1; col 2 gets any extra space
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
+
+        btn_frame.setLayout(grid)
+        root.addWidget(btn_frame)
+
+        self._status = QtWidgets.QLabel(
+            "Ready.  Add instance columns with  ＋ Add Instance."
+        )
+        self._status.setStyleSheet("color:#546e7a;font-size:10px;padding:1px 2px;")
+        root.addWidget(self._status)
+
+        self._btn_add.clicked.connect(self._on_add_instance)
+        self._btn_del.clicked.connect(self._on_delete_instance)
+        self._btn_gen.clicked.connect(self._on_generate)
+        self._btn_exp.clicked.connect(self._on_export_csv)
+        self._btn_imp.clicked.connect(self._on_import_csv)
+        self._btn_cls.clicked.connect(self.close)
+
+    # ── Auto-fit dialog width to current columns ───────────────────────
+
+    def _fit_width(self) -> None:
+        """Resize dialog width to contain all columns, never narrower than the button grid."""
+        n_inst    = self._instance_count()
+        table_w   = _COL_FEAT_W + _INST_COL_W * n_inst + 40
+        new_w     = max(table_w, _BTN_GRID_MIN_W)
+        self.resize(new_w, self.height())
+
+    # ── Item label column (col 0) ──────────────────────────────────────
+
+    def _populate_item_col(self) -> None:
+        tbl    = self._table
+        is_asm = self._mode == "assembly"
+
+        # Corner cell
+        corner_bg   = _C["corner_bg"]
+        corner_text = "Component  /  Instance ▶" if is_asm else "Feature  /  Instance ▶"
+        corner      = QtWidgets.QTableWidgetItem(corner_text)
+        corner.setFlags(QtCore.Qt.ItemIsEnabled)
+        corner.setBackground(QtGui.QColor(corner_bg))
+        corner.setForeground(QtGui.QColor(_C["corner_fg"]))
+        fnt = corner.font()
+        fnt.setBold(True)
+        fnt.setPointSize(fnt.pointSize() - 1)
+        corner.setFont(fnt)
+        corner.setTextAlignment(QtCore.Qt.AlignCenter)
+        tbl.setItem(_ROW_NAMES, _COL_FEAT, corner)
+        tbl.setRowHeight(_ROW_NAMES, 30)
+
+        # Item rows
+        fe      = _C["feat_even"]
+        fo      = _C["feat_odd"]
+        feat_fg = _C["feat_fg"]
+        for i, item in enumerate(self._items):
+            row  = _FEAT_OFFSET + i
+            bg   = fe if i % 2 == 0 else fo
+            deps = self._dependents.get(item.name, [])
+
+            # Build label: type badge suffix for assembly, cascade arrow for PD
+            if is_asm:
+                ct = item.short_type  # "Part" | "Sub-Assembly" | "Component"
+                label_text = f"{item.label}  ({ct})"
+            else:
+                label_text = item.label + ("  ⇢" if deps else "")
+
+            cell = QtWidgets.QTableWidgetItem(label_text)
+            cell.setFlags(QtCore.Qt.ItemIsEnabled)
+            cell.setBackground(QtGui.QColor(bg))
+            cell.setForeground(QtGui.QColor(feat_fg))
+            cell.setTextAlignment(QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft)
+
+            # Tooltip
+            if is_asm:
+                tip = (
+                    f"Type: {item.short_type}\n"
+                    f"Links to: {item.linked_label}\n\n"
+                    "☑  Included in this variant\n"
+                    "☐  Excluded (visibility off)"
+                )
+            else:
+                if item.has_dim:
+                    tip = (
+                        f"{item.short_type}  ·  {item.dim_prop}"
+                        f"  (master: {round(item. dim_value, 3)})"
+                    )
+                else:
+                    tip = item.short_type
+                if deps:
+                    dep_labels = [
+                        next((x.label for x in self._items if x.name == d), d)
+                        for d in deps
+                    ]
+                    tip += "\n\nSuppressing this will also suppress:\n"
+                    tip += "\n".join(f"  • {d}" for d in dep_labels)
+
+            cell.setToolTip(tip)
+            tbl.setItem(row, _COL_FEAT, cell)
+            tbl.setRowHeight(row, 28)
+
+        tbl.setColumnWidth(_COL_FEAT, _COL_FEAT_W)
+
+    # ── Instance column management ─────────────────────────────────────
+
+    def _add_instance_col(self, name: str = "", data: dict | None = None) -> None:
+        col = self._table.columnCount()
+        self._table.insertColumn(col)
+        self._table.setColumnWidth(col, _INST_COL_W)
+
+        hdr = QtWidgets.QTableWidgetItem(name)
+        hdr.setBackground(QtGui.QColor(_C["inst_hdr_bg"]))
+        hdr.setForeground(QtGui.QColor(_C["inst_hdr_fg"]))
+        hdr.setTextAlignment(QtCore.Qt.AlignCenter)
+        fnt = hdr.font()
+        fnt.setBold(True)
+        hdr.setFont(fnt)
+        hdr.setToolTip("Double-click to rename this instance.")
+        self._table.setItem(_ROW_NAMES, col, hdr)
+
+        is_asm = self._mode == "assembly"
+        for i, item in enumerate(self._items):
+            row    = _FEAT_OFFSET + i
+            row_bg = _C["row_even"] if i % 2 == 0 else _C["row_odd"]
+            f_data = (data or {}).get(item.name, {})
+            active = f_data.get("active", True)
+            size   = f_data.get(
+                "size",
+                str(round(item.dim_value, 4)) if item.has_dim else "",
+            )
+            widget = FeatureCellWidget(
+                feature_name=item.name,
+                active=active,
+                size=size,
+                has_dim=item.has_dim,
+                row_bg=row_bg,
+            )
+            widget.activeChanged.connect(self._on_item_active_changed)
+            self._table.setCellWidget(row, col, widget)
+
+    def _instance_count(self) -> int:
+        return max(0, self._table.columnCount() - _INST_OFFSET)
+
+    # ── Data collection ────────────────────────────────────────────────
+
+    def _collect_instances(self) -> list[dict]:
+        instances: list[dict] = []
+        seen:      set[str]   = set()
+        for col in range(_INST_OFFSET, self._table.columnCount()):
+            name_item = self._table.item(_ROW_NAMES, col)
+            name      = name_item.text().strip() if name_item else ""
+            if not name:
+                raise ValueError(
+                    f"Instance column {col}: name is empty.\n"
+                    "Double-click the header cell to enter a name."
+                )
+            if name in seen:
+                raise ValueError(f"Duplicate instance name '{name}'.")
+            seen.add(name)
+
+            features: dict[str, dict] = {}
+            for item in self._items:
+                row    = self._item_row[item.name]
+                widget = self._table.cellWidget(row, col)
+                if widget is None:
+                    features[item.name] = {"active": True, "size": ""}
+                    continue
+                size_text = widget.size_text
+                if size_text:
+                    try:
+                        parse_float(size_text)
+                    except ValueError:
+                        raise ValueError(
+                            f"Instance '{name}', item '{item.label}': "
+                            f"'{size_text}' is not a valid number."
+                        )
+                features[item.name] = {"active": widget.active, "size": size_text}
+
+            instances.append({"name": name, "features": features})
+        return instances
+
+    # ── Cascade suppression (PartDesign only) ──────────────────────────
+
+    def _on_item_active_changed(self, item_name: str, is_active: bool) -> None:
+        if self._cascade_guard or is_active or self._mode == "assembly":
+            return
+        downstream = self._dependents.get(item_name, [])
+        if not downstream:
+            return
+        row    = self._item_row.get(item_name)
+        sender = self.sender()
+        if row is None:
+            return
+        for col in range(_INST_OFFSET, self._table.columnCount()):
+            if self._table.cellWidget(row, col) is sender:
+                self._cascade_guard = True
+                try:
+                    for dep in downstream:
+                        dep_row = self._item_row.get(dep)
+                        if dep_row is None:
+                            continue
+                        w = self._table.cellWidget(dep_row, col)
+                        if w:
+                            w.active = False
+                finally:
+                    self._cascade_guard = False
+                return
+
+    # ── JSON persistence ───────────────────────────────────────────────
+
+    def _json_path(self) -> str | None:
+        doc = FreeCAD.ActiveDocument
+        if doc and doc.FileName:
+            suffix = (
+                ".asm_family_table.json"
+                if self._mode == "assembly"
+                else ".family_table.json"
+            )
+            return os.path.splitext(doc.FileName)[0] + suffix
+        return None
+
+    def _save_json(self, instances: list[dict]) -> None:
+        path = self._json_path()
+        if path is None:
+            return
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(
+                {
+                    "mode":       self._mode,
+                    "item_names": [item.name for item in self._items],
+                    "instances":  instances,
+                },
+                fh, indent=2,
+            )
+
+    def _load_json(self) -> None:
+        path = self._json_path()
+        if path is None or not os.path.isfile(path):
+            return
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            current = {item.name for item in self._items}
+            for inst in data.get("instances", []):
+                states = {
+                    k: v for k, v in inst.get("features", {}).items()
+                    if k in current
+                }
+                for item in self._items:
+                    if item.name not in states:
+                        states[item.name] = {
+                            "active": True,
+                            "size": str(round(item.dim_value, 4)) if item.has_dim else "",
+                        }
+                self._add_instance_col(name=inst.get("name", ""), data=states)
+            n = self._instance_count()
+            if n:
+                self._set_status(f"Loaded {n} instance(s) from saved table.")
+        except Exception as exc:
+            FreeCAD.Console.PrintWarning(
+                f"[FamilyTable] Could not load JSON: {exc}\n"
+            )
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        try:
+            instances = self._collect_instances()
+            self._save_json(instances)
+        except Exception:
+            pass
+        event.accept()
+
+    # ── Button handlers ────────────────────────────────────────────────
+
+    def _on_add_instance(self) -> None:
+        self._add_instance_col()
+        self._fit_width()
+        self._table.scrollTo(
+            self._table.model().index(_ROW_NAMES, self._table.columnCount() - 1)
+        )
+        self._set_status(
+            f"Instance added – {self._instance_count()} total.  "
+            "Double-click the header cell to name it."
+        )
+
+    def _on_delete_instance(self) -> None:
+        cols = sorted(
+            {
+                idx.column()
+                for idx in self._table.selectedIndexes()
+                if idx.column() >= _INST_OFFSET
+            },
+            reverse=True,
+        )
+        if not cols:
+            QtWidgets.QMessageBox.information(
+                self, "Delete Instance",
+                "Click any cell in the column to delete, "
+                "then press Delete Instance.",
+            )
+            return
+        for c in cols:
+            self._table.removeColumn(c)
+        self._fit_width()
+        self._set_status(
+            f"{len(cols)} instance(s) deleted – {self._instance_count()} remaining."
+        )
+
+    def _on_generate(self) -> None:
+        try:
+            doc = require_active_doc()
+        except RuntimeError as exc:
+            QtWidgets.QMessageBox.critical(self, "Error", str(exc))
+            return
+
+        if not doc.FileName:
+            QtWidgets.QMessageBox.critical(
+                self, "Unsaved Document",
+                "Save the master document (File › Save) before generating variants.\n"
+                "The generator must copy the physical file.",
+            )
+            return
+
+        try:
+            instances = self._collect_instances()
+        except ValueError as exc:
+            QtWidgets.QMessageBox.critical(self, "Validation Error", str(exc))
+            return
+
+        if not instances:
+            QtWidgets.QMessageBox.information(
+                self, "No Instances", "Add at least one instance column first."
+            )
+            return
+
+        default_dir = os.path.join(os.path.dirname(doc.FileName), VARIANTS_DIR)
+        out_dir = QtWidgets.QFileDialog.getExistingDirectory(
+            self,
+            f"Select Output Folder  ({len(instances)} variant(s))",
+            default_dir,
+            QtWidgets.QFileDialog.ShowDirsOnly
+            | QtWidgets.QFileDialog.DontResolveSymlinks,
+        )
+        if not out_dir:
+            return
+
+        reply = QtWidgets.QMessageBox.question(
+            self, "Generate Variants",
+            f"Generate <b>{len(instances)}</b> variant(s) in:"
+            f"<br><br><tt>{out_dir}</tt><br><br>"
+            "The master document will be saved first.  Proceed?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+        )
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+
+        try:
+            self._save_json(instances)
+            doc.save()
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(
+                self, "Save Error",
+                f"Could not save master document:\n{exc}",
+            )
+            return
+
+        os.makedirs(out_dir, exist_ok=True)
+
+        # Choose generator based on mode
+        if self._mode == "assembly":
+            generator = AssemblyVariantGenerator(doc, out_dir, self._items)
+        else:
+            generator = VariantGenerator(doc, out_dir, self._items)
+
+        successes: list[str] = []
+        errors:    list[str] = []
+
+        progress = QtWidgets.QProgressDialog(
+            "Preparing…", "Cancel", 0, len(instances), self
+        )
+        progress.setWindowTitle("Generating Variants")
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setMinimumDuration(0)
+
+        for i, inst in enumerate(instances):
+            if progress.wasCanceled():
+                break
+            progress.setLabelText(f"Generating:  {inst['name']}")
+            progress.setValue(i)
+            QtWidgets.QApplication.processEvents()
+            try:
+                dest, ver = generator.generate_one(inst)
+                fname     = os.path.basename(dest)
+                successes.append(f"{fname}  (v{ver:03d})")
+                self._set_status(f"Created: {fname}")
+            except Exception as exc:
+                errors.append(f"{inst['name']}: {exc}")
+
+        progress.setValue(len(instances))
+
+        parts: list[str] = []
+        if successes:
+            parts.append(
+                f"✓  Created ({len(successes)}):\n"
+                + "\n".join(f"      {s}" for s in successes)
+            )
+        if errors:
+            parts.append(
+                f"\n✗  Errors ({len(errors)}):\n"
+                + "\n".join(f"      {e}" for e in errors)
+            )
+
+        QtWidgets.QMessageBox(
+            QtWidgets.QMessageBox.Warning if errors
+            else QtWidgets.QMessageBox.Information,
+            "Generation Complete",
+            "\n".join(parts),
+            QtWidgets.QMessageBox.Ok,
+            self,
+        ).exec()
+
+        self._set_status(
+            f"Done – {len(successes)} created, {len(errors)} error(s)."
+        )
+
+    def _on_export_csv(self) -> None:
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export Family Table CSV", "",
+            "CSV Files (*.csv);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            instances = self._collect_instances()
+        except ValueError as exc:
+            QtWidgets.QMessageBox.critical(self, "Validation Error", str(exc))
+            return
+
+        fieldnames = ["Instance Name"]
+        for item in self._items:
+            fieldnames.append(f"{item.label}  (active)")
+            if item.has_dim:
+                fieldnames.append(f"{item.label}  ({item.dim_prop})")
+
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as fh:
+                writer = csv.DictWriter(fh, fieldnames=fieldnames)
+                writer.writeheader()
+                for inst in instances:
+                    row: dict = {"Instance Name": inst["name"]}
+                    for item in self._items:
+                        state = inst["features"].get(item.name, {})
+                        row[f"{item.label}  (active)"] = (
+                            "1" if state.get("active", True) else "0"
+                        )
+                        if item.has_dim:
+                            row[f"{item.label}  ({item.dim_prop})"] = (
+                                state.get("size", "")
+                            )
+                    writer.writerow(row)
+            QtWidgets.QMessageBox.information(
+                self, "Exported",
+                f"Exported {len(instances)} instance(s) to:\n{path}",
+            )
+            self._set_status(f"Exported {len(instances)} instance(s).")
+        except OSError as exc:
+            QtWidgets.QMessageBox.critical(self, "Export Error", str(exc))
+
+    def _on_import_csv(self) -> None:
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Import Family Table CSV", "",
+            "CSV Files (*.csv);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            imported: list[tuple[str, dict]] = []
+            with open(path, newline="", encoding="utf-8") as fh:
+                reader = csv.DictReader(fh)
+                for line_no, csv_row in enumerate(reader, start=2):
+                    name = csv_row.get("Instance Name", "").strip()
+                    if not name:
+                        raise ValueError(
+                            f"Line {line_no}: 'Instance Name' is empty."
+                        )
+                    item_states: dict[str, dict] = {}
+                    for item in self._items:
+                        a_key = f"{item.label}  (active)"
+                        s_key = f"{item.label}  ({item.dim_prop})"
+                        act   = csv_row.get(a_key, "1").strip().lower()
+                        size  = csv_row.get(s_key, "").strip()
+                        item_states[item.name] = {
+                            "active": act not in ("0", "false", "no"),
+                            "size":   size,
+                        }
+                    imported.append((name, item_states))
+
+            if self._instance_count() > 0:
+                reply = QtWidgets.QMessageBox.question(
+                    self, "Replace Table?",
+                    f"Import {len(imported)} instance(s) from CSV "
+                    "and replace the current table?",
+                    QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                )
+                if reply != QtWidgets.QMessageBox.Yes:
+                    return
+
+            while self._table.columnCount() > 1:
+                self._table.removeColumn(1)
+            for name, data in imported:
+                self._add_instance_col(name=name, data=data)
+
+            QtWidgets.QMessageBox.information(
+                self, "Imported",
+                f"Imported {len(imported)} instance(s) from:\n{path}",
+            )
+            self._set_status(f"Imported {len(imported)} instance(s).")
+
+        except (ValueError, OSError) as exc:
+            QtWidgets.QMessageBox.critical(self, "Import Error", str(exc))
+
+    def _set_status(self, msg: str) -> None:
+        self._status.setText(msg)
+        QtWidgets.QApplication.processEvents()
+
+
+# ── Module-level reference (prevents GC) ──────────────────────────────────────
+_ft_dialog = None
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+def run() -> None:
+    """
+    Auto-detects context (PartDesign Body vs Assembly) from the active
+    document and selection, then opens the Family Table dialog.
+
+    Detection priority
+    ------------------
+    1. Selection contains Assembly::AssemblyObject  → Assembly mode
+    2. Selection contains PartDesign::Body          → PartDesign mode
+    3. Selection contains feature inside a Body     → PartDesign mode
+    4. Selection contains link inside an Assembly   → Assembly mode
+    5. Document has both → ask user
+    6. Document has only Assembly                   → Assembly mode
+    7. Document has only Body                       → PartDesign mode
+    """
+    global _ft_dialog
+
+    if _ft_dialog is not None and _ft_dialog.isVisible():
+        _ft_dialog.raise_()
+        _ft_dialog.activateWindow()
+        return
+
+    try:
+        doc = require_active_doc()
+    except RuntimeError as exc:
+        QtWidgets.QMessageBox.critical(
+            FreeCADGui.getMainWindow(), "Family Table", str(exc)
+        )
+        return
+
+    if not doc.FileName:
+        ans = QtWidgets.QMessageBox.question(
+            FreeCADGui.getMainWindow(),
+            "Unsaved Document",
+            "The document has not been saved to disk yet.\nSave now?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+        )
+        if ans == QtWidgets.QMessageBox.Yes:
+            FreeCADGui.runCommand("Std_Save")
+
+    # ── Detect context ────────────────────────────────────────────────
+    asm  = AssemblyScanner._find_assembly(doc)
+    body = BodyScanner._find_body(doc)
+    mode: str | None = None
+
+    sel = FreeCADGui.Selection.getSelection()
+    if sel:
+        for obj in sel:
+            if obj.TypeId == ASM_OBJ_TYPE:
+                mode = "assembly"
+                break
+            if obj.TypeId == "PartDesign::Body":
+                mode = "partdesign"
+                break
+        if mode is None:
+            # Check if any selected object lives in a known container
+            if asm and any(
+                obj in (getattr(asm, "Group", []) or []) for obj in sel
+            ):
+                mode = "assembly"
+            elif body:
+                mode = "partdesign"
+
+    if mode is None:
+        if asm is not None and body is not None:
+            choice = QtWidgets.QMessageBox.question(
+                FreeCADGui.getMainWindow(),
+                "Select Context",
+                "This document contains both a PartDesign Body and an Assembly.\n\n"
+                "Which Family Table do you want to open?\n\n"
+                "  Yes  →  Assembly Family Table\n"
+                "  No   →  Part Design Family Table",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            )
+            mode = "assembly" if choice == QtWidgets.QMessageBox.Yes else "partdesign"
+        elif asm is not None:
+            mode = "assembly"
+        elif body is not None:
+            mode = "partdesign"
+        else:
+            QtWidgets.QMessageBox.warning(
+                FreeCADGui.getMainWindow(),
+                "Family Table",
+                "No PartDesign Body or Assembly found in the active document.\n\n"
+                "Open or create a Part (Part Design workbench) or an Assembly "
+                "(Assembly workbench) before running the Family Table.",
+            )
+            return
+
+    # ── Scan items ────────────────────────────────────────────────────
+    if mode == "assembly":
+        try:
+            items, _asm_obj = AssemblyScanner.scan(doc)
+        except RuntimeError as exc:
+            QtWidgets.QMessageBox.critical(
+                FreeCADGui.getMainWindow(), "Assembly Scan Error", str(exc)
+            )
+            return
+        if not items:
+            QtWidgets.QMessageBox.warning(
+                FreeCADGui.getMainWindow(),
+                "No Components Found",
+                "No linked components (App::Link) were found in the Assembly.\n\n"
+                "Add parts to the assembly first, then run the Family Table.",
+            )
+            return
+        _ft_dialog = FamilyTableDialog(items, {}, mode="assembly")
+
+    else:
+        try:
+            features, dependents, _body_obj = BodyScanner.scan(doc)
+        except RuntimeError as exc:
+            QtWidgets.QMessageBox.critical(
+                FreeCADGui.getMainWindow(), "Body Scan Error", str(exc)
+            )
+            return
+        if not features:
+            QtWidgets.QMessageBox.warning(
+                FreeCADGui.getMainWindow(),
+                "No Features Found",
+                "No PartDesign features were found in the Body.\n\n"
+                "Add at least one Pad, Pocket, Hole, Fillet, etc.",
+            )
+            return
+        _ft_dialog = FamilyTableDialog(features, dependents, mode="partdesign")
+
+    _ft_dialog.show()
+    _ft_dialog.raise_()
+    _ft_dialog.activateWindow()
+
+
+# ── Execute ───────────────────────────────────────────────────────────────────
+run()

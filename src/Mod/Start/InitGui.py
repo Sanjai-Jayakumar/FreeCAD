@@ -95,6 +95,20 @@ try:
 except Exception as e:
     FreeCAD.Console.PrintError(f"BNC CAD: Failed to setup Pipe Bending toolbar: {str(e)}\n")
 
+# BNC CAD: Check for Updates menu item
+try:
+    import CommandCheckForUpdates
+    FreeCAD.Console.PrintLog("BNC CAD: Check for Updates command registered\n")
+except Exception as e:
+    FreeCAD.Console.PrintError(f"BNC CAD: Failed to load Check for Updates command: {str(e)}\n")
+
+# BNC CAD: Auto-check for updates on startup (shows banner if available)
+try:
+    import AutoCheckUpdates
+    FreeCAD.Console.PrintLog("BNC CAD: Auto update checker initialized\n")
+except Exception as e:
+    FreeCAD.Console.PrintError(f"BNC CAD: Failed to initialize auto update checker: {str(e)}\n")
+
 # BNC CAD: Bounce workbench to force PartDesign toolbars to appear on startup
 # activateWorkbench() is a no-op when the target is already active, so we must
 # switch away first, then back, to trigger C++ setupToolBars().

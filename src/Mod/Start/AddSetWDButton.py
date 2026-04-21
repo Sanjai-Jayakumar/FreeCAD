@@ -31,7 +31,6 @@ def _create_plane_display_icon():
             if os.path.exists(png_path):
                 pix = QtGui.QPixmap(png_path)
                 if not pix.isNull():
-                    FreeCAD.Console.PrintMessage(f"BNC CAD: Plane_Display.png loaded from {png_path}\n")
                     return QtGui.QIcon(pix)
 
         # Strategy 2: Embedded PNG as base64 (works even if files missing)
@@ -77,13 +76,10 @@ def _create_plane_display_icon():
         png_data = base64.b64decode(b64)
         pixmap = QtGui.QPixmap()
         if pixmap.loadFromData(png_data, "PNG") and not pixmap.isNull():
-            FreeCAD.Console.PrintMessage("BNC CAD: Plane_Display icon from embedded PNG\n")
             return QtGui.QIcon(pixmap)
 
-        FreeCAD.Console.PrintError("BNC CAD: All Plane_Display icon methods failed\n")
         return None
-    except Exception as e:
-        FreeCAD.Console.PrintError(f"BNC CAD: Plane_Display icon error: {e}\n")
+    except Exception:
         return None
 
 
@@ -100,6 +96,7 @@ def create_persistent_toolbar():
     try:
         # Check if GUI is ready
         if not FreeCADGui.getMainWindow():
+            FreeCAD.Console.PrintMessage("BNC Tools: GUI not ready, retrying in 500ms...\n")
             QtCore.QTimer.singleShot(500, create_persistent_toolbar)
             return
 
@@ -107,7 +104,6 @@ def create_persistent_toolbar():
 
         # Check if toolbar already exists
         if _persistent_toolbar is not None:
-            FreeCAD.Console.PrintLog("BNC toolbar already exists\n")
             return
 
         # Remove stale toolbar from previous session so it gets recreated with all buttons
@@ -115,7 +111,6 @@ def create_persistent_toolbar():
             if old_tb.objectName() == "BNC_Custom_Toolbar":
                 mw.removeToolBar(old_tb)
                 old_tb.deleteLater()
-                FreeCAD.Console.PrintLog("BNC CAD: Removed stale toolbar, recreating\n")
                 break
 
         # Create new persistent toolbar
@@ -148,7 +143,6 @@ def create_persistent_toolbar():
             icon_path = os.path.join(base_path, "SET_WD.svg")
             if os.path.exists(icon_path):
                 action_setwd.setIcon(QtGui.QIcon(icon_path))
-                FreeCAD.Console.PrintLog(f"✓ SET_WD icon loaded: {icon_path}\n")
                 break
 
         # Connect to command
@@ -172,7 +166,6 @@ def create_persistent_toolbar():
             icon_path = os.path.join(base_path, "save.svg")
             if os.path.exists(icon_path):
                 action_save.setIcon(QtGui.QIcon(icon_path))
-                FreeCAD.Console.PrintLog(f"✓ save icon loaded: {icon_path}\n")
                 break
 
         # Connect to command
@@ -194,7 +187,6 @@ def create_persistent_toolbar():
             icon_path = os.path.join(base_path, "Open.svg")
             if os.path.exists(icon_path):
                 action_open.setIcon(QtGui.QIcon(icon_path))
-                FreeCAD.Console.PrintLog(f"✓ Open icon loaded: {icon_path}\n")
                 break
 
         # Connect to command
@@ -216,7 +208,6 @@ def create_persistent_toolbar():
             icon_path = os.path.join(base_path, "save_as.svg")
             if os.path.exists(icon_path):
                 action_saveas.setIcon(QtGui.QIcon(icon_path))
-                FreeCAD.Console.PrintLog(f"✓ save_as icon loaded: {icon_path}\n")
                 break
 
         # Connect to command
@@ -237,7 +228,6 @@ def create_persistent_toolbar():
             icon_path = os.path.join(base_path, "Rename.svg")
             if os.path.exists(icon_path):
                 action_rename.setIcon(QtGui.QIcon(icon_path))
-                FreeCAD.Console.PrintLog(f"✓ Rename icon loaded: {icon_path}\n")
                 break
 
         # Connect directly to rename function (avoids command registration timing issues)
@@ -249,8 +239,8 @@ def create_persistent_toolbar():
             try:
                 from CommandStdVersionRename import main as rename_main
                 rename_main()
-            except Exception as e:
-                FreeCAD.Console.PrintError(f"Rename error: {str(e)}\n")
+            except Exception:
+                pass
 
         action_rename.triggered.connect(run_rename)
 
@@ -269,7 +259,7 @@ def create_persistent_toolbar():
             icon_path = os.path.join(base_path, "Apply_Material.svg")
             if os.path.exists(icon_path):
                 action_applymat.setIcon(QtGui.QIcon(icon_path))
-                FreeCAD.Console.PrintLog(f"✓ Apply_Material icon loaded: {icon_path}\n")
+
                 break
 
         # Connect to Apply Material macro
@@ -278,10 +268,8 @@ def create_persistent_toolbar():
             if os.path.exists(macro_path):
                 try:
                     exec(open(macro_path, encoding="utf-8").read(), {"__name__": "__main__"})
-                except Exception as e:
-                    FreeCAD.Console.PrintError(f"Apply Material error: {str(e)}\n")
-            else:
-                FreeCAD.Console.PrintError(f"Apply Material macro not found: {macro_path}\n")
+                except Exception:
+                    pass
 
         action_applymat.triggered.connect(run_apply_material)
 
@@ -300,7 +288,6 @@ def create_persistent_toolbar():
             icon_path = os.path.join(base_path, "Mass_Properties.svg")
             if os.path.exists(icon_path):
                 action_mass.setIcon(QtGui.QIcon(icon_path))
-                FreeCAD.Console.PrintLog(f"✓ Mass_Properties icon loaded: {icon_path}\n")
                 break
 
         # Connect to MeasureMass macro
@@ -309,10 +296,8 @@ def create_persistent_toolbar():
             if os.path.exists(macro_path):
                 try:
                     exec(open(macro_path, encoding="utf-8").read(), {"__name__": "__main__"})
-                except Exception as e:
-                    FreeCAD.Console.PrintError(f"Measure Mass error: {str(e)}\n")
-            else:
-                FreeCAD.Console.PrintError(f"MeasureMass macro not found: {macro_path}\n")
+                except Exception:
+                    pass
 
         action_mass.triggered.connect(run_measure_mass)
 
@@ -331,7 +316,7 @@ def create_persistent_toolbar():
             icon_path = os.path.join(base_path, "Model_Parameters.svg")
             if os.path.exists(icon_path):
                 action_model_params.setIcon(QtGui.QIcon(icon_path))
-                FreeCAD.Console.PrintLog(f"✓ Model_Parameters icon loaded: {icon_path}\n")
+
                 break
 
         # Connect to ModelParameters macro
@@ -340,10 +325,8 @@ def create_persistent_toolbar():
             if os.path.exists(macro_path):
                 try:
                     exec(open(macro_path, encoding="utf-8").read(), {"__name__": "__main__"})
-                except Exception as e:
-                    FreeCAD.Console.PrintError(f"Model Parameters error: {str(e)}\n")
-            else:
-                FreeCAD.Console.PrintError(f"ModelParameters macro not found: {macro_path}\n")
+                except Exception:
+                    pass
 
         action_model_params.triggered.connect(run_model_parameters)
 
@@ -364,13 +347,12 @@ def create_persistent_toolbar():
             action_plane_display.setIcon(plane_icon)
         else:
             action_plane_display.setText("XYZ")
-            FreeCAD.Console.PrintWarning("BNC CAD: Plane_Display icon failed, using text\n")
+
 
         def run_plane_display(checked):
             """Toggle XY, XZ, YZ datum plane visibility on all bodies."""
             doc = FreeCAD.ActiveDocument
             if not doc:
-                FreeCAD.Console.PrintWarning("BNC CAD: No active document — open a model first\n")
                 return
 
             # Recursively find all PartDesign::Body objects across ALL open documents
@@ -422,7 +404,6 @@ def create_persistent_toolbar():
                         assembly_origins.append((obj, origin))
 
             if not bodies and not assembly_origins:
-                FreeCAD.Console.PrintWarning("BNC CAD: No Part Design bodies or assemblies found in this document\n")
                 return
 
             show = checked  # True = show planes, False = hide planes
@@ -440,8 +421,8 @@ def create_persistent_toolbar():
                             count += 1
                     if not show:
                         origin.ViewObject.Visibility = False
-                except Exception as exc:
-                    FreeCAD.Console.PrintError(f"BNC CAD: Plane toggle error on {body.Label}: {exc}\n")
+                except Exception:
+                    pass
 
             # Toggle planes on Assembly / container origins
             for container, origin in assembly_origins:
@@ -454,12 +435,8 @@ def create_persistent_toolbar():
                             count += 1
                     if not show:
                         origin.ViewObject.Visibility = False
-                except Exception as exc:
-                    FreeCAD.Console.PrintError(f"BNC CAD: Plane toggle error on {container.Label} origin: {exc}\n")
-
-            n_total = len(bodies) + len(assembly_origins)
-            state = "shown" if show else "hidden"
-            FreeCAD.Console.PrintMessage(f"BNC CAD: {count} datum planes {state} across {n_total} object(s)\n")
+                except Exception:
+                    pass
 
         action_plane_display.triggered.connect(run_plane_display)
         toolbar.addAction(action_plane_display)
@@ -483,13 +460,11 @@ def create_persistent_toolbar():
             if os.path.exists(svg_path):
                 axis_icon = QtGui.QIcon(svg_path)
                 if not axis_icon.isNull():
-                    FreeCAD.Console.PrintMessage(f"BNC CAD: Axis_Display.svg loaded from {svg_path}\n")
                     break
         if axis_icon and not axis_icon.isNull():
             action_axis_display.setIcon(axis_icon)
         else:
             action_axis_display.setText("AXS")
-            FreeCAD.Console.PrintWarning("BNC CAD: Axis_Display icon failed, using text\n")
 
         def run_axis_display(checked):
             """Toggle center-axis lines for cylindrical/conical features (Creo-style Axis Display)."""
@@ -497,7 +472,6 @@ def create_persistent_toolbar():
 
             doc = FreeCAD.ActiveDocument
             if not doc:
-                FreeCAD.Console.PrintWarning("BNC CAD: No active document — open a model first\n")
                 return
 
             # ---- 1. Remove any previously created center-axis objects ----
@@ -510,7 +484,6 @@ def create_persistent_toolbar():
             if not checked:
                 doc.recompute()
                 FreeCADGui.updateGui()
-                FreeCAD.Console.PrintMessage("BNC CAD: Center axes hidden\n")
                 return
 
             # ---- 2. Collect shapes to scan ----
@@ -551,10 +524,8 @@ def create_persistent_toolbar():
                     pass
 
             if not raw_axes:
-                FreeCAD.Console.PrintWarning("BNC CAD: No cylindrical or conical features found\n")
                 return
 
-            # ---- 4. Merge colinear axes (e.g. inner + outer cylinder of same hole) ----
             used = [False] * len(raw_axes)
             unique = []
             for i in range(len(raw_axes)):
@@ -599,10 +570,182 @@ def create_persistent_toolbar():
 
             doc.recompute()
             FreeCADGui.updateGui()
-            FreeCAD.Console.PrintMessage(f"BNC CAD: {count} center axis line(s) shown\n")
 
         action_axis_display.triggered.connect(run_axis_display)
         toolbar.addAction(action_axis_display)
+
+        # =========================================
+        # Button 11: Datum Point Display (Toggle Datum Points)
+        # =========================================
+        action_point_display = QtGui.QAction(mw)
+        action_point_display.setToolTip('Toggle visibility of datum points on all bodies and assemblies\nShows/hides reference points')
+        action_point_display.setObjectName("BNC_PointDisplay_Action")
+        action_point_display.setCheckable(True)
+
+        # Load Datum Point Display icon (SVG)
+        point_icon = None
+        point_icon_dirs = [
+            os.path.join(FreeCAD.getHomePath(), "Mod", "Start", "Resources", "icons"),
+            os.path.join(FreeCAD.getHomePath(), "Mod", "BNCCustomTools", "Resources", "icons"),
+            os.path.join(FreeCAD.getHomePath(), "Mod", "BNCCustomTools", "BNCCustomTools", "Resources", "icons"),
+        ]
+        for d in point_icon_dirs:
+            svg_path = os.path.join(d, "Datum_Point_Display.svg")
+            if os.path.exists(svg_path):
+                point_icon = QtGui.QIcon(svg_path)
+                if not point_icon.isNull():
+                    break
+        if point_icon and not point_icon.isNull():
+            action_point_display.setIcon(point_icon)
+        else:
+            action_point_display.setText("PT")
+
+        def run_point_display(checked):
+            """Toggle datum point visibility on all bodies and assemblies."""
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+
+                return
+
+            # Recursively find all PartDesign::Body objects across ALL open documents
+            def _find_bodies_in(objs, visited=None):
+                if visited is None:
+                    visited = set()
+                result = []
+                for obj in objs:
+                    oid = id(obj)
+                    if oid in visited:
+                        continue
+                    visited.add(oid)
+                    if obj.isDerivedFrom("PartDesign::Body"):
+                        result.append(obj)
+                    # Follow App::Link to its linked object
+                    if obj.isDerivedFrom("App::Link"):
+                        linked = getattr(obj, "LinkedObject", None)
+                        if linked is not None:
+                            result.extend(_find_bodies_in([linked], visited))
+                    # Recurse into Group containers (Assembly, Part, etc.)
+                    if hasattr(obj, "Group"):
+                        result.extend(_find_bodies_in(obj.Group, visited))
+                return result
+
+            # Search all open documents
+            all_bodies = []
+            seen_names = set()
+            for doc_name in FreeCAD.listDocuments():
+                d = FreeCAD.getDocument(doc_name)
+                for b in _find_bodies_in(d.Objects):
+                    key = (d.Name, b.Name)
+                    if key not in seen_names:
+                        seen_names.add(key)
+                        all_bodies.append(b)
+            bodies = all_bodies
+
+            # Also find Assembly (or any container) origins in all open docs
+            assembly_origins = []
+            for doc_name in FreeCAD.listDocuments():
+                d = FreeCAD.getDocument(doc_name)
+                for obj in d.Objects:
+                    # Skip PartDesign::Body — those are handled separately
+                    if obj.isDerivedFrom("PartDesign::Body"):
+                        continue
+                    # Look for containers with an Origin (Assembly, Part, etc.)
+                    origin = getattr(obj, "Origin", None)
+                    if origin is not None and hasattr(origin, "OriginFeatures"):
+                        assembly_origins.append((obj, origin))
+
+            if not bodies and not assembly_origins:
+                return
+
+            show = checked  # True = show points, False = hide points
+
+            # Toggle ONLY user-created datum points on PartDesign::Body
+            # (NOT origin points - those stay as-is)
+            for body in bodies:
+                try:
+                    # Check what attributes the body has
+                    body_objects = []
+                    if hasattr(body, 'Group'):
+                        body_objects = body.Group
+                    elif hasattr(body, 'Model'):
+                        body_objects = body.Model
+                    else:
+                        body_objects = [obj for obj in body.OutList if hasattr(obj, 'TypeId')]
+                    
+                    for obj in body_objects:
+                        # Check for datum points (both Part::DatumPoint and PartDesign::Point)
+                        is_datum_point = False
+                        if hasattr(obj, 'isDerivedFrom'):
+                            is_datum_point = obj.isDerivedFrom("Part::DatumPoint") or obj.isDerivedFrom("PartDesign::Point")
+                        elif hasattr(obj, 'TypeId'):
+                            is_datum_point = obj.TypeId in ["Part::DatumPoint", "PartDesign::Point"]
+                        
+                        if is_datum_point:
+                            obj.ViewObject.Visibility = show
+                            
+                except Exception:
+                    pass  # Silently handle errors
+
+        action_point_display.triggered.connect(run_point_display)
+        toolbar.addAction(action_point_display)
+
+        # =========================================
+        # Button 12: Family Table (Creo-style variant generator)
+        # =========================================
+        action_family_table = QtGui.QAction(mw)
+        action_family_table.setToolTip('Open Family Table editor\nCreate part/assembly variants with different features and dimensions (Creo-style)')
+        action_family_table.setObjectName("BNC_FamilyTable_Action")
+
+        # Load Family Table icon
+        family_icon = None
+        for base_path in icon_base_paths:
+            icon_path = os.path.join(base_path, "FamilyTable.svg")
+            if os.path.exists(icon_path):
+                family_icon = QtGui.QIcon(icon_path)
+                if not family_icon.isNull():
+                    break
+        
+        if family_icon and not family_icon.isNull():
+            action_family_table.setIcon(family_icon)
+        else:
+            action_family_table.setText("FAM")
+
+        # Connect to FamilyTable macro
+        def run_family_table():
+            macro_path = os.path.join(FreeCAD.getHomePath(), "Macro", "FamilyTable.FCMacro")
+            if os.path.exists(macro_path):
+                try:
+                    exec(open(macro_path, encoding="utf-8").read(), {"__name__": "__main__"})
+                except Exception as e:
+                    FreeCAD.Console.PrintError(f"FamilyTable error: {e}\n")
+
+        action_family_table.triggered.connect(run_family_table)
+        toolbar.addAction(action_family_table)
+
+        # Store action reference for workbench hiding
+        toolbar._action_family_table = action_family_table
+
+        # =========================================
+        # Workbench Change Detection (hide Family Table in TechDraw)
+        # =========================================
+        def on_workbench_activated():
+            """Hide Family Table button only in TechDraw workbench."""
+            try:
+                wb = FreeCADGui.activeWorkbench()
+                wb_name = wb.name() if hasattr(wb, 'name') else str(wb.__class__.__name__)
+                
+                # Hide Family Table in TechDraw workbench only
+                if hasattr(toolbar, '_action_family_table'):
+                    is_techdraw = 'TechDraw' in wb_name
+                    toolbar._action_family_table.setVisible(not is_techdraw)
+            except Exception:
+                pass
+
+        # Connect to workbench activation signal
+        mw.workbenchActivated.connect(on_workbench_activated)
+        
+        # Initial state (hide if starting in TechDraw)
+        on_workbench_activated()
 
         # =========================================
         # Finalize Toolbar
@@ -615,15 +758,27 @@ def create_persistent_toolbar():
         toolbar.setVisible(True)
         toolbar.show()
 
-        FreeCAD.Console.PrintMessage("✓ BNC Custom toolbar created with 10 buttons\n")
+        # =========================================
+        # Selection Filter Widget (Status Bar)
+        # =========================================
+        try:
+            # Run SelectionFilter macro to add widget to status bar
+            macro_path = os.path.join(FreeCAD.getHomePath(), "Macro", "SelectionFilter.FCMacro")
+            if os.path.exists(macro_path):
+                # Set marker to prevent popup on auto-run
+                setattr(mw, '_sel_filter_auto_run', True)
+                with open(macro_path, encoding="utf-8") as f:
+                    exec(f.read(), {"__name__": "__main__"})
+                setattr(mw, '_sel_filter_auto_run', False)
+                FreeCAD.Console.PrintMessage("✓ Selection Filter widget added to status bar\n")
+        except Exception as e:
+            FreeCAD.Console.PrintWarning(f"Selection Filter init failed: {e}\n")
 
     except Exception as e:
-        FreeCAD.Console.PrintError(f"Error creating BNC toolbar: {str(e)}\n")
+        FreeCAD.Console.PrintError(f"BNC Tools toolbar creation failed: {str(e)}\n")
         import traceback
         FreeCAD.Console.PrintError(traceback.format_exc())
 
 
 # Create toolbar with delay to ensure GUI is ready
 QtCore.QTimer.singleShot(2000, create_persistent_toolbar)
-
-FreeCAD.Console.PrintLog("BNC CAD: Persistent toolbar module loaded\n")

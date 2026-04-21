@@ -74,10 +74,11 @@ files_to_translate.txt
 # BNC build artifacts
 build_log.txt
 full_build_log.txt
-install_log.txt
+install_log*.txt
 sketcher_retry_log.txt
 rebuild.log
 rebuild_log.txt
+rebuild_icons.log
 build_stderr.txt
 build_stdout.txt
 install_build.log
@@ -89,6 +90,9 @@ HRMS_ref.drawio
 
 # BNC installer artifacts
 installer/*.7z
+installer/7z.dll
+installer/7z_rebuild_log.txt
+installer/test_extract/
 installer/*.exe
 installer/*.exe.old
 installer/7zr.exe
@@ -103,5 +107,5 @@ test_*.py
 # Backup files
 *.bak
 *.svg.bak
-install_log.txt
+install_log*.txt
 sketcher_retry_log.txt

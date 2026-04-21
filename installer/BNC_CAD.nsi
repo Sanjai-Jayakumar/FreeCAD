@@ -4,7 +4,7 @@
 
 !define PRODUCT_NAME "BNC CAD"
 !define PRODUCT_VERSION "1.1"
-!define PRODUCT_PUBLISHER "BNC"
+!define PRODUCT_PUBLISHER "BNC Corporation"
 !define INSTALL_ARCHIVE "BNC-CAD-Output.7z"
 !define PAYLOAD_EXTRACTOR "7zr.exe"
 !define OUTPUT_FILE "BNC CAD.exe"
@@ -28,9 +28,10 @@ VIProductVersion "1.1.0.0"
 VIAddVersionKey "ProductName" "${PRODUCT_NAME}"
 VIAddVersionKey "ProductVersion" "${PRODUCT_VERSION}"
 VIAddVersionKey "CompanyName" "${PRODUCT_PUBLISHER}"
-VIAddVersionKey "FileDescription" "${PRODUCT_NAME} Installer"
+VIAddVersionKey "FileDescription" "${PRODUCT_NAME} Installation Package"
 VIAddVersionKey "FileVersion" "1.1.0.0"
 VIAddVersionKey "LegalCopyright" "(c) 2026 ${PRODUCT_PUBLISHER}"
+VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE}"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
@@ -45,22 +46,55 @@ VIAddVersionKey "LegalCopyright" "(c) 2026 ${PRODUCT_PUBLISHER}"
 
 Section "${PRODUCT_NAME}" SEC01
   SetShellVarContext all
-  SetOutPath "$INSTDIR"
+  
+  ; Use TEMP directory for extraction (more reliable)
+  DetailPrint "Preparing temporary extraction folder..."
+  SetOutPath "$TEMP\BNC_CAD_Setup"
+  
+  ; Clear any old temp files
+  RMDir /r "$TEMP\BNC_CAD_Setup"
+  CreateDirectory "$TEMP\BNC_CAD_Setup"
+  SetOutPath "$TEMP\BNC_CAD_Setup"
+  
+  ; Copy files to TEMP
+  DetailPrint "Copying installer files..."
   File "${PAYLOAD_EXTRACTOR}"
+  File "7z.dll"
   File "${INSTALL_ARCHIVE}"
+  
+  ; Verify 7z archive integrity
+  DetailPrint "Verifying installer integrity..."
+  nsExec::ExecToLog '"$TEMP\BNC_CAD_Setup\7zr.exe" t "$TEMP\BNC_CAD_Setup\BNC-CAD-Output.7z"'
+  Pop $0
+  StrCmp $0 "0" +3
+    MessageBox MB_ICONSTOP "Installer file is corrupted (error $0).$\r$\n$\r$\nPlease re-download the installer."
+    Abort
+  
+  ; Extract to TEMP directory (avoids permission issues)
+  DetailPrint "Extracting application files to temporary location..."
+  DetailPrint "This may take several minutes. Please wait..."
+  nsExec::ExecToLog '"$TEMP\BNC_CAD_Setup\7zr.exe" x "$TEMP\BNC_CAD_Setup\BNC-CAD-Output.7z" -o"$TEMP\BNC_CAD_Setup\Extract\" -y -aoa'
+  Pop $0
+  StrCmp $0 "0" +3
+    MessageBox MB_ICONSTOP "Extraction failed (error $0).$\r$\n$\r$\nPossible causes:$\r$\n- Insufficient disk space on $TEMP drive (need 3GB)$\r$\n- Antivirus blocking extraction$\r$\n- Corrupted download$\r$\n$\r$\nSolutions:$\r$\n1. Run installer as Administrator$\r$\n2. Disable antivirus temporarily$\r$\n3. Free up disk space on $TEMP drive"
+    Abort
+  
+  ; Now copy extracted files to installation directory
+  DetailPrint "Installing to $INSTDIR..."
+  CreateDirectory "$INSTDIR"
+  CopyFiles /SILENT "$TEMP\BNC_CAD_Setup\Extract\*" "$INSTDIR"
+  
+  ; Copy additional files
+  SetOutPath "$INSTDIR"
   File "default_toolbar_layout.json"
   File "BNC_CAD.ico"
   
-  SetOutPath "$INSTDIR"
-  
-  DetailPrint "Extracting application files..."
-  nsExec::ExecToLog '"$INSTDIR\7zr.exe" x "$INSTDIR\BNC-CAD-Output.7z" -o"$INSTDIR" -y -aoa'
-  Pop $0
-  StrCmp $0 "0" +3
-    MessageBox MB_ICONSTOP "Extraction failed (error $0)."
-    Abort
-  Delete "$INSTDIR\7zr.exe"
-  Delete "$INSTDIR\BNC-CAD-Output.7z"
+  ; Clean up temp files
+  DetailPrint "Cleaning up temporary files..."
+  Delete "$TEMP\BNC_CAD_Setup\7zr.exe"
+  Delete "$TEMP\BNC_CAD_Setup\BNC-CAD-Output.7z"
+  RMDir /r "$TEMP\BNC_CAD_Setup\Extract"
+  RMDir "$TEMP\BNC_CAD_Setup"
 
   ; Remove old user.cfg so fresh defaults apply (Assembly enabled by default)
   DetailPrint "Resetting workbench settings for fresh install..."
