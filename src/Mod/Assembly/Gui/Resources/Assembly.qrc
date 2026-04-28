@@ -42,5 +42,6 @@
         <file>icons/Assembly_Default.svg</file>
         <file>icons/Assembly_Regen.svg</file>
         <file>icons/Assembly_BOM.svg</file>
+        <file>icons/Assembly_SeparateWindow.svg</file>
     </qresource>
 </RCC>

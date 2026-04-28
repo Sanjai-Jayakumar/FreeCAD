@@ -46,60 +46,51 @@ VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE}"
 
 Section "${PRODUCT_NAME}" SEC01
   SetShellVarContext all
-  
-  ; Use TEMP directory for extraction (more reliable)
-  DetailPrint "Preparing temporary extraction folder..."
-  SetOutPath "$TEMP\BNC_CAD_Setup"
-  
-  ; Clear any old temp files
+
+  ; ── Step 1: stage extractor + archive to a small temp folder ─────────────────
+  DetailPrint "Preparing installer files..."
   RMDir /r "$TEMP\BNC_CAD_Setup"
   CreateDirectory "$TEMP\BNC_CAD_Setup"
   SetOutPath "$TEMP\BNC_CAD_Setup"
-  
-  ; Copy files to TEMP
-  DetailPrint "Copying installer files..."
+
   File "${PAYLOAD_EXTRACTOR}"
   File "7z.dll"
   File "${INSTALL_ARCHIVE}"
-  
-  ; Verify 7z archive integrity
-  DetailPrint "Verifying installer integrity..."
-  nsExec::ExecToLog '"$TEMP\BNC_CAD_Setup\7zr.exe" t "$TEMP\BNC_CAD_Setup\BNC-CAD-Output.7z"'
-  Pop $0
-  StrCmp $0 "0" +3
-    MessageBox MB_ICONSTOP "Installer file is corrupted (error $0).$\r$\n$\r$\nPlease re-download the installer."
-    Abort
-  
-  ; Extract to TEMP directory (avoids permission issues)
-  DetailPrint "Extracting application files to temporary location..."
-  DetailPrint "This may take several minutes. Please wait..."
-  nsExec::ExecToLog '"$TEMP\BNC_CAD_Setup\7zr.exe" x "$TEMP\BNC_CAD_Setup\BNC-CAD-Output.7z" -o"$TEMP\BNC_CAD_Setup\Extract\" -y -aoa'
-  Pop $0
-  StrCmp $0 "0" +3
-    MessageBox MB_ICONSTOP "Extraction failed (error $0).$\r$\n$\r$\nPossible causes:$\r$\n- Insufficient disk space on $TEMP drive (need 3GB)$\r$\n- Antivirus blocking extraction$\r$\n- Corrupted download$\r$\n$\r$\nSolutions:$\r$\n1. Run installer as Administrator$\r$\n2. Disable antivirus temporarily$\r$\n3. Free up disk space on $TEMP drive"
-    Abort
-  
-  ; Now copy extracted files to installation directory
-  DetailPrint "Installing to $INSTDIR..."
+
+  ; ── Step 2: extract directly to install dir (single pass, no temp copy) ──────
+  DetailPrint "Installing BNC CAD to $INSTDIR..."
+  DetailPrint "This will take several minutes. Please wait..."
   CreateDirectory "$INSTDIR"
-  CopyFiles /SILENT "$TEMP\BNC_CAD_Setup\Extract\*" "$INSTDIR"
-  
-  ; Copy additional files
+
+  ; -bso0 suppresses the per-file listing so the UI stays responsive.
+  ; -bsp0 suppresses the progress % line (not useful in NSIS log pane).
+  nsExec::ExecToLog '"$TEMP\BNC_CAD_Setup\7zr.exe" x "$TEMP\BNC_CAD_Setup\${INSTALL_ARCHIVE}" -o"$INSTDIR" -y -aoa -bso0 -bsp0'
+  Pop $0
+  StrCmp $0 "0" extract_ok
+    MessageBox MB_ICONSTOP "Installation failed (7-Zip error $0).$\r$\n$\r$\nPossible causes:$\r$\n- Insufficient disk space (need ~3.5 GB)$\r$\n- Antivirus blocking extraction$\r$\n$\r$\nSolutions:$\r$\n1. Ensure you are running as Administrator$\r$\n2. Disable antivirus temporarily$\r$\n3. Free up disk space on the install drive"
+    RMDir /r "$TEMP\BNC_CAD_Setup"
+    Abort
+  extract_ok:
+
+  ; ── Step 3: copy small extra files ───────────────────────────────────────────
+  DetailPrint "Copying additional files..."
   SetOutPath "$INSTDIR"
   File "default_toolbar_layout.json"
   File "BNC_CAD.ico"
-  
-  ; Clean up temp files
+
+  ; ── Step 4: clean up temp staging folder ─────────────────────────────────────
   DetailPrint "Cleaning up temporary files..."
-  Delete "$TEMP\BNC_CAD_Setup\7zr.exe"
-  Delete "$TEMP\BNC_CAD_Setup\BNC-CAD-Output.7z"
-  RMDir /r "$TEMP\BNC_CAD_Setup\Extract"
-  RMDir "$TEMP\BNC_CAD_Setup"
+  RMDir /r "$TEMP\BNC_CAD_Setup"
 
-  ; Remove old user.cfg so fresh defaults apply (Assembly enabled by default)
-  DetailPrint "Resetting workbench settings for fresh install..."
-  Delete "$APPDATA\\FreeCAD\\user.cfg"
+  ; ── Step 5: clear Python bytecode cache so modules recompile cleanly ─────────
+  DetailPrint "Finalising installation..."
+  nsExec::ExecToLog 'powershell -WindowStyle Hidden -Command "Get-ChildItem \"$INSTDIR\Mod\" -Filter __pycache__ -Recurse -Directory -EA SilentlyContinue | Remove-Item -Recurse -Force -EA SilentlyContinue"'
+  Pop $0
 
+  ; ── Step 6: reset user config so fresh defaults apply ─────────────────────────
+  Delete "$APPDATA\FreeCAD\user.cfg"
+
+  ; ── Step 7: registry + shortcuts ─────────────────────────────────────────────
   WriteRegStr HKLM "${PRODUCT_REGKEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKLM "${PRODUCT_REGKEY}" "Version" "${PRODUCT_VERSION}"
 
@@ -107,34 +98,33 @@ Section "${PRODUCT_NAME}" SEC01
   WriteRegStr HKLM "${PRODUCT_UNREG}" "DisplayVersion" "${PRODUCT_VERSION}"
   WriteRegStr HKLM "${PRODUCT_UNREG}" "Publisher" "${PRODUCT_PUBLISHER}"
   WriteRegStr HKLM "${PRODUCT_UNREG}" "InstallLocation" "$INSTDIR"
-  WriteRegStr HKLM "${PRODUCT_UNREG}" "UninstallString" "$INSTDIR\\Uninstall.exe"
+  WriteRegStr HKLM "${PRODUCT_UNREG}" "UninstallString" "$INSTDIR\Uninstall.exe"
   WriteRegDWORD HKLM "${PRODUCT_UNREG}" "NoModify" 1
   WriteRegDWORD HKLM "${PRODUCT_UNREG}" "NoRepair" 1
 
-  CreateDirectory "$SMPROGRAMS\\${PRODUCT_NAME}"
-    CreateShortCut "$SMPROGRAMS\\${PRODUCT_NAME}\\${PRODUCT_NAME}.lnk" "$INSTDIR\\bin\\FreeCAD.exe" "" "$INSTDIR\\BNC_CAD.ico"
-    CreateShortCut "$DESKTOP\\${PRODUCT_NAME}.lnk" "$INSTDIR\\bin\\FreeCAD.exe" "" "$INSTDIR\\BNC_CAD.ico"
+  CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
+  CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\${PRODUCT_NAME}.lnk" "$INSTDIR\bin\FreeCAD.exe" "" "$INSTDIR\BNC_CAD.ico"
+  CreateShortCut "$DESKTOP\${PRODUCT_NAME}.lnk" "$INSTDIR\bin\FreeCAD.exe" "" "$INSTDIR\BNC_CAD.ico"
 
-  WriteUninstaller "$INSTDIR\\Uninstall.exe"
+  WriteUninstaller "$INSTDIR\Uninstall.exe"
 
-  ; Import default toolbar layout for new users
-  nsExec::ExecToLog 'powershell -Command "Copy-Item \"$INSTDIR\\default_toolbar_layout.json\" -Destination \"$APPDATA\\FreeCAD\\default_toolbar_layout.json\" -Force"'
-  ; You can add a script to read this JSON and update FreeCAD user parameters on first launch
+  ; Copy default toolbar layout for new users
+  nsExec::ExecToLog 'powershell -WindowStyle Hidden -Command "Copy-Item \"$INSTDIR\default_toolbar_layout.json\" -Destination \"$APPDATA\FreeCAD\default_toolbar_layout.json\" -Force -EA SilentlyContinue"'
+  Pop $0
+
+  DetailPrint "Installation complete."
 SectionEnd
 
 Section "Uninstall"
   SetShellVarContext all
-  
-  Delete "$DESKTOP\\${PRODUCT_NAME}.lnk"
-  Delete "$SMPROGRAMS\\${PRODUCT_NAME}\\${PRODUCT_NAME}.lnk"
-  RMDir "$SMPROGRAMS\\${PRODUCT_NAME}"
+
+  Delete "$DESKTOP\${PRODUCT_NAME}.lnk"
+  Delete "$SMPROGRAMS\${PRODUCT_NAME}\${PRODUCT_NAME}.lnk"
+  RMDir "$SMPROGRAMS\${PRODUCT_NAME}"
   RMDir /r "$INSTDIR"
   DeleteRegKey HKLM "${PRODUCT_UNREG}"
   DeleteRegKey HKLM "${PRODUCT_REGKEY}"
 
-  ; Remove saved BNC CAD auth session (email/login data)
-  ; Must switch to current-user context so $APPDATA points to the real user folder
-  ; FreeCAD 1.1 stores user data under APPDATA/FreeCAD/v1-1/
   SetShellVarContext current
   Delete "$APPDATA\FreeCAD\v1-1\bnc_auth.json"
   Delete "$APPDATA\FreeCAD\bnc_auth.json"

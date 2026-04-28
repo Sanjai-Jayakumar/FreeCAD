@@ -726,6 +726,74 @@ def create_persistent_toolbar():
         toolbar._action_family_table = action_family_table
 
         # =========================================
+        # Button 13: Sketch Show/Hide Toggle
+        # =========================================
+        action_sketch_toggle = QtGui.QAction(mw)
+        action_sketch_toggle.setToolTip('Toggle Sketch Visibility\nShow or hide all sketches in the active document')
+        action_sketch_toggle.setObjectName("BNC_SketchToggle_Action")
+
+        # Load Sketch Show/Hide icon
+        sketch_icon = None
+        for base_path in icon_base_paths:
+            icon_path = os.path.join(base_path, "Sketch_ShowHide.svg")
+            if os.path.exists(icon_path):
+                sketch_icon = QtGui.QIcon(icon_path)
+                if not sketch_icon.isNull():
+                    break
+        
+        if sketch_icon and not sketch_icon.isNull():
+            action_sketch_toggle.setIcon(sketch_icon)
+        else:
+            action_sketch_toggle.setText("SKE")
+
+        # Toggle sketch visibility function
+        def toggle_sketch_visibility():
+            try:
+                doc = FreeCAD.ActiveDocument
+                if not doc:
+                    FreeCAD.Console.PrintWarning("No active document\n")
+                    return
+                
+                # Find all Sketcher::SketchObject objects
+                sketches = [obj for obj in doc.Objects if obj.TypeId == 'Sketcher::SketchObject']
+                
+                if not sketches:
+                    FreeCAD.Console.PrintMessage("No sketches found in active document\n")
+                    return
+                
+                # Check current visibility state (if any sketch is visible, hide all; otherwise show all)
+                any_visible = False
+                for sketch in sketches:
+                    if hasattr(sketch, 'ViewObject') and sketch.ViewObject:
+                        if sketch.ViewObject.Visibility:
+                            any_visible = True
+                            break
+                
+                # Toggle: if any visible, hide all; if all hidden, show all
+                new_state = not any_visible
+                
+                count = 0
+                for sketch in sketches:
+                    if hasattr(sketch, 'ViewObject') and sketch.ViewObject:
+                        sketch.ViewObject.Visibility = new_state
+                        count += 1
+                
+                state_msg = "shown" if new_state else "hidden"
+                FreeCAD.Console.PrintMessage(f"✓ {count} sketch(es) {state_msg}\n")
+                
+                # Refresh view
+                if FreeCADGui.ActiveDocument:
+                    FreeCADGui.ActiveDocument.ActiveView.fitAll()
+                    
+            except Exception as e:
+                FreeCAD.Console.PrintError(f"Sketch toggle error: {e}\n")
+                import traceback
+                FreeCAD.Console.PrintError(traceback.format_exc())
+
+        action_sketch_toggle.triggered.connect(toggle_sketch_visibility)
+        toolbar.addAction(action_sketch_toggle)
+
+        # =========================================
         # Workbench Change Detection (hide Family Table in TechDraw)
         # =========================================
         def on_workbench_activated():

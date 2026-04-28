@@ -1588,6 +1588,59 @@ class AssemblyWorkbench(Workbench):
         except:
             pass
 
+        # Define BNC Separate Window command class
+        class CommandSeparateWindow:
+            def GetResources(self):
+                return {
+                    'Pixmap': 'Assembly_SeparateWindow.svg',
+                    'MenuText': 'Separate Window',
+                    'ToolTip': 'Open selected component in separate window\n'
+                               'Opens component side-by-side with assembly (Creo-style)\n'
+                               'Select a component, then click this button.'
+                }
+
+            def IsActive(self):
+                if App.ActiveDocument is None:
+                    return False
+                sel = Gui.Selection.getSelection()
+                if not sel:
+                    return False
+                obj = sel[0]
+                # Allow any Link, object with LinkedObject, or objects in Assembly context
+                if obj.TypeId == "App::Link":
+                    return True
+                if "Link" in obj.TypeId:
+                    return True
+                if hasattr(obj, "LinkedObject") and obj.LinkedObject is not None:
+                    return True
+                # Allow PartDesign::Body or Part::Feature if they have a Document (can be opened)
+                if obj.TypeId in ("PartDesign::Body", "Part::Feature") and hasattr(obj, "Document") and obj.Document:
+                    return True
+                return False
+
+            def Activated(self):
+                import os
+                candidates = [
+                    os.path.join(App.getUserMacroDir(True), "SeparateWindow.FCMacro"),
+                    os.path.join(App.getHomePath(), "Macro", "SeparateWindow.FCMacro"),
+                    os.path.join(App.getResourceDir(), "Macro", "SeparateWindow.FCMacro"),
+                ]
+                macro_path = None
+                for p in candidates:
+                    if os.path.exists(p):
+                        macro_path = p
+                        break
+                if macro_path:
+                    with open(macro_path, encoding='utf-8') as fh:
+                        ns = {'__name__': '__main__', '__file__': macro_path}
+                        exec(compile(fh.read(), macro_path, 'exec'), ns)
+                else:
+                    from PySide import QtWidgets
+                    QtWidgets.QMessageBox.warning(
+                        None, "Macro Not Found",
+                        "SeparateWindow.FCMacro not found.\n"
+                        "Please ensure the macro is installed in your Macro folder.")
+
         try:
             import inspect as _inspect
             _dir = os.path.dirname(os.path.abspath(_inspect.getfile(_inspect.currentframe())))
@@ -1601,6 +1654,7 @@ class AssemblyWorkbench(Workbench):
         FreeCADGui.addCommand('Assembly_Default', CommandDefault())
         FreeCADGui.addCommand('Assembly_Regen', CommandRegen())
         FreeCADGui.addCommand('Assembly_BOM', CommandBOM())
+        FreeCADGui.addCommand('Assembly_SeparateWindow', CommandSeparateWindow())
 
 
         FreeCADGui.addLanguagePath(":/translations")
@@ -1654,6 +1708,7 @@ class AssemblyWorkbench(Workbench):
             'Assembly_Default',
             'Assembly_Regen',
             'Assembly_BOM',
+            'Assembly_SeparateWindow',
         ]
 
         self.appendToolbar(QT_TRANSLATE_NOOP('Workbench', 'BNC Assembly Tools'), cmdListBNC)
