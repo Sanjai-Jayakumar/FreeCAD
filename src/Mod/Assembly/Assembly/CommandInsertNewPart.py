@@ -534,12 +534,8 @@ class CommandInsertNewAssembly:
         pass
 
     def GetResources(self):
-        _icon = os.path.join(
-            os.path.dirname(__file__),
-            "Gui", "Resources", "icons", "Subassembly.svg"
-        )
         return {
-            "Pixmap": os.path.normpath(_icon),
+            "Pixmap": "Geoassembly",
             "MenuText": QT_TRANSLATE_NOOP("Assembly_InsertNewAssembly", "Create Subassembly"),
             "Accel": "",
             "ToolTip": QT_TRANSLATE_NOOP(
@@ -777,12 +773,8 @@ class CommandInsertNewBodyInline:
         pass
 
     def GetResources(self):
-        _icon = os.path.join(
-            os.path.dirname(__file__),
-            "..", "PartDesign", "Gui", "Resources", "icons", "PartDesignWorkbench.svg"
-        )
         return {
-            "Pixmap": os.path.normpath(_icon),
+            "Pixmap": "PartDesign_Body",
             "MenuText": QT_TRANSLATE_NOOP("Assembly_InsertNewBodyInline", "Create New Part"),
             "Accel": "",
             "ToolTip": QT_TRANSLATE_NOOP(

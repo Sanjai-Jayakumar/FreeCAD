@@ -1,143 +1,175 @@
-# BNC CAD Check for Updates Command
-# Creates BNC menu with "Check for Updates" option
-
+# SPDX-License-Identifier: LGPL-2.1-or-later
+import os
 import FreeCAD
 import FreeCADGui
-from PySide import QtCore, QtGui
-import os
+
+try:
+    from PySide2 import QtCore, QtWidgets, QtGui
+except ImportError:
+    from PySide import QtCore, QtGui
+    QtWidgets = QtGui
 
 
 class CheckForUpdatesCommand:
-    """Command to check for BNC CAD updates"""
-    
     def GetResources(self):
-        icon_path = os.path.join(
-            os.path.dirname(__file__),
-            "Resources", "icons", "update-icon.svg"
-        )
-        
+        icon_path = os.path.join(os.path.dirname(__file__),
+                                 "Resources", "icons", "update-icon.svg")
         return {
-            'Pixmap': icon_path,
-            'MenuText': 'Check for Updates...',
-            'ToolTip': 'Check if a new version of BNC CAD is available',
-            'Accel': 'Ctrl+U'
+            "Pixmap":   icon_path,
+            "MenuText": "Check for Updates...",
+            "ToolTip":  "Check if a new version of BNC CAD is available",
+            "Accel":    "Ctrl+U",
         }
-    
+
     def Activated(self):
-        """Called when the command is executed"""
+        """Direct API call — shows banner or 'up to date' message. No auto-check."""
+        mw = FreeCADGui.getMainWindow()
+
+        # Show checking status
+        if mw:
+            mw.statusBar().showMessage("BNC CAD: Checking for updates…", 10000)
+
+        # Shared result holder between background thread and main thread
+        _holder = [None]
+
+        def _callback(result):
+            _holder[0] = result   # background thread just stores — never touches Qt
+
         try:
-            import UpdateUI
-            UpdateUI.check_for_updates_menu()
-        except Exception as e:
-            QtGui.QMessageBox.critical(
-                FreeCADGui.getMainWindow(),
-                "Update Check Error",
-                f"Failed to check for updates:\n{str(e)}"
-            )
-    
+            import UpdateChecker
+            UpdateChecker.check_for_updates_async(_callback)
+        except Exception as exc:
+            FreeCAD.Console.PrintError(f"BNC: Check for Updates error: {exc}\n")
+            if mw:
+                mw.statusBar().clearMessage()
+            return
+
+        # Poll from main thread every 500 ms until result arrives (max 15 s = 30 ticks)
+        _ticks = [0]
+
+        def _poll():
+            _ticks[0] += 1
+            result = _holder[0]
+
+            if result is None:
+                if _ticks[0] < 30:
+                    QtCore.QTimer.singleShot(500, _poll)
+                else:
+                    # Timeout
+                    if mw:
+                        mw.statusBar().clearMessage()
+                    try:
+                        QtWidgets.QMessageBox.warning(
+                            mw, "Check for Updates",
+                            "Could not reach the update server.\nPlease check your internet connection."
+                        )
+                    except Exception:
+                        pass
+                return
+
+            # Got result — clear status bar
+            if mw:
+                mw.statusBar().clearMessage()
+
+            if result.get("error"):
+                FreeCAD.Console.PrintMessage(f"BNC: Update check error: {result['error']}\n")
+                try:
+                    QtWidgets.QMessageBox.warning(
+                        mw, "Check for Updates",
+                        f"Could not reach the update server.\n\n{result['error']}"
+                    )
+                except Exception:
+                    pass
+                return
+
+            if result.get("update_available"):
+                ver = result.get("latest_version", "")
+                msg = (f"BNC CAD {ver} is available — please update."
+                       if ver else "A new version of BNC CAD is available.")
+                url = result.get("download_url", "")
+                FreeCAD.Console.PrintMessage(f"BNC: {msg}\n")
+                try:
+                    import UpdateUI
+                    UpdateUI.show_update_banner(msg, url)
+                except Exception as exc:
+                    FreeCAD.Console.PrintError(f"BNC: Banner error: {exc}\n")
+            else:
+                FreeCAD.Console.PrintMessage("BNC: Software is up to date\n")
+                try:
+                    QtWidgets.QMessageBox.information(
+                        mw, "Check for Updates",
+                        "BNC CAD is up to date.\nYou have the latest version installed."
+                    )
+                except Exception:
+                    pass
+
+        QtCore.QTimer.singleShot(500, _poll)
+
     def IsActive(self):
-        """Always active"""
         return True
 
 
 def register_command():
-    """Register the Check for Updates command"""
-    FreeCADGui.addCommand('BNC_CheckForUpdates', CheckForUpdatesCommand())
+    FreeCADGui.addCommand("BNC_CheckForUpdates", CheckForUpdatesCommand())
 
 
-def add_to_help_menu():
-    """Create BNC menu with Check for Updates option"""
-    
-    def _add_menu_item():
+def add_to_bnc_menu():
+    def _add():
         try:
-            main_window = FreeCADGui.getMainWindow()
-            if not main_window:
-                # GUI not ready, try again later
-                QtCore.QTimer.singleShot(1000, _add_menu_item)
+            mw = FreeCADGui.getMainWindow()
+            if not mw:
+                QtCore.QTimer.singleShot(1000, _add)
                 return
-                
-            menu_bar = main_window.menuBar()
-            if not menu_bar:
-                # Menu bar not ready, try again later
-                QtCore.QTimer.singleShot(1000, _add_menu_item)
-                return
-            
-            # Check if BNC menu already exists
+
+            menu_bar = mw.menuBar()
             bnc_menu = None
             for action in menu_bar.actions():
                 try:
-                    if action and action.text() == "&BNC":
+                    if action.text() == "&BNC":
                         bnc_menu = action.menu()
                         break
                 except RuntimeError:
                     continue
-            
-            # If BNC menu doesn't exist, create it next to Windows menu
+
             if not bnc_menu:
-                # Find Windows menu to insert before it
                 windows_action = None
                 for action in menu_bar.actions():
                     try:
-                        if action and action.text() and ("Window" in action.text()):
+                        if action.text() and "Window" in action.text():
                             windows_action = action
                             break
                     except RuntimeError:
                         continue
-                
-                # Create BNC menu
-                bnc_menu = QtGui.QMenu("&BNC", main_window)
-                
-                # Insert before Windows menu, or add at end if not found
+                bnc_menu = QtGui.QMenu("&BNC", mw)
                 if windows_action:
                     menu_bar.insertMenu(windows_action, bnc_menu)
                 else:
                     menu_bar.addMenu(bnc_menu)
-            
-            # Check if Check for Updates action already exists
-            try:
-                for action in bnc_menu.actions():
-                    if action and action.text() == "Check for Updates...":
-                        return  # Already added
-            except RuntimeError:
-                return
-            
-            # Create the Check for Updates action
-            update_action = QtGui.QAction("Check for Updates...", main_window)
-            
-            # Set icon
-            icon_path = os.path.join(
-                os.path.dirname(__file__),
-                "Resources", "icons", "update-icon.svg"
-            )
+
+            for action in bnc_menu.actions():
+                try:
+                    if action.text() == "Check for Updates...":
+                        return
+                except RuntimeError:
+                    return
+
+            update_action = QtGui.QAction("Check for Updates...", mw)
+            icon_path = os.path.join(os.path.dirname(__file__),
+                                     "Resources", "icons", "update-icon.svg")
             if os.path.exists(icon_path):
                 update_action.setIcon(QtGui.QIcon(icon_path))
-            
-            # Set keyboard shortcut
             update_action.setShortcut(QtGui.QKeySequence("Ctrl+U"))
-            
-            # Connect to command
             update_action.triggered.connect(
-                lambda: FreeCADGui.runCommand('BNC_CheckForUpdates')
-            )
-            
-            # Add to BNC menu
-            try:
-                bnc_menu.addAction(update_action)
-                FreeCAD.Console.PrintLog("BNC CAD: BNC menu created with Check for Updates option\n")
-            except RuntimeError:
-                pass
-            
-        except Exception as e:
-            FreeCAD.Console.PrintError(f"BNC CAD: Failed to create BNC menu: {str(e)}\n")
-    
-    # Delay execution to ensure GUI and menus are fully ready
-    QtCore.QTimer.singleShot(3000, _add_menu_item)
+                lambda: FreeCADGui.runCommand("BNC_CheckForUpdates"))
+            bnc_menu.addAction(update_action)
+        except Exception as exc:
+            FreeCAD.Console.PrintError(f"BNC: Failed to create BNC menu: {exc}\n")
+
+    QtCore.QTimer.singleShot(3000, _add)
 
 
-# Initialize when module is loaded
 try:
     register_command()
-    add_to_help_menu()
-    FreeCAD.Console.PrintLog("BNC CAD: Check for Updates command registered\n")
+    add_to_bnc_menu()
 except Exception as e:
-    FreeCAD.Console.PrintError(f"BNC CAD: Failed to register Check for Updates: {str(e)}\n")
+    FreeCAD.Console.PrintError(f"BNC: Failed to register Check for Updates: {e}\n")

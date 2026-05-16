@@ -30,6 +30,13 @@ migrator.run_migration()
 # StartGui intentionally not imported so the Start page is never created at launch
 
 
+# BNC CAD: Rename Origin sub-features to BNC naming (X-axis, XY-TOP, etc.)
+try:
+    import BNCOriginLabels
+    FreeCAD.Console.PrintLog("BNC CAD: Origin labels module loaded\n")
+except Exception as e:
+    FreeCAD.Console.PrintError(f"BNC CAD: Failed to load Origin labels: {str(e)}\n")
+
 # BNC CAD: Register Set Working Directory command
 try:
     import CommandStdSetWorkingDirectory
@@ -102,12 +109,12 @@ try:
 except Exception as e:
     FreeCAD.Console.PrintError(f"BNC CAD: Failed to load Check for Updates command: {str(e)}\n")
 
-# BNC CAD: Auto-check for updates on startup (shows banner if available)
+# BNC CAD: Poll update API every 5 minutes — shows banner when update_available
 try:
     import AutoCheckUpdates
-    FreeCAD.Console.PrintLog("BNC CAD: Auto update checker initialized\n")
+    AutoCheckUpdates.start_update_polling()
 except Exception as e:
-    FreeCAD.Console.PrintError(f"BNC CAD: Failed to initialize auto update checker: {str(e)}\n")
+    FreeCAD.Console.PrintError(f"BNC CAD: Failed to start update polling: {str(e)}\n")
 
 # BNC CAD: Bounce workbench to force PartDesign toolbars to appear on startup
 # activateWorkbench() is a no-op when the target is already active, so we must
@@ -129,6 +136,14 @@ try:
     FreeCAD.Console.PrintLog("BNC CAD: PartDesign toolbar refresh scheduled\n")
 except Exception as e:
     FreeCAD.Console.PrintError(f"BNC CAD: Failed to schedule toolbar refresh: {str(e)}\n")
+
+# BNC CAD: Apply auth from web launcher URL before showing login dialog.
+# Must run before BNCLoginScheduler so is_logged_in() already returns True
+# when the scheduler fires 2 seconds later.
+try:
+    import BNCAuthFromUrl  # noqa: F401 — side-effect import, runs _apply() on load
+except Exception as e:
+    FreeCAD.Console.PrintWarning(f"BNC CAD: BNCAuthFromUrl skipped: {str(e)}\n")
 
 # BNC CAD: Show Google Sign-In dialog on launch
 # NOTE: Must use QTimer.singleShot (static) — the same approach that works for

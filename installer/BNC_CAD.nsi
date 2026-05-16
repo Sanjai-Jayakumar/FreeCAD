@@ -3,11 +3,11 @@
 !include "MUI2.nsh"
 
 !define PRODUCT_NAME "BNC CAD"
-!define PRODUCT_VERSION "1.1"
+!define PRODUCT_VERSION "1.1.1"
 !define PRODUCT_PUBLISHER "BNC Corporation"
 !define INSTALL_ARCHIVE "BNC-CAD-Output.7z"
 !define PAYLOAD_EXTRACTOR "7zr.exe"
-!define OUTPUT_FILE "BNC CAD.exe"
+!define OUTPUT_FILE "BNC CAD 1.1.1.exe"
 !define PRODUCT_REGKEY "Software\\${PRODUCT_NAME}"
 !define PRODUCT_UNREG "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${PRODUCT_NAME}"
 !define MUI_ABORTWARNING
@@ -20,16 +20,16 @@
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
 OutFile "${OUTPUT_FILE}"
 Icon "BNC_CAD.ico"
-InstallDir "$PROGRAMFILES\BNC_CAD"
-InstallDirRegKey HKLM "${PRODUCT_REGKEY}" "InstallLocation"
-RequestExecutionLevel admin
+InstallDir "$LOCALAPPDATA\BNC_CAD"
+InstallDirRegKey HKCU "${PRODUCT_REGKEY}" "InstallLocation"
+RequestExecutionLevel user
 SetCompress off
-VIProductVersion "1.1.0.0"
+VIProductVersion "1.1.1.0"
 VIAddVersionKey "ProductName" "${PRODUCT_NAME}"
 VIAddVersionKey "ProductVersion" "${PRODUCT_VERSION}"
 VIAddVersionKey "CompanyName" "${PRODUCT_PUBLISHER}"
 VIAddVersionKey "FileDescription" "${PRODUCT_NAME} Installation Package"
-VIAddVersionKey "FileVersion" "1.1.0.0"
+VIAddVersionKey "FileVersion" "1.1.1.0"
 VIAddVersionKey "LegalCopyright" "(c) 2026 ${PRODUCT_PUBLISHER}"
 VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE}"
 
@@ -45,7 +45,7 @@ VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE}"
 !insertmacro MUI_LANGUAGE "English"
 
 Section "${PRODUCT_NAME}" SEC01
-  SetShellVarContext all
+  SetShellVarContext current
 
   ; ── Step 1: stage extractor + archive to a small temp folder ─────────────────
   DetailPrint "Preparing installer files..."
@@ -87,20 +87,23 @@ Section "${PRODUCT_NAME}" SEC01
   nsExec::ExecToLog 'powershell -WindowStyle Hidden -Command "Get-ChildItem \"$INSTDIR\Mod\" -Filter __pycache__ -Recurse -Directory -EA SilentlyContinue | Remove-Item -Recurse -Force -EA SilentlyContinue"'
   Pop $0
 
-  ; ── Step 6: reset user config so fresh defaults apply ─────────────────────────
-  Delete "$APPDATA\FreeCAD\user.cfg"
+  ; ── Step 6: reset user config and auth cache so fresh defaults apply ──────────
+  ; Use PowerShell so $$env:APPDATA always resolves to the real user (not admin profile)
+  nsExec::ExecToLog 'powershell -WindowStyle Hidden -Command "Remove-Item \"$$env:APPDATA\FreeCAD\user.cfg\" -ErrorAction SilentlyContinue; Remove-Item \"$$env:APPDATA\FreeCAD\bnc_auth.json\" -ErrorAction SilentlyContinue; Remove-Item \"$$env:APPDATA\FreeCAD\v1-1\bnc_auth.json\" -ErrorAction SilentlyContinue"'
+  Pop $0
 
   ; ── Step 7: registry + shortcuts ─────────────────────────────────────────────
-  WriteRegStr HKLM "${PRODUCT_REGKEY}" "InstallLocation" "$INSTDIR"
-  WriteRegStr HKLM "${PRODUCT_REGKEY}" "Version" "${PRODUCT_VERSION}"
+  ; Per-user registry (HKCU) — no admin required, no UAC prompt
+  WriteRegStr HKCU "${PRODUCT_REGKEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "${PRODUCT_REGKEY}" "Version" "${PRODUCT_VERSION}"
 
-  WriteRegStr HKLM "${PRODUCT_UNREG}" "DisplayName" "${PRODUCT_NAME} ${PRODUCT_VERSION}"
-  WriteRegStr HKLM "${PRODUCT_UNREG}" "DisplayVersion" "${PRODUCT_VERSION}"
-  WriteRegStr HKLM "${PRODUCT_UNREG}" "Publisher" "${PRODUCT_PUBLISHER}"
-  WriteRegStr HKLM "${PRODUCT_UNREG}" "InstallLocation" "$INSTDIR"
-  WriteRegStr HKLM "${PRODUCT_UNREG}" "UninstallString" "$INSTDIR\Uninstall.exe"
-  WriteRegDWORD HKLM "${PRODUCT_UNREG}" "NoModify" 1
-  WriteRegDWORD HKLM "${PRODUCT_UNREG}" "NoRepair" 1
+  WriteRegStr HKCU "${PRODUCT_UNREG}" "DisplayName" "${PRODUCT_NAME} ${PRODUCT_VERSION}"
+  WriteRegStr HKCU "${PRODUCT_UNREG}" "DisplayVersion" "${PRODUCT_VERSION}"
+  WriteRegStr HKCU "${PRODUCT_UNREG}" "Publisher" "${PRODUCT_PUBLISHER}"
+  WriteRegStr HKCU "${PRODUCT_UNREG}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "${PRODUCT_UNREG}" "UninstallString" "$INSTDIR\Uninstall.exe"
+  WriteRegDWORD HKCU "${PRODUCT_UNREG}" "NoModify" 1
+  WriteRegDWORD HKCU "${PRODUCT_UNREG}" "NoRepair" 1
 
   CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
   CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\${PRODUCT_NAME}.lnk" "$INSTDIR\bin\FreeCAD.exe" "" "$INSTDIR\BNC_CAD.ico"
@@ -112,21 +115,31 @@ Section "${PRODUCT_NAME}" SEC01
   nsExec::ExecToLog 'powershell -WindowStyle Hidden -Command "Copy-Item \"$INSTDIR\default_toolbar_layout.json\" -Destination \"$APPDATA\FreeCAD\default_toolbar_layout.json\" -Force -EA SilentlyContinue"'
   Pop $0
 
+  ; ── Step 8: register bnccad:// URL protocol handler ──────────────────────────
+  ; Per-user registration under HKCU\Software\Classes (no admin needed).
+  DetailPrint "Registering bnccad:// protocol handler..."
+  WriteRegStr HKCU "Software\Classes\bnccad" "" "URL:BNC CAD"
+  WriteRegStr HKCU "Software\Classes\bnccad" "URL Protocol" ""
+  WriteRegStr HKCU "Software\Classes\bnccad\DefaultIcon" "" "$INSTDIR\bin\FreeCAD.exe,0"
+  WriteRegStr HKCU "Software\Classes\bnccad\shell" "" "open"
+  WriteRegStr HKCU "Software\Classes\bnccad\shell\open\command" "" '"$INSTDIR\bin\FreeCAD.exe" "%1"'
+
   DetailPrint "Installation complete."
 SectionEnd
 
 Section "Uninstall"
-  SetShellVarContext all
+  SetShellVarContext current
 
   Delete "$DESKTOP\${PRODUCT_NAME}.lnk"
   Delete "$SMPROGRAMS\${PRODUCT_NAME}\${PRODUCT_NAME}.lnk"
   RMDir "$SMPROGRAMS\${PRODUCT_NAME}"
   RMDir /r "$INSTDIR"
-  DeleteRegKey HKLM "${PRODUCT_UNREG}"
-  DeleteRegKey HKLM "${PRODUCT_REGKEY}"
+  DeleteRegKey HKCU "${PRODUCT_UNREG}"
+  DeleteRegKey HKCU "${PRODUCT_REGKEY}"
+  DeleteRegKey HKCU "Software\Classes\bnccad"
 
-  SetShellVarContext current
-  Delete "$APPDATA\FreeCAD\v1-1\bnc_auth.json"
-  Delete "$APPDATA\FreeCAD\bnc_auth.json"
-  SetShellVarContext all
+  ; Clear auth session and user config from the real user's AppData
+  ; PowerShell ensures $$env:APPDATA resolves correctly even when running as admin
+  nsExec::ExecToLog 'powershell -WindowStyle Hidden -Command "Remove-Item \"$$env:APPDATA\FreeCAD\bnc_auth.json\" -ErrorAction SilentlyContinue; Remove-Item \"$$env:APPDATA\FreeCAD\v1-1\bnc_auth.json\" -ErrorAction SilentlyContinue; Remove-Item \"$$env:APPDATA\FreeCAD\user.cfg\" -ErrorAction SilentlyContinue"'
+  Pop $0
 SectionEnd
