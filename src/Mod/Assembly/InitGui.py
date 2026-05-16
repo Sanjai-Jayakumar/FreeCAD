@@ -179,8 +179,6 @@ class AssemblyWorkbench(Workbench):
         self.__class__.ToolTip = "Assembly workbench"
 
     def Initialize(self):
-        global AssemblyCommandGroup
-
         translate = FreeCAD.Qt.translate
 
         # load the builtin modules

@@ -113,11 +113,11 @@ jobs:
       - name: Lint BNC Python files
         run: |
           echo "::group::Linting BNC Python modules"
-          # FreeCAD injects FreeCAD/FreeCADGui/App/Gui as runtime builtins
+          # FreeCAD injects FreeCAD/FreeCADGui/App/Gui/Workbench as runtime builtins
           flake8 \
             --max-line-length=120 \
-            --ignore=E501,W503,E402,E741,F401 \
-            --builtins=FreeCAD,FreeCADGui,App,Gui \
+            --ignore=E501,W503,E402,E741,F401,F824 \
+            --builtins=FreeCAD,FreeCADGui,App,Gui,Workbench \
             --count \
             --show-source \
             --statistics \
@@ -132,7 +132,8 @@ jobs:
           # Block real syntax errors only — FreeCAD runtime names are builtins
           flake8 \
             --select=E9,F63,F7,F82 \
-            --builtins=FreeCAD,FreeCADGui,App,Gui \
+            --ignore=F824 \
+            --builtins=FreeCAD,FreeCADGui,App,Gui,Workbench \
             --show-source \
             src/Mod/Assembly/InitGui.py \
             src/Mod/Assembly/Init.py \
