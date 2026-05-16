@@ -10,10 +10,7 @@ from PySide import QtCore, QtGui
 # Get the icons directory path
 ICON_PATH = os.path.join(os.path.dirname(__file__), "Resources", "icons")
 
-# Add icon path to FreeCAD's icon search paths
 FreeCADGui.addIconPath(ICON_PATH)
-
-FreeCAD.Console.PrintMessage(f"BNC Custom Tools icon path: {ICON_PATH}\n")
 
 
 # =============================================================================
@@ -120,9 +117,3 @@ def add_bnc_tools_globally():
 # DISABLED: Toolbar creation is now handled by Start/AddSetWDButton.py to avoid duplication
 # QtCore.QTimer.singleShot(3000, add_bnc_tools_globally)
 
-# Import global toolbar fix module to fix ALL toolbars system-wide
-try:
-    import FixAllToolbars
-    FreeCAD.Console.PrintMessage("✓ Global toolbar fix module loaded\n")
-except Exception as e:
-    FreeCAD.Console.PrintWarning(f"Could not load global toolbar fix: {e}\n")

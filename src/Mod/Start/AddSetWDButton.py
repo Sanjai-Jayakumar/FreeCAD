@@ -11,7 +11,7 @@
 
 import FreeCAD
 import FreeCADGui
-from PySide import QtGui, QtCore
+from PySide import QtGui, QtCore, QtWidgets
 import os
 
 # Global reference to keep toolbar alive
@@ -19,19 +19,21 @@ _persistent_toolbar = None
 
 
 def _create_plane_display_icon():
-    """Create Plane Display icon - loads PNG file or uses embedded PNG data."""
+    """Create Plane Display icon - loads SVG/PNG file or uses embedded PNG data."""
     try:
-        # Strategy 1: Load PNG file from icon directories
+        # Strategy 1: Load SVG or PNG file from icon directories
         icon_dirs = [
             os.path.join(FreeCAD.getHomePath(), "Mod", "Start", "Resources", "icons"),
             os.path.join(FreeCAD.getHomePath(), "Mod", "BNCCustomTools", "Resources", "icons"),
+            os.path.join(FreeCAD.getHomePath(), "Mod", "BNCCustomTools", "BNCCustomTools", "Resources", "icons"),
         ]
         for d in icon_dirs:
-            png_path = os.path.join(d, "Plane_Display.png")
-            if os.path.exists(png_path):
-                pix = QtGui.QPixmap(png_path)
-                if not pix.isNull():
-                    return QtGui.QIcon(pix)
+            for fname in ("Plane_Display.svg", "Plane_Display.png"):
+                path = os.path.join(d, fname)
+                if os.path.exists(path):
+                    icon = QtGui.QIcon(path)
+                    if not icon.isNull():
+                        return icon
 
         # Strategy 2: Embedded PNG as base64 (works even if files missing)
         import base64
@@ -131,92 +133,6 @@ def create_persistent_toolbar():
         ]
 
         # =========================================
-        # Button 1: Set Working Directory
-        # =========================================
-        action_setwd = QtGui.QAction(mw)
-        # action_setwd.setText('Set Working Directory')  # Removed to show icon only
-        action_setwd.setToolTip('Set the working directory for file operations\nKeyboard: Ctrl+Shift+W')
-        action_setwd.setObjectName("BNC_SetWD_Action")
-
-        # Load SET_WD icon
-        for base_path in icon_base_paths:
-            icon_path = os.path.join(base_path, "SET_WD.svg")
-            if os.path.exists(icon_path):
-                action_setwd.setIcon(QtGui.QIcon(icon_path))
-                break
-
-        # Connect to command
-        action_setwd.triggered.connect(lambda: FreeCADGui.runCommand('Std_SetWorkingDirectory'))
-
-        # Add to toolbar
-        toolbar.addAction(action_setwd)
-
-        # =========================================
-        # Button 2: Version Save
-        # =========================================
-        action_save = QtGui.QAction(mw)
-        # action_save.setText('Version Save')  # Removed to show icon only
-        action_save.setToolTip('Save all open documents with automatic version numbering\nKeyboard: Ctrl+S')
-        action_save.setObjectName("BNC_VersionSave_Action")
-        action_save.setShortcut(QtGui.QKeySequence("Ctrl+S"))
-        action_save.setShortcutContext(QtCore.Qt.ApplicationShortcut)
-
-        # Load save icon
-        for base_path in icon_base_paths:
-            icon_path = os.path.join(base_path, "save.svg")
-            if os.path.exists(icon_path):
-                action_save.setIcon(QtGui.QIcon(icon_path))
-                break
-
-        # Connect to command
-        action_save.triggered.connect(lambda: FreeCADGui.runCommand('Std_VersionSave'))
-
-        # Add to toolbar
-        toolbar.addAction(action_save)
-
-        # =========================================
-        # Button 3: Version Open
-        # =========================================
-        action_open = QtGui.QAction(mw)
-        # action_open.setText('Version Open')  # Removed to show icon only
-        action_open.setToolTip('Open version-controlled documents from working directory\\nKeyboard: Ctrl+O')
-        action_open.setObjectName("BNC_VersionOpen_Action")
-
-        # Load Open icon
-        for base_path in icon_base_paths:
-            icon_path = os.path.join(base_path, "Open.svg")
-            if os.path.exists(icon_path):
-                action_open.setIcon(QtGui.QIcon(icon_path))
-                break
-
-        # Connect to command
-        action_open.triggered.connect(lambda: FreeCADGui.runCommand('Std_VersionOpen'))
-
-        # Add to toolbar
-        toolbar.addAction(action_open)
-
-        # =========================================
-        # Button 4: Version Save As
-        # =========================================
-        action_saveas = QtGui.QAction(mw)
-        # action_saveas.setText('Version Save As')  # Removed to show icon only
-        action_saveas.setToolTip('Save As with automatic version numbering\nKeyboard: Ctrl+Shift+S')
-        action_saveas.setObjectName("BNC_VersionSaveAs_Action")
-
-        # Load save_as icon
-        for base_path in icon_base_paths:
-            icon_path = os.path.join(base_path, "save_as.svg")
-            if os.path.exists(icon_path):
-                action_saveas.setIcon(QtGui.QIcon(icon_path))
-                break
-
-        # Connect to command
-        action_saveas.triggered.connect(lambda: FreeCADGui.runCommand('Std_VersionSaveAs'))
-
-        # Add to toolbar
-        toolbar.addAction(action_saveas)
-
-        # =========================================
         # Button 5: Rename
         # =========================================
         action_rename = QtGui.QAction(mw)
@@ -233,14 +149,14 @@ def create_persistent_toolbar():
         # Connect directly to rename function (avoids command registration timing issues)
         def run_rename():
             import sys
-            rename_mod_path = os.path.join(FreeCAD.getHomePath(), "Mod", "BNCGlobal", "Gui")
+            rename_mod_path = os.path.join(FreeCAD.getHomePath(), "Mod", "BNCGlobal", "BNCGlobal", "Gui")
             if rename_mod_path not in sys.path:
                 sys.path.insert(0, rename_mod_path)
             try:
                 from CommandStdVersionRename import main as rename_main
                 rename_main()
-            except Exception:
-                pass
+            except Exception as e:
+                FreeCAD.Console.PrintError("BNC Rename error: " + str(e) + "\n")
 
         action_rename.triggered.connect(run_rename)
 
@@ -268,8 +184,10 @@ def create_persistent_toolbar():
             if os.path.exists(macro_path):
                 try:
                     exec(open(macro_path, encoding="utf-8").read(), {"__name__": "__main__"})
-                except Exception:
-                    pass
+                except Exception as e:
+                    FreeCAD.Console.PrintError("BNC Apply Material error: " + str(e) + "\n")
+            else:
+                FreeCAD.Console.PrintError("BNC Apply Material: macro not found at " + macro_path + "\n")
 
         action_applymat.triggered.connect(run_apply_material)
 
@@ -816,6 +734,25 @@ def create_persistent_toolbar():
         on_workbench_activated()
 
         # =========================================
+        # View Manager Button
+        # =========================================
+        action_vm = QtGui.QAction(mw)
+        action_vm.setToolTip("View Manager - Apply or insert named views (like Creo)")
+        vm_icon = os.path.join(FreeCAD.getHomePath(), "Mod", "BNCTechDraw", "icons", "BNC_ViewManager.svg")
+        if os.path.exists(vm_icon):
+            action_vm.setIcon(QtGui.QIcon(vm_icon))
+        else:
+            action_vm.setText("Views")
+        def _run_view_manager():
+            macro_path = os.path.join(FreeCAD.getHomePath(), "Macro", "ViewManager.FCMacro")
+            if os.path.exists(macro_path):
+                with open(macro_path, encoding="utf-8") as _f:
+                    exec(_f.read(), {"__file__": macro_path, "__name__": "__main__"})
+        action_vm.triggered.connect(_run_view_manager)
+        toolbar.addAction(action_vm)
+        toolbar.addSeparator()
+
+        # =========================================
         # Finalize Toolbar
         # =========================================
 
@@ -838,7 +775,6 @@ def create_persistent_toolbar():
                 with open(macro_path, encoding="utf-8") as f:
                     exec(f.read(), {"__name__": "__main__"})
                 setattr(mw, '_sel_filter_auto_run', False)
-                FreeCAD.Console.PrintMessage("✓ Selection Filter widget added to status bar\n")
         except Exception as e:
             FreeCAD.Console.PrintWarning(f"Selection Filter init failed: {e}\n")
 
@@ -848,5 +784,327 @@ def create_persistent_toolbar():
         FreeCAD.Console.PrintError(traceback.format_exc())
 
 
+def _find_file_toolbar(mw):
+    """Return the File toolbar, trying multiple names/titles."""
+    # Try by object name first
+    for tb in mw.findChildren(QtGui.QToolBar):
+        if tb.objectName().lower() in ("file operations", "file", "filetoolbar"):
+            return tb
+    # Try by window title
+    for tb in mw.findChildren(QtGui.QToolBar):
+        if tb.windowTitle().lower() in ("file", "file operations"):
+            return tb
+    # Fallback: find toolbar that contains Std_New action (reliable marker for File toolbar)
+    for tb in mw.findChildren(QtGui.QToolBar):
+        for act in tb.actions():
+            if act.objectName() in ("Std_New", "Std_Open"):
+                return tb
+    return None
+
+
+def _add_setwd_to_file_toolbar():
+    """Inject Set Working Directory button into FreeCAD's built-in File toolbar."""
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if not mw:
+            QtCore.QTimer.singleShot(500, _add_setwd_to_file_toolbar)
+            return
+
+        file_toolbar = _find_file_toolbar(mw)
+
+        if file_toolbar is None:
+            FreeCAD.Console.PrintWarning("BNC CAD: File toolbar not found — will retry after next workbench switch\n")
+            return
+
+        # Don't add twice
+        for act in file_toolbar.actions():
+            if act.objectName() == "BNC_SetWD_Action":
+                return
+
+        action_setwd = QtGui.QAction(mw)
+        action_setwd.setToolTip('Set the working directory for file operations\nKeyboard: Ctrl+Shift+W')
+        action_setwd.setObjectName("BNC_SetWD_Action")
+
+        icon_base_paths = [
+            os.path.join(FreeCAD.getHomePath(), "Mod", "Start", "Resources", "icons"),
+            os.path.join(FreeCAD.getHomePath(), "Mod", "BNCCustomTools", "Resources", "icons"),
+        ]
+        for base_path in icon_base_paths:
+            icon_path = os.path.join(base_path, "SET_WD.svg")
+            if os.path.exists(icon_path):
+                action_setwd.setIcon(QtGui.QIcon(icon_path))
+                break
+
+        action_setwd.triggered.connect(lambda: FreeCADGui.runCommand('Std_SetWorkingDirectory'))
+
+        # Insert as 2nd item (right after the New file button)
+        actions = file_toolbar.actions()
+        if len(actions) >= 2:
+            file_toolbar.insertAction(actions[1], action_setwd)
+        else:
+            file_toolbar.addAction(action_setwd)
+        FreeCAD.Console.PrintLog("BNC CAD: Set Working Directory added to File toolbar\n")
+
+        # --- Save As button ---
+        # Don't add twice
+        for act in file_toolbar.actions():
+            if act.objectName() == "BNC_SaveAs_Action":
+                return
+
+        action_saveas = QtGui.QAction(mw)
+        action_saveas.setToolTip('Save As with automatic version numbering\nKeyboard: Ctrl+Shift+S')
+        action_saveas.setObjectName("BNC_SaveAs_Action")
+
+        for base_path in icon_base_paths:
+            icon_path = os.path.join(base_path, "save_as.svg")
+            if os.path.exists(icon_path):
+                action_saveas.setIcon(QtGui.QIcon(icon_path))
+                break
+
+        action_saveas.triggered.connect(lambda: FreeCADGui.runCommand('Std_VersionSaveAs'))
+
+        # Insert right after the Save button (Std_Save)
+        actions = file_toolbar.actions()
+        save_idx = next((i for i, a in enumerate(actions) if a.objectName() in ("Std_Save", "Std_SaveAs")), None)
+        if save_idx is not None and save_idx + 1 < len(actions):
+            file_toolbar.insertAction(actions[save_idx + 1], action_saveas)
+        elif save_idx is not None:
+            file_toolbar.addAction(action_saveas)
+        else:
+            file_toolbar.addAction(action_saveas)
+        FreeCAD.Console.PrintLog("BNC CAD: Save As added to File toolbar next to Save\n")
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"BNC CAD: Failed to add SetWD to File toolbar: {e}\n")
+
+
+def _connect_setwd_on_workbench():
+    """Re-inject SetWD button after every workbench switch (toolbar gets recreated)."""
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if not mw:
+            QtCore.QTimer.singleShot(500, _connect_setwd_on_workbench)
+            return
+        mw.workbenchActivated.connect(
+            lambda: QtCore.QTimer.singleShot(400, _add_setwd_to_file_toolbar)
+        )
+        FreeCAD.Console.PrintLog("BNC CAD: SetWD workbench hook installed\n")
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"BNC CAD: _connect_setwd_on_workbench error: {e}\n")
+
+
+class _TaskPanelRenamer(QtCore.QObject):
+    """Event filter that renames 'New Body' to 'New Part' in PartDesign task panel."""
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QtCore.QEvent.ChildAdded, QtCore.QEvent.Show):
+            QtCore.QTimer.singleShot(50, self._rename)
+        return False
+
+    def _rename(self):
+        try:
+            mw = FreeCADGui.getMainWindow()
+            if not mw:
+                return
+            for widget in mw.findChildren(QtWidgets.QWidget):
+                if not widget.isVisible():
+                    continue
+                if isinstance(widget, (QtWidgets.QPushButton, QtWidgets.QCommandLinkButton,
+                                       QtWidgets.QAbstractButton, QtWidgets.QLabel)):
+                    if widget.text() == "New Body":
+                        widget.setText("New Part")
+        except Exception:
+            pass
+
+
+_task_panel_renamer = None
+
+
+def _fix_std_part_name():
+    """Rename Std_Part action from 'New Part' to 'Std Part' and fix its tooltip."""
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if not mw:
+            QtCore.QTimer.singleShot(500, _fix_std_part_name)
+            return
+        fixed = False
+        for tb in mw.findChildren(QtGui.QToolBar):
+            for action in tb.actions():
+                # Match by object name OR by text being "New Part" with Std_Part tooltip context
+                is_std_part = (
+                    action.objectName() in ("Std_Part", "Std Part")
+                    or (action.text() == "New Part" and "general-purpose" in action.toolTip())
+                    or (action.text() == "New Part" and "TopoShape" in action.toolTip())
+                    or (action.text() == "New Part" and "Std_Part" in action.toolTip())
+                )
+                if is_std_part:
+                    action.setText("Std Part")
+                    # Rebuild tooltip to match desired style
+                    action.setToolTip(
+                        "<b>Std Part</b><br/><br/>"
+                        "Creates a part, which is a general-purpose container to group objects "
+                        "so they act as a unit in the 3D view. It is intended to arrange objects "
+                        "that have a part TopoShape, like part primitives, Part Design bodies, "
+                        "and other parts.<br/><br/>"
+                        "<i>Std_Part</i>"
+                    )
+                    fixed = True
+                    FreeCAD.Console.PrintLog("BNC CAD: Fixed Std_Part name and tooltip\n")
+        if not fixed:
+            # Retry once more after a short delay if toolbars not ready yet
+            QtCore.QTimer.singleShot(1000, _fix_std_part_name)
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"BNC CAD: _fix_std_part_name error: {e}\n")
+
+
+def _install_task_panel_renamer():
+    global _task_panel_renamer
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if not mw:
+            QtCore.QTimer.singleShot(500, _install_task_panel_renamer)
+            return
+        _task_panel_renamer = _TaskPanelRenamer()
+        # Watch the Tasks dock widget for child/show events
+        for dock in mw.findChildren(QtWidgets.QDockWidget):
+            if dock.windowTitle() in ("Tasks", "Task"):
+                dock.installEventFilter(_task_panel_renamer)
+                break
+        # Also watch the main window itself as fallback
+        mw.installEventFilter(_task_panel_renamer)
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"BNC CAD: Task panel renamer error: {e}\n")
+
+
+def _apply_partdesign_icons():
+    """Force-replace PartDesign toolbar icons by directly setting QIcon on each action."""
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if not mw:
+            QtCore.QTimer.singleShot(500, _apply_partdesign_icons)
+            return
+
+        icons_dir = os.path.join(FreeCAD.getHomePath(), "data", "Mod", "PartDesign", "Resources", "icons")
+        if not os.path.isdir(icons_dir):
+            return
+
+        # Build a map: stem -> full path  (e.g. "PartDesign_Pad" -> "/path/PartDesign_Pad.svg")
+        icon_map = {}
+        for fname in os.listdir(icons_dir):
+            if fname.lower().endswith(".svg"):
+                stem = os.path.splitext(fname)[0]
+                icon_map[stem] = os.path.join(icons_dir, fname)
+
+        # Add group command mappings (dropdown buttons use first child icon)
+        group_map = {
+            "PartDesign_CompPrimitiveAdditive":    "PartDesign_AdditiveBox",
+            "PartDesign_CompPrimitiveSubtractive": "PartDesign_SubtractiveBox",
+            "PartDesign_CompSketcher":             "PartDesign_NewSketch",
+        }
+        for gname, icon_stem in group_map.items():
+            if gname not in icon_map and icon_stem in icon_map:
+                icon_map[gname] = icon_map[icon_stem]
+
+        replaced = 0
+        for tb in mw.findChildren(QtGui.QToolBar):
+            for action in tb.actions():
+                name = action.objectName()
+                if name in icon_map:
+                    action.setIcon(QtGui.QIcon(icon_map[name]))
+                    replaced += 1
+
+        # Also replace icons on QToolButton widgets (group/dropdown buttons)
+        for btn in mw.findChildren(QtWidgets.QToolButton):
+            action = btn.defaultAction()
+            if action:
+                name = action.objectName()
+                if name in icon_map:
+                    btn.setIcon(QtGui.QIcon(icon_map[name]))
+                    replaced += 1
+
+            # Traverse dropdown menu items inside group buttons
+            menu = btn.menu()
+            if menu:
+                for menu_action in menu.actions():
+                    mname = menu_action.objectName()
+                    if mname in icon_map:
+                        menu_action.setIcon(QtGui.QIcon(icon_map[mname]))
+                        replaced += 1
+
+        FreeCAD.Console.PrintLog(f"BNC CAD: Force-replaced {replaced} PartDesign icons\n")
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"BNC CAD: _apply_partdesign_icons error: {e}\n")
+
+
+def _apply_partdesign_icons_on_wb():
+    """Re-apply icons whenever workbench changes (toolbars reload)."""
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if mw:
+            mw.workbenchActivated.connect(
+                lambda: QtCore.QTimer.singleShot(400, _apply_partdesign_icons)
+            )
+    except Exception:
+        pass
+
+def _remap_file_menu_saveas():
+    """Remap File > Save As... to call the BNC version save-as macro instead of Std_SaveAs."""
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if not mw:
+            QtCore.QTimer.singleShot(500, _remap_file_menu_saveas)
+            return
+
+        # Find the File menu in the menu bar
+        file_menu = None
+        for action in mw.menuBar().actions():
+            if action.text().replace("&", "").strip().lower() == "file":
+                file_menu = action.menu()
+                break
+
+        if file_menu is None:
+            FreeCAD.Console.PrintWarning("BNC CAD: File menu not found\n")
+            return
+
+        # Find the Save As action by object name or text
+        saveas_action = None
+        for act in file_menu.actions():
+            name = act.objectName()
+            text = act.text().replace("&", "").strip().lower()
+            if name == "Std_SaveAs" or text in ("save as...", "save as"):
+                saveas_action = act
+                break
+
+        if saveas_action is None:
+            FreeCAD.Console.PrintWarning("BNC CAD: Save As menu action not found\n")
+            return
+
+        # Disconnect original trigger and connect to BNC version save-as
+        try:
+            saveas_action.triggered.disconnect()
+        except Exception:
+            pass
+        saveas_action.triggered.connect(lambda: FreeCADGui.runCommand('Std_VersionSaveAs'))
+        FreeCAD.Console.PrintLog("BNC CAD: File > Save As... remapped to Std_VersionSaveAs\n")
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"BNC CAD: _remap_file_menu_saveas error: {e}\n")
+
+
 # Create toolbar with delay to ensure GUI is ready
 QtCore.QTimer.singleShot(2000, create_persistent_toolbar)
+QtCore.QTimer.singleShot(2500, _add_setwd_to_file_toolbar)
+QtCore.QTimer.singleShot(3000, _install_task_panel_renamer)
+QtCore.QTimer.singleShot(3000, _fix_std_part_name)
+QtCore.QTimer.singleShot(3500, _apply_partdesign_icons)
+QtCore.QTimer.singleShot(4000, _apply_partdesign_icons_on_wb)
+QtCore.QTimer.singleShot(3000, _connect_setwd_on_workbench)
+QtCore.QTimer.singleShot(3500, _remap_file_menu_saveas)
+
+def _connect_workbench_fix():
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if mw:
+            mw.workbenchActivated.connect(lambda: QtCore.QTimer.singleShot(300, _fix_std_part_name))
+    except Exception:
+        pass
+
+QtCore.QTimer.singleShot(3500, _connect_workbench_fix)

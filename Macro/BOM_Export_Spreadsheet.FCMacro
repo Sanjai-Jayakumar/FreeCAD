@@ -1,0 +1,289 @@
+"""
+BOM_Export_Spreadsheet.FCMacro
+──────────────────────────────
+Exports the 'BNC CAD BOM' FreeCAD Spreadsheet to an Excel (.xlsx) file.
+
+Run this macro after editing the BNC CAD BOM spreadsheet inside FreeCAD.
+The file is saved to the same directory as the active assembly document.
+
+Usage:
+  Macro menu → Macros → BOM_Export_Spreadsheet
+"""
+
+import FreeCAD as App
+import os
+import re
+import datetime
+
+try:
+    from PySide import QtWidgets
+except ImportError:
+    from PySide2 import QtWidgets
+
+
+# ── Column definitions (must match BNC CAD BOM tool) ─────────────────────────
+_COLUMNS = [
+    ('S.NO', 8), ('LEVEL', 8), ('PART NUMBER', 28), ('DESCRIPTION', 45),
+    ('QTY', 6), ('EBOM', 7), ('MBOM', 7), ('S-BOM', 7),
+    ('REVISION', 11), ('MAKE / BUY', 13), ('Sub-Ty', 14), ('MATERIAL', 18),
+    ('IDENTIFICATION', 18), ('CATEGORY', 16), ('AGGREGATE', 22),
+]
+_COL_START = 6  # EBOM column index (F)
+_COL_END   = 8  # S-BOM column index (H)
+
+# Column indices for BOM-type markers (0-based)
+_EBOM_CI  = 5
+_MBOM_CI  = 6
+_SBOM_CI  = 7
+
+
+def _col_letter(n):
+    """0-based column index → Excel letter(s)."""
+    result = ''
+    n += 1
+    while n:
+        n, rem = divmod(n - 1, 26)
+        result = chr(65 + rem) + result
+    return result
+
+
+def _clean_doc_name(doc):
+    if not doc.FileName:
+        return doc.Name or 'Assembly'
+    name = os.path.splitext(os.path.basename(str(doc.FileName)))[0]
+    name = re.sub(r'\.(prt|asm|drg)$', '', name, flags=re.IGNORECASE)
+    name = re.sub(r'\.\d+$', '', name)
+    return name or 'Assembly'
+
+
+def _get_cell(sheet, col_idx, row_num):
+    """Read a cell value from the spreadsheet; return '' on any error."""
+    try:
+        v = sheet.get(_col_letter(col_idx) + str(row_num))
+        return str(v) if v is not None else ''
+    except Exception:
+        return ''
+
+
+def _find_bom_sheet(doc):
+    """Find the BNC_BOM Spreadsheet object in the document."""
+    for obj in doc.Objects:
+        if getattr(obj, 'TypeId', '') == 'Spreadsheet::Sheet':
+            if obj.Name == 'BNC_BOM' or obj.Label == 'BNC CAD BOM':
+                return obj
+    return None
+
+
+def _count_data_rows(sheet):
+    """Count how many data rows the sheet has (starting from row 2)."""
+    row = 2
+    while True:
+        # A row is 'empty' when both S.NO and PART NUMBER are empty
+        sno = _get_cell(sheet, 0, row)
+        pn  = _get_cell(sheet, 2, row)
+        if not sno and not pn:
+            break
+        row += 1
+        if row > 10000:
+            break
+    return row - 2
+
+
+def _read_results(sheet, num_rows):
+    """Read all data rows from the spreadsheet into a results list."""
+    results = []
+    for ri in range(num_rows):
+        row_num = ri + 2
+
+        def gc(ci):
+            return _get_cell(sheet, ci, row_num)
+
+        try:
+            lvl = int(float(gc(1))) if gc(1) else 1
+        except Exception:
+            lvl = 1
+        try:
+            qty = int(float(gc(4))) if gc(4) else 1
+        except Exception:
+            qty = 1
+
+        entry = {
+            'part_number':    gc(2),
+            'description':    gc(3),
+            'ebom':           gc(5),
+            'mbom':           gc(6),
+            'sbom':           gc(7),
+            'revision':       gc(8),
+            'type':           gc(9),
+            'sub_type':       gc(10),
+            'material':       gc(11),
+            'identification': gc(12),
+            'category':       gc(13),
+            'aggregate':      gc(14),
+        }
+        results.append({'level': lvl, 'entry': entry, 'qty': qty})
+    return results
+
+
+def _write_excel(results, doc, save_path):
+    """Write the BOM results to an Excel file using openpyxl."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import (Font, Alignment, Border, Side,
+                                     PatternFill)
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        raise RuntimeError(
+            "openpyxl is not installed.\n"
+            "Install it via: pip install openpyxl\n"
+            "(Run from FreeCAD's bundled Python if needed.)")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'BNC CAD BOM'
+
+    col_names  = [c[0] for c in _COLUMNS]
+    col_widths = [c[1] for c in _COLUMNS]
+
+    # ── Styles ──────────────────────────────────────────────────────────
+    hdr_fill = PatternFill('solid', fgColor='21497D')
+    hdr_font = Font(bold=True, color='FFFFFF', name='Calibri', size=10)
+    hdr_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    thin = Side(style='thin', color='AAAAAA')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    alt_fill = PatternFill('solid', fgColor='EDF1F7')
+    lvl_fills = {
+        1: PatternFill('solid', fgColor='D6E4F0'),
+        2: PatternFill('solid', fgColor='EAF4FB'),
+        3: PatternFill('solid', fgColor='F5FBFF'),
+    }
+    ebom_font = Font(bold=True, color='1F4E79', name='Calibri', size=9)
+    bom_col_indices = {_EBOM_CI, _MBOM_CI, _SBOM_CI}
+
+    num_cols = len(col_names)
+    EXCEL_COL_START = _COL_START + 1   # 1-based
+    EXCEL_COL_END   = _COL_END   + 1
+
+    # ── Header row ──────────────────────────────────────────────────────
+    for ci, (name, _) in enumerate(_COLUMNS):
+        cell = ws.cell(row=1, column=ci + 1, value=name)
+        cell.fill      = hdr_fill
+        cell.font      = hdr_font
+        cell.alignment = hdr_align
+        cell.border    = border
+    ws.row_dimensions[1].height = 24
+
+    # ── Data rows ────────────────────────────────────────────────────────
+    for ri, row_data in enumerate(results):
+        e   = row_data['entry']
+        lvl = row_data['level']
+        qty = row_data['qty']
+        row_num = ri + 2
+
+        values = [
+            ri + 1, lvl, e['part_number'], e['description'],
+            qty, e['ebom'], e['mbom'], e['sbom'], e['revision'],
+            e['type'], e['sub_type'], e['material'],
+            e['identification'], e['category'], e['aggregate'],
+        ]
+        row_fill = lvl_fills.get(lvl, alt_fill if ri % 2 == 1 else None)
+
+        for ci, val in enumerate(values):
+            cell = ws.cell(row=row_num, column=ci + 1, value=val)
+            cell.border = border
+            if row_fill:
+                cell.fill = row_fill
+            if ci in bom_col_indices and val:
+                cell.font = ebom_font
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+            elif ci in (0, 1, 4):
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+            else:
+                cell.alignment = Alignment(vertical='center', wrap_text=(ci == 3))
+
+    # ── Column widths ────────────────────────────────────────────────────
+    for ci, (_, w) in enumerate(_COLUMNS):
+        ws.column_dimensions[get_column_letter(ci + 1)].width = w
+
+    ws.freeze_panes = 'A2'
+
+    # ── Title sheet ──────────────────────────────────────────────────────
+    ts = wb.create_sheet('Info')
+    ts['A1'] = 'BNC CAD BOM'
+    ts['A2'] = 'Assembly'
+    ts['B2'] = _clean_doc_name(doc)
+    ts['A3'] = 'Date'
+    ts['B3'] = datetime.date.today().isoformat()
+    ts['A4'] = 'Rows'
+    ts['B4'] = len(results)
+
+    wb.save(save_path)
+
+
+def _default_save_path(doc):
+    if doc and doc.FileName:
+        directory = os.path.dirname(str(doc.FileName))
+    else:
+        p = App.ParamGet('User parameter:BaseApp/Preferences/General')
+        directory = p.GetString('WorkingDirectory', '')
+    name = _clean_doc_name(doc) if doc else 'Assembly'
+    today = datetime.date.today().strftime('%Y%m%d')
+    return os.path.join(directory, 'BOM_{}_{}.xlsx'.format(name, today))
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+def run():
+    doc = App.ActiveDocument
+    if not doc:
+        QtWidgets.QMessageBox.warning(None, "BOM Export",
+                                      "No active document found.")
+        return
+
+    sheet = _find_bom_sheet(doc)
+    if sheet is None:
+        QtWidgets.QMessageBox.warning(
+            None, "BOM Export",
+            "No BNC CAD BOM spreadsheet found in the active document.\n\n"
+            "Open the BOM tool (Assembly workbench) and click "
+            "'Open in Spreadsheet' first.")
+        return
+
+    num_rows = _count_data_rows(sheet)
+    if num_rows == 0:
+        QtWidgets.QMessageBox.warning(None, "BOM Export",
+                                      "The BNC CAD BOM spreadsheet appears to be empty.")
+        return
+
+    results = _read_results(sheet, num_rows)
+
+    default_path = _default_save_path(doc)
+    save_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+        None, "Export BOM to Excel", default_path,
+        "Excel Workbook (*.xlsx)")
+    if not save_path:
+        return
+
+    for attempt in range(20):
+        try:
+            _write_excel(results, doc, save_path)
+            break
+        except RuntimeError as e:
+            QtWidgets.QMessageBox.critical(None, "BOM Export",
+                                           "Missing dependency:\n{}".format(e))
+            return
+        except PermissionError:
+            base, ext = os.path.splitext(save_path)
+            save_path = '{}_{}{}'.format(base, attempt + 1, ext)
+    else:
+        QtWidgets.QMessageBox.critical(
+            None, "BOM Export",
+            "Cannot save — the file appears to be locked.\n{}".format(save_path))
+        return
+
+    QtWidgets.QMessageBox.information(
+        None, "BOM Export",
+        "BOM exported successfully!\n\n{}".format(save_path))
+    App.Console.PrintMessage("BOM (spreadsheet) saved → {}\n".format(save_path))
+
+
+run()

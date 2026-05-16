@@ -1,0 +1,228 @@
+# -*- coding: utf-8 -*-
+# SeparateWindow.FCMacro  –  v4
+"""
+SeparateWindow.FCMacro  v4
+==========================
+Creo-like "Separate Window" / "Main Window" for FreeCAD Assembly.
+
+How to use (same as Creo Component Display):
+─────────────────────────────────────────────
+  SEPARATE WINDOW:
+    1. Click/select a component in the Assembly Model Tree.
+    2. Run this macro (or press its toolbar button).
+    → Assembly stays left, component opens right — both fully interactive.
+
+  MAIN WINDOW (restore):
+    Run MainWindow.FCMacro  (or the companion toolbar button)
+    to close all separate windows and return to normal tabbed mode.
+
+This macro does NOT touch the right-click context menu.
+That is handled separately by OpenInNewTab.FCMacro.
+
+Compatible with FreeCAD 1.0 / 1.1  (PySide2, Qt5).
+"""
+
+import os
+import FreeCAD as App
+import FreeCADGui as Gui
+from PySide import QtGui, QtCore
+
+_WIN_PREFIX = "_sep_win_"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MDI helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_mdi():
+    mw = Gui.getMainWindow()
+    if mw is None:
+        return None
+    cw = mw.centralWidget()
+    if isinstance(cw, QtGui.QMdiArea):
+        return cw
+    return mw.findChild(QtGui.QMdiArea)
+
+
+def _find_sub_for_doc(mdi, doc):
+    """Find the subwindow whose title matches doc.Label or doc.Name."""
+    for sub in mdi.subWindowList():
+        t = sub.windowTitle().strip()
+        if t.startswith(doc.Label) or t.startswith(doc.Name):
+            return sub
+    return None
+
+
+def _tile(mdi, left_sub, right_sub):
+    r = mdi.contentsRect()
+    half = r.width() // 2
+    h    = r.height()
+    if left_sub:
+        left_sub.showNormal()
+        left_sub.setGeometry(0, 0, half, h)
+    if right_sub:
+        right_sub.showNormal()
+        right_sub.setGeometry(half, 0, r.width() - half, h)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Document helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _resolve_source_doc(obj):
+    visited = set()
+    cur = obj
+    while cur is not None and id(cur) not in visited:
+        visited.add(id(cur))
+        linked = getattr(cur, "LinkedObject", None)
+        if linked is not None:
+            cur = linked
+        else:
+            break
+    return cur.Document if (cur and cur.Document) else None
+
+
+def _ensure_doc_open(src_doc):
+    for d in App.listDocuments().values():
+        if d.Name == src_doc.Name:
+            return d
+        if src_doc.FileName and \
+           os.path.normcase(d.FileName) == os.path.normcase(src_doc.FileName):
+            return d
+    if not src_doc.FileName:
+        return None
+    try:
+        return App.openDocument(src_doc.FileName)
+    except Exception as exc:
+        App.Console.PrintError("SeparateWindow: open failed – {}\n".format(exc))
+        return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main action
+# ─────────────────────────────────────────────────────────────────────────────
+
+def separate_window():
+    """
+    Read the current selection, open the selected component in a tiled
+    separate window beside the assembly — identical to Creo's
+    Component Display → Separate Window button.
+    """
+    # ── Get selected component ────────────────────────────────────────────────
+    sel = Gui.Selection.getSelection()
+    obj = sel[0] if sel else None
+
+    if obj is None or not (
+        obj.TypeId == "App::Link"
+        or (hasattr(obj, "LinkedObject") and obj.LinkedObject is not None)
+    ):
+        QtGui.QMessageBox.information(
+            None, "Separate Window",
+            "Select a component in the Assembly tree first, then run this macro.")
+        return
+
+    # ── Resolve component document ────────────────────────────────────────────
+    src_doc  = _resolve_source_doc(obj)
+    if src_doc is None:
+        QtGui.QMessageBox.warning(
+            None, "Separate Window",
+            "Cannot resolve source document for «{}».".format(obj.Label))
+        return
+
+    comp_doc = _ensure_doc_open(src_doc)
+    if comp_doc is None:
+        QtGui.QMessageBox.warning(
+            None, "Separate Window",
+            "Cannot open «{}».\nSave the part at least once first.".format(obj.Label))
+        return
+
+    # ── MDI setup ─────────────────────────────────────────────────────────────
+    mdi     = _get_mdi()
+    if mdi is None:
+        App.Console.PrintError("SeparateWindow: MDI area not found.\n")
+        return
+
+    asm_doc = App.activeDocument()
+    marker  = _WIN_PREFIX + comp_doc.Name
+
+    # Switch from TabbedView → SubWindowView so tiling is possible
+    mdi.setViewMode(QtGui.QMdiArea.SubWindowView)
+    QtGui.QApplication.processEvents()
+
+    # ── Reuse existing separate window if already open ────────────────────────
+    for sub in mdi.subWindowList():
+        if sub.objectName() == marker:
+            asm_sub = _find_sub_for_doc(mdi, asm_doc)
+            _tile(mdi, asm_sub, sub)
+            _restore_asm(asm_doc, mdi, asm_sub)
+            App.Console.PrintMessage(
+                "SeparateWindow: '{}' already open – retiled.\n".format(comp_doc.Label))
+            return
+
+    # ── Find or create a view for the component ───────────────────────────────
+    comp_sub  = _find_sub_for_doc(mdi, comp_doc)
+    before_ids = {id(s) for s in mdi.subWindowList()}
+
+    if comp_sub is None:
+        try:
+            App.setActiveDocument(comp_doc.Name)
+            Gui.setActiveDocument(comp_doc.Name)
+            QtGui.QApplication.processEvents()
+            Gui.runCommand("Std_ViewCreate")
+            QtGui.QApplication.processEvents()
+        except Exception as exc:
+            App.Console.PrintError(
+                "SeparateWindow: Std_ViewCreate failed – {}\n".format(exc))
+            _restore_asm(asm_doc, mdi, _find_sub_for_doc(mdi, asm_doc))
+            return
+
+        for s in mdi.subWindowList():
+            if id(s) not in before_ids:
+                comp_sub = s
+                break
+        if comp_sub is None:
+            comp_sub = _find_sub_for_doc(mdi, comp_doc)
+
+    if comp_sub is None:
+        App.Console.PrintError(
+            "SeparateWindow: could not create a view for '{}'.\n".format(comp_doc.Label))
+        _restore_asm(asm_doc, mdi, _find_sub_for_doc(mdi, asm_doc))
+        return
+
+    # ── Tag & fit ─────────────────────────────────────────────────────────────
+    comp_sub.setObjectName(marker)
+    comp_sub.setWindowTitle("[Sep]  {}".format(comp_doc.Label))
+
+    mdi.setActiveSubWindow(comp_sub)
+    try:
+        App.setActiveDocument(comp_doc.Name)
+        Gui.setActiveDocument(comp_doc.Name)
+        QtGui.QApplication.processEvents()
+        Gui.SendMsgToActiveView("ViewFit")
+    except Exception:
+        pass
+
+    # ── Tile: assembly LEFT  |  component RIGHT ───────────────────────────────
+    asm_sub = _find_sub_for_doc(mdi, asm_doc)
+    _tile(mdi, asm_sub, comp_sub)
+    _restore_asm(asm_doc, mdi, asm_sub)
+
+    App.Console.PrintMessage(
+        "SeparateWindow: '{}' opened on the right.\n".format(comp_doc.Label))
+
+
+def _restore_asm(asm_doc, mdi, asm_sub):
+    try:
+        App.setActiveDocument(asm_doc.Name)
+        Gui.setActiveDocument(asm_doc.Name)
+        if asm_sub:
+            mdi.setActiveSubWindow(asm_sub)
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Run immediately when macro is invoked
+# ─────────────────────────────────────────────────────────────────────────────
+
+separate_window()

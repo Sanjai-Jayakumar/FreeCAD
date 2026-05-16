@@ -1668,16 +1668,27 @@ void MainWindow::processMessages(const QList<QString>& msg)
     try {
         WaitCursor wc;
         std::list<std::string> files;
-        QString action = QStringLiteral("OpenFile:");
+        QString openAction  = QStringLiteral("OpenFile:");
+        QString frontAction = QStringLiteral("BringToFront:");
+        bool bringToFront = false;
         for (const auto& it : msg) {
-            if (it.startsWith(action)) {
-                files.emplace_back(it.mid(action.size()).toStdString());
+            if (it.startsWith(openAction)) {
+                files.emplace_back(it.mid(openAction.size()).toStdString());
+            }
+            else if (it.startsWith(frontAction)) {
+                bringToFront = true;
             }
         }
         files = App::Application::processFiles(files);
         for (const auto& file : files) {
             QString filename = QString::fromUtf8(file.c_str(), file.size());
             FileDialog::setWorkingDirectory(filename);
+        }
+        if (bringToFront) {
+            setWindowState(windowState() & ~Qt::WindowMinimized);
+            show();
+            raise();
+            activateWindow();
         }
     }
     catch (const Base::SystemExitException&) {

@@ -721,48 +721,9 @@ class BNCLoginDialog(QtWidgets.QDialog):
             FreeCAD.Console.PrintError(f"BNC CAD: OTP verify exception — {exc}\n")
 
     def _on_google_signin(self):
-        """Start Google OAuth 2.0 PKCE flow."""
-        client_id, _ = _oauth_config()
-
-        self._google_btn.setEnabled(False)
-        self._google_btn.setText("  Opening browser…")
-        self._google_status.setStyleSheet("font-size: 12px; color: #666;")
-        self._google_status.setText("Waiting for sign-in in your browser…")
-
-        # Generate PKCE pair
-        self._verifier, challenge = _generate_pkce()
-
-        # Build authorization URL
-        params = urllib.parse.urlencode({
-            "client_id": client_id,
-            "redirect_uri": _REDIRECT_URI,
-            "response_type": "code",
-            "scope": "openid email profile",
-            "code_challenge": challenge,
-            "code_challenge_method": "S256",
-            "access_type": "offline",
-            "prompt": "select_account",
-        })
-        auth_url = f"{_AUTH_URL}?{params}"
-
-        # Start callback server in background thread
-        self._server = http.server.HTTPServer(("127.0.0.1", _REDIRECT_PORT), _OAuthCallbackHandler)
-        self._server.auth_code = None
-        self._server.timeout = 120
-
-        def _wait_for_callback():
-            self._server.handle_request()  # Blocks until one request comes in
-
-        thread = threading.Thread(target=_wait_for_callback, daemon=True)
-        thread.start()
-
-        # Open browser
-        webbrowser.open(auth_url)
-
-        # Poll for the callback result
-        self._poll_timer = QtCore.QTimer(self)
-        self._poll_timer.timeout.connect(self._check_auth_result)
-        self._poll_timer.start(500)
+        """Open BNC CAD portal for Google Sign-In."""
+        webbrowser.open("https://cad.nemi-ai.com/")
+        QtCore.QTimer.singleShot(400, self.accept)
 
     def _check_auth_result(self):
         """Poll until the OAuth callback is received."""
@@ -799,7 +760,8 @@ class BNCLoginDialog(QtWidgets.QDialog):
 
     def closeEvent(self, event):
         """Close button exits the entire application — login is required."""
-        FreeCAD.Console.PrintMessage("BNC CAD: User closed login — exiting application\n")
+        FreeCAD.Console.PrintMessage("BNC CAD: User closed login — clearing session and exiting\n")
+        logout()  # Clear any stale session so next launch always prompts login
         QtWidgets.QApplication.instance().quit()
 
 
@@ -829,9 +791,10 @@ def show_login_if_needed():
     result = dialog.exec_()
     _dbg(f"exec_() returned: {result} (Accepted={QtWidgets.QDialog.Accepted})")
     if result != QtWidgets.QDialog.Accepted:
-        # User closed the dialog without signing in — exit the app
-        FreeCAD.Console.PrintMessage("BNC CAD: Login required — exiting\n")
-        _dbg("Login not accepted — quitting")
+        # User closed the dialog without signing in — clear session and exit
+        FreeCAD.Console.PrintMessage("BNC CAD: Login required — clearing session and exiting\n")
+        _dbg("Login not accepted — clearing session and quitting")
+        logout()  # Ensure stale auth is wiped so next launch always prompts
         QtWidgets.QApplication.instance().quit()
         return False
     _dbg("Login accepted")

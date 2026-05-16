@@ -2415,6 +2415,9 @@ bool onlySingleInstance(GUISingleApplication& mainApp)
             }
         }
 
+        // Ask the running instance to raise its window to the foreground.
+        mainApp.sendMessage(QLatin1String("BringToFront:"));
+
         return true;
     }
 

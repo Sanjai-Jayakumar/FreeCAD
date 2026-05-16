@@ -1,7 +1,10 @@
 import FreeCAD
 import os
 import re
-from PySide import QtGui, QtCore
+import zipfile
+import xml.etree.ElementTree as ET
+from datetime import datetime
+from PySide import QtGui, QtCore, QtWidgets
 
 # -------------------------------------------------
 # WORKING DIRECTORY
@@ -14,80 +17,313 @@ if not wd or not os.path.isdir(wd):
     raise Exception("WD not set")
 
 # -------------------------------------------------
-# VERSION REGEX
+# HELPERS
 # -------------------------------------------------
 version_re = re.compile(r"(.+)\.(\d{3})\.FCStd$", re.IGNORECASE)
 
-def scan_versions(directory):
+
+def scan_files(directory, show_all=False):
+    versioned = []
+    unversioned = []
     latest = {}
-    all_files = []
+    seen = set()
 
     for f in os.listdir(directory):
-        m = version_re.match(f)
-        if not m:
+        if not f.lower().endswith('.fcstd'):
             continue
-
-        base, v = m.group(1), int(m.group(2))
         full = os.path.join(directory, f)
-        all_files.append(full)
-
-        if base not in latest or v > latest[base][0]:
-            latest[base] = (v, full)
-
-    latest_files = [v[1] for v in latest.values()]
-    return latest_files, all_files
-
-# -------------------------------------------------
-# CUSTOM FILE DIALOG (NON-NATIVE)
-# -------------------------------------------------
-dlg = QtGui.QFileDialog(
-    None,
-    "Open File (Version Controlled)",
-    wd,
-    "FreeCAD Files (*.FCStd)"
-)
-
-# 🔑 IMPORTANT: disable native dialog
-dlg.setOption(QtGui.QFileDialog.DontUseNativeDialog, True)
-dlg.setFileMode(QtGui.QFileDialog.ExistingFile)
-dlg.setViewMode(QtGui.QFileDialog.Detail)
-
-# Checkbox
-chk = QtGui.QCheckBox("Show all versions")
-dlg.layout().addWidget(chk)
-
-# -------------------------------------------------
-# UPDATE FILE LIST
-# -------------------------------------------------
-def update_view():
-    dlg.setDirectory(dlg.directory())  # force refresh
-    current_dir = dlg.directory().absolutePath()
-
-    latest, all_files = scan_versions(current_dir)
-
-    if chk.isChecked():
-        dlg.setNameFilter("FreeCAD Files (*.FCStd)")
-    else:
-        # Hide all, then allow only latest
-        if latest:
-            patterns = " ".join(
-                [os.path.basename(f) for f in latest]
-            )
-            dlg.setNameFilter(f"Latest Versions ({patterns})")
+        m = version_re.match(f)
+        if m:
+            base, v = m.group(1), int(m.group(2))
+            versioned.append((f, full, base, v))
+            seen.add(f)
+            if base not in latest or v > latest[base][1]:
+                latest[base] = (full, v)
         else:
-            dlg.setNameFilter("FreeCAD Files (*.FCStd)")
+            unversioned.append((f, full, f, 0))
 
-chk.stateChanged.connect(update_view)
-dlg.directoryEntered.connect(lambda _: update_view())
+    if show_all:
+        result = versioned + unversioned
+    else:
+        # versioned: show only latest per base name
+        result = [item for item in versioned
+                  if latest.get(item[2], (None,))[0] == item[1]]
+        result += unversioned  # non-versioned files always shown
 
-update_view()
+    return sorted(result, key=lambda x: x[0].lower())
+
+
+def get_description(filepath):
+    """Read Comment property from Document.xml inside FCStd zip."""
+    try:
+        with zipfile.ZipFile(filepath, 'r') as zf:
+            names = zf.namelist()
+            doc_entry = next((n for n in names if n.endswith('Document.xml')), None)
+            if doc_entry is None:
+                return ""
+            raw = zf.read(doc_entry)
+            try:
+                root = ET.fromstring(raw)
+            except ET.ParseError:
+                root = ET.fromstring(raw.decode('utf-8', errors='replace'))
+            for prop in root.iter('Property'):
+                if prop.get('name') == 'Comment':
+                    s = prop.find('String')
+                    if s is not None:
+                        return s.get('value', '').strip()
+                    return (prop.text or '').strip()
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"get_description({os.path.basename(filepath)}): {e}\n")
+    return ""
+
+
+def get_fcstd_info(filepath):
+    thumbnail = None
+    description = get_description(filepath)
+    try:
+        with zipfile.ZipFile(filepath, 'r') as zf:
+            names = zf.namelist()
+            thumb = next((n for n in names if n.lower() == 'thumbnails/thumbnail.png'), None)
+            if thumb:
+                data = zf.read(thumb)
+                pix = QtGui.QPixmap()
+                pix.loadFromData(data)
+                thumbnail = pix
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"get_fcstd_info({os.path.basename(filepath)}): {e}\n")
+    return thumbnail, description
+
 
 # -------------------------------------------------
-# EXECUTE
+# DIALOG
 # -------------------------------------------------
-if dlg.exec_():
-    file_path = dlg.selectedFiles()[0]
-    FreeCAD.openDocument(file_path)
-    FreeCAD.Console.PrintMessage(
-        f"Opened: {os.path.basename(file_path)}\n"
-    )
+class OpenFileDialog(QtWidgets.QDialog):
+    def __init__(self, working_dir):
+        super().__init__(None, QtCore.Qt.Window)
+        self.working_dir = working_dir
+        self.selected_file = None
+        self._cache = {}
+        self.setWindowTitle("Open File")
+        self.resize(1000, 620)
+        self._build_ui()
+        self._refresh()
+
+    def _build_ui(self):
+        root = QtWidgets.QVBoxLayout(self)
+        root.setSpacing(8)
+        root.setContentsMargins(12, 12, 12, 12)
+
+        # ── path bar ──────────────────────────────────────────
+        path_bar = QtWidgets.QHBoxLayout()
+        parts = self.working_dir.replace("\\", "/").rstrip("/").split("/")
+        path_text = "  >  ".join(p for p in parts if p)
+        lbl = QtWidgets.QLabel(path_text)
+        lbl.setStyleSheet("font-weight: bold; padding: 4px 8px;"
+                          "background:#f0f0f0; border:1px solid #ccc; border-radius:3px;")
+        self.search_box = QtWidgets.QLineEdit()
+        self.search_box.setPlaceholderText("Search...")
+        self.search_box.setFixedWidth(220)
+        self.search_box.textChanged.connect(self._refresh)
+        path_bar.addWidget(lbl, 1)
+        path_bar.addWidget(self.search_box)
+        root.addLayout(path_bar)
+
+        # ── list + preview ────────────────────────────────────
+        mid = QtWidgets.QHBoxLayout()
+        mid.setSpacing(10)
+
+        self.table = QtWidgets.QTableWidget()
+        self.table.setColumnCount(2)
+        self.table.setHorizontalHeaderLabels(["Name", "Description"])
+        hh = self.table.horizontalHeader()
+        hh.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        hh.setSectionResizeMode(1, QtWidgets.QHeaderView.Fixed)
+        self.table.setColumnWidth(1, 240)
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
+        self.table.itemSelectionChanged.connect(self._on_select)
+        self.table.doubleClicked.connect(self._on_open)
+        mid.addWidget(self.table, 2)
+
+        self.preview_panel = QtWidgets.QLabel("No Preview")
+        self.preview_panel.setFixedSize(300, 300)
+        self.preview_panel.setAlignment(QtCore.Qt.AlignCenter)
+        self.preview_panel.setStyleSheet(
+            "background:#e8e8e8; border:1px solid #bbb; border-radius:4px;"
+            "color:#888; font-size:13px;")
+        mid.addWidget(self.preview_panel)
+
+        root.addLayout(mid, 1)
+
+        # ── info bar (hidden until "Show details" checked) ────────
+        self.info_bar = QtWidgets.QLabel("")
+        self.info_bar.setStyleSheet(
+            "background:#f7f7f7; border:1px solid #ddd; padding:5px 8px;"
+            "border-radius:3px; color:#555;")
+        self.info_bar.setTextFormat(QtCore.Qt.PlainText)
+        self.info_bar.setVisible(False)
+        root.addWidget(self.info_bar)
+
+        # ── file name / type row ──────────────────────────────
+        form = QtWidgets.QFormLayout()
+        form.setSpacing(6)
+        self.fname_edit = QtWidgets.QLineEdit()
+        self.fname_edit.setReadOnly(True)
+        self.fname_edit.setStyleSheet("padding:4px;")
+        form.addRow("File name:", self.fname_edit)
+        type_combo = QtWidgets.QComboBox()
+        type_combo.addItem("All types (*.FCStd)")
+        form.addRow("Type:", type_combo)
+        root.addLayout(form)
+
+        # ── footer: checkboxes + buttons ──────────────────────
+        footer = QtWidgets.QHBoxLayout()
+        self.chk_all = QtWidgets.QCheckBox("Show all versions")
+        self.chk_details = QtWidgets.QCheckBox("Show details")
+        self.chk_preview = QtWidgets.QCheckBox("Preview")
+        # Connect signals BEFORE setChecked so handlers fire on init
+        self.chk_all.toggled.connect(self._refresh)
+        self.chk_details.toggled.connect(self._on_toggle_details)
+        self.chk_preview.toggled.connect(self._on_toggle_preview)
+        self.chk_preview.setChecked(True)   # fires _on_toggle_preview(True)
+
+        btn_open = QtWidgets.QPushButton("Open")
+        btn_open.setFixedHeight(34)
+        btn_open.setStyleSheet(
+            "QPushButton{background:#c0392b;color:white;font-weight:bold;"
+            "padding:0 28px;border-radius:3px;}"
+            "QPushButton:hover{background:#e74c3c;}"
+            "QPushButton:pressed{background:#96281b;}")
+        btn_open.clicked.connect(self._on_open)
+
+        btn_cancel = QtWidgets.QPushButton("Cancel")
+        btn_cancel.setFixedHeight(34)
+        btn_cancel.setStyleSheet(
+            "QPushButton{padding:0 18px;border-radius:3px;"
+            "border:1px solid #aaa;background:#fafafa;}"
+            "QPushButton:hover{background:#eee;}")
+        btn_cancel.clicked.connect(self.reject)
+
+        footer.addWidget(self.chk_all)
+        footer.addWidget(self.chk_details)
+        footer.addWidget(self.chk_preview)
+        footer.addStretch()
+        footer.addWidget(btn_open)
+        footer.addWidget(btn_cancel)
+        root.addLayout(footer)
+
+        # Description column is always visible; no hidden columns
+
+    # ── slots ─────────────────────────────────────────────────
+
+    def _refresh(self):
+        search = self.search_box.text().lower()
+        files = scan_files(self.working_dir, self.chk_all.isChecked())
+        if search:
+            files = [f for f in files if search in f[0].lower()]
+        self._files = files
+        self.table.setRowCount(len(files))
+        for row, (fname, fpath, base, ver) in enumerate(files):
+            item_n = QtWidgets.QTableWidgetItem(fname)
+            item_n.setData(QtCore.Qt.UserRole, fpath)
+            item_d = QtWidgets.QTableWidgetItem(self._cache.get(fpath, {}).get('desc', ''))
+            self.table.setItem(row, 0, item_n)
+            self.table.setItem(row, 1, item_d)
+        # Load descriptions after the list is rendered
+        QtCore.QTimer.singleShot(0, self._load_descriptions)
+
+    def _load_descriptions(self):
+        """Load description text for every row (fast zip read, no thumbnail)."""
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if not item:
+                continue
+            fpath = item.data(QtCore.Qt.UserRole)
+            if fpath not in self._cache:
+                desc = get_description(fpath)
+                self._cache[fpath] = {'thumb': None, 'desc': desc, 'mtime': ''}
+            d_item = self.table.item(row, 1)
+            if d_item:
+                d_item.setText(self._cache[fpath].get('desc', ''))
+
+    def _on_select(self):
+        row = self.table.currentRow()
+        item = self.table.item(row, 0)
+        if not item:
+            return
+        fpath = item.data(QtCore.Qt.UserRole)
+        self.selected_file = fpath
+        self.fname_edit.setText(os.path.basename(fpath))
+
+        cached = self._cache.get(fpath, {})
+        # Load full info if thumbnail not yet fetched
+        # (_load_descriptions pre-fills cache with thumb=None, so we must check)
+        if cached.get('thumb') is None:
+            thumb, desc = get_fcstd_info(fpath)
+            try:
+                mtime = datetime.fromtimestamp(
+                    os.path.getmtime(fpath)).strftime("%d-%b-%Y %I:%M:%S %p")
+            except Exception:
+                mtime = cached.get('mtime', '')
+            self._cache[fpath] = {
+                'thumb': thumb,
+                'desc': cached.get('desc') or desc,
+                'mtime': mtime,
+            }
+            # Update description cell if we got a better value
+            if not cached.get('desc') and desc:
+                d_item = self.table.item(row, 1)
+                if d_item:
+                    d_item.setText(desc)
+
+        info = self._cache[fpath]
+        if self.chk_details.isChecked():
+            self.info_bar.setText(
+                f"File name: {os.path.basename(fpath)}    "
+                f"Date modified: {info['mtime']}    "
+                f"Description: {info['desc']}")
+
+        if self.chk_preview.isChecked():
+            self._show_preview(info.get('thumb'))
+
+    def _show_preview(self, pixmap):
+        if pixmap and not pixmap.isNull():
+            scaled = pixmap.scaled(
+                self.preview_panel.size(),
+                QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation)
+            self.preview_panel.setPixmap(scaled)
+            self.preview_panel.setText("")
+        else:
+            self.preview_panel.setPixmap(QtGui.QPixmap())
+            self.preview_panel.setText("No Preview")
+
+    def _on_toggle_preview(self, checked):
+        self.preview_panel.setVisible(checked)
+        if checked and self.selected_file:
+            self._show_preview(self._cache.get(self.selected_file, {}).get('thumb'))
+
+    def _on_toggle_details(self, checked):
+        self.info_bar.setVisible(checked)
+
+    def _on_open(self):
+        if self.selected_file:
+            self.accept()
+        else:
+            QtWidgets.QMessageBox.warning(self, "No file selected",
+                                          "Please select a file first.")
+
+
+# -------------------------------------------------
+# RUN
+# -------------------------------------------------
+dlg = OpenFileDialog(wd)
+if dlg.exec():
+    fp = dlg.selected_file
+    if fp:
+        FreeCAD.openDocument(fp)
+        FreeCAD.Console.PrintMessage(f"Opened: {os.path.basename(fp)}\n")

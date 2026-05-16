@@ -1,0 +1,712 @@
+# -*- coding: utf-8 -*-
+"""
+FreeCAD Macro: BOM (Bill of Materials) Generator
+Traverses the active assembly, reads Model Parameters from each
+component, and exports a formatted Excel BOM to the working directory.
+Author : GitHub Copilot
+Version: 1.0
+Date   : 2026-02-24
+"""
+
+import FreeCAD as App
+import FreeCADGui as Gui
+from PySide import QtWidgets
+import os
+import re
+import datetime
+
+# ── openpyxl dependency ─────────────────────────────────────────
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import (Font, Alignment, Border, Side,
+                                  PatternFill)
+    from openpyxl.utils import get_column_letter
+except ImportError:
+    import subprocess
+    import sys
+    # FreeCAD's sys.executable points to freecad.exe, not python.
+    # Locate the embedded python interpreter next to it.
+    _fc_bin = os.path.dirname(sys.executable)
+    _py = os.path.join(_fc_bin, 'python.exe')
+    if not os.path.isfile(_py):
+        # Fallback: try bin/python3.exe or just 'python'
+        _py = os.path.join(_fc_bin, 'python3.exe')
+    if not os.path.isfile(_py):
+        _py = 'python'
+    subprocess.check_call([_py, '-m', 'pip', 'install', 'openpyxl'])
+    from openpyxl import Workbook
+    from openpyxl.styles import (Font, Alignment, Border, Side,
+                                  PatternFill)
+    from openpyxl.utils import get_column_letter
+
+
+# ================================================================
+# CONSTANTS
+# ================================================================
+
+_SKIP_TYPES = frozenset({
+    'App::Origin',
+    'App::Line',
+    'App::Plane',
+    'Assembly::JointGroup',
+    'Assembly::JointObject',
+    'Assembly::JointFixed',
+    'Assembly::JointRevolute',
+    'Assembly::JointCylindrical',
+    'Assembly::JointSlider',
+    'Assembly::JointBall',
+    'Assembly::JointDistance',
+    'Assembly::GroundedJoint',
+    'App::PropertyContainer',
+    'App::GeometryPython',
+})
+
+# Pattern that matches internal FreeCAD constraint / joint object names
+_SKIP_NAME_RE = re.compile(
+    r'^(GroundedJoint|OriginToAssembly|Joint|Constraint)',
+    re.IGNORECASE
+)
+
+# Skip any Assembly:: type that is NOT the assembly container itself,
+# OR whose internal Name looks like a constraint object.
+def _should_skip(obj):
+    type_id = getattr(obj, 'TypeId', '')
+    if type_id in _SKIP_TYPES:
+        return True
+    # Allow Assembly::AssemblyLink — these are external subassembly references.
+    # Skip all other Assembly:: sub-types (joints, constraints, etc.).
+    if (type_id.startswith('Assembly::')
+            and type_id not in ('Assembly::AssemblyObject', 'Assembly::AssemblyLink')):
+        return True
+    # Skip by internal Name (e.g. GroundedJoint, OriginToAssembly001)
+    name  = getattr(obj, 'Name',  '')
+    label = getattr(obj, 'Label', '')
+    if _SKIP_NAME_RE.match(name) or _SKIP_NAME_RE.match(label):
+        return True
+    return False
+
+
+def _joint_member_ids(asm_obj):
+    """
+    Return a set of id() values for every object that lives inside a
+    JointGroup (or any other skip-typed container) within *asm_obj*.
+    FreeCAD flattens the assembly Group so joint objects appear as
+    direct siblings of real parts – we need to exclude them.
+    """
+    skip_ids = set()
+    if not hasattr(asm_obj, 'Group'):
+        return skip_ids
+    for child in asm_obj.Group:
+        type_id = getattr(child, 'TypeId', '')
+        # Any container whose type is in the skip list: collect its members
+        if type_id in _SKIP_TYPES or \
+           (type_id.startswith('Assembly::') and type_id != 'Assembly::AssemblyObject'):
+            if hasattr(child, 'Group'):
+                for member in child.Group:
+                    skip_ids.add(id(member))
+            # Also add the container itself (redundant but harmless)
+            skip_ids.add(id(child))
+    return skip_ids
+
+# (Header label, column width)
+COLUMNS = [
+    ('S.NO',            8),
+    ('LEVEL',           8),
+    ('PART NUMBER',    28),
+    ('DESCRIPTION',    45),
+    ('QTY',             6),
+    ('EBOM',            7),
+    ('MBOM',            7),
+    ('S-BOM',           7),
+    ('REVISION',       11),
+    ('MAKE / BUY',     13),
+    ('Sub-Ty',         14),
+    ('MATERIAL',       18),
+    ('IDENTIFICATION', 18),
+    ('CATEGORY',       16),
+    ('AGGREGATE',      22),
+]
+
+BOM_COL_START = 6   # column F  (EBOM)
+BOM_COL_END   = 8   # column H  (S-BOM)
+
+
+# ================================================================
+# HELPER UTILITIES
+# ================================================================
+
+def clean_doc_name(doc):
+    """Strip version number and logical extension from a document filename."""
+    if not doc.FileName:
+        return doc.Name or ''
+    name = os.path.splitext(os.path.basename(str(doc.FileName)))[0]
+    name = re.sub(r'\.(prt|asm|drg)$', '', name, flags=re.IGNORECASE)
+    name = re.sub(r'\.\d+$', '', name)
+    return name
+
+
+def _clean_label(label):
+    """Strip assembly file extensions and version suffixes from a label/part-number.
+    Only strips .NNN when the label has a known asm extension (e.g. '1a.001.asm' → '1a'),
+    so real part numbers like 'P12345.001' are left untouched.
+    """
+    if re.search(r'\.(prt|asm|drg|fcstd)', label, re.IGNORECASE):
+        name = re.sub(r'\.(prt|asm|drg|fcstd)$', '', label, flags=re.IGNORECASE)
+        name = re.sub(r'\.\d+$', '', name)
+        return name or label
+    return label
+
+
+# Model Parameter fields used to detect whether an object/doc has MP data
+_MP_DETECT_FIELDS = (
+    'MP_PartNumber', 'MP_Description', 'MP_BOMType', 'MP_Type',
+    'MP_TypeSub', 'MP_Category', 'MP_Identification', 'MP_Material',
+    'MP_Aggregate', 'MP_Revision',
+)
+
+
+def _has_mp(obj):
+    """Return True if obj carries any non-empty Model Parameter field."""
+    return any(getattr(obj, f, '') for f in _MP_DETECT_FIELDS if hasattr(obj, f))
+
+
+def _mp(source, prop, default=''):
+    """Safely read a property from *source*."""
+    return getattr(source, prop, default) or default
+
+
+def find_mp_source(obj):
+    """
+    Return the FreeCAD object / document that carries the Model-Parameter
+    properties (MP_*) for *obj*, or None.
+    Checks any non-empty MP_ field (not just MP_PartNumber) so that objects
+    with only Description or BOM Type filled are still found.
+    Search order:
+        1. obj itself
+        2. LinkedObject (if obj is an App::Link / AssemblyLink)
+        3. LinkedObject's Document (external file guard)
+        4. Walk objects in linked document
+        5. obj's own Document (AssemblyObject guard)
+    """
+    # 1. Object itself
+    if _has_mp(obj):
+        return obj
+
+    if hasattr(obj, 'LinkedObject') and obj.LinkedObject is not None:
+        linked = obj.LinkedObject
+        linked_doc = getattr(linked, 'Document', None)
+        parent_doc = getattr(obj, 'Document', None)
+
+        # 2. Resolved linked object
+        if _has_mp(linked):
+            return linked
+
+        # 3 & 4. Linked document (only when external)
+        if linked_doc is not None and linked_doc is not parent_doc:
+            if _has_mp(linked_doc):
+                return linked_doc
+            for child in getattr(linked_doc, 'Objects', []):
+                if _has_mp(child):
+                    return child
+
+    # 5. Own document — only for AssemblyObject to avoid leaking parent MP data
+    if getattr(obj, 'TypeId', '') == 'Assembly::AssemblyObject':
+        d = getattr(obj, 'Document', None)
+        if d is not None and _has_mp(d):
+            return d
+
+    return None
+
+
+def _mat_with_thk(src):
+    """Return material string; append ' THK <value>' when Sub-Type is Fabrication."""
+    mat = _mp(src, 'MP_Material', '')
+    sub = _mp(src, 'MP_TypeSub', '')
+    thk = _mp(src, 'MP_THK', '')
+    if sub.lower() == 'fabrication' and thk:
+        mat = '{} THK {}'.format(mat, thk) if mat else 'THK {}'.format(thk)
+    return mat
+
+
+def extract_entry(obj, fallback_label=''):
+    """Build a single BOM-row dict by reading Model Parameters.
+    If Model Parameters are not filled, fields are left blank.
+    """
+    src = find_mp_source(obj)
+    bom_type = _mp(src, 'MP_BOMType', '') if src else ''
+
+    # Part Number: MP_PartNumber (cleaned) → doc name → label (cleaned)
+    pn = _clean_label(_mp(src, 'MP_PartNumber', '')) if src else ''
+    if not pn:
+        if src is not None and isinstance(src, App.Document):
+            pn = clean_doc_name(src)
+        else:
+            raw = obj.Label if hasattr(obj, 'Label') else ''
+            pn = _clean_label(raw)
+
+    # Description: MP_Description → obj.Description → doc.Description → doc.Comment
+    desc = _mp(src, 'MP_Description', '') if src else ''
+    if not desc:
+        desc = str(getattr(obj, 'Description', '') or '').strip()
+    if not desc:
+        _obj_doc = getattr(obj, 'Document', None)
+        if _obj_doc:
+            desc = str(getattr(_obj_doc, 'Description', '') or '').strip()
+            if not desc:
+                desc = str(getattr(_obj_doc, 'Comment', '') or '').strip()
+
+    # Check if key detail fields are filled in
+    _type     = _mp(src, 'MP_Type', '')            if src else ''
+    _sub_type = _mp(src, 'MP_TypeSub', '')         if src else ''
+    _ident    = _mp(src, 'MP_Identification', '')   if src else ''
+    _category = _mp(src, 'MP_Category', '')         if src else ''
+    _material = _mat_with_thk(src)                  if src else ''
+    _aggregate = _mp(src, 'MP_Aggregate', '')       if src else ''
+
+    # EBOM/MBOM/SBOM show whenever BOM Type is set OR any detail field is filled
+    details_filled = any([bom_type, _type, _sub_type, _ident, _material, _aggregate])
+
+    if details_filled:
+        return {
+            'part_number':    pn,
+            'description':    desc,
+            'ebom':           'E',
+            'mbom':           'M' if bom_type == 'M-BOM' else '',
+            'sbom':           'S' if bom_type == 'S-BOM' else '',
+            'revision':       _mp(src, 'MP_Revision')  if src else '',
+            'type':           _type,
+            'sub_type':       _sub_type,
+            'material':       _material,
+            'identification': _ident,
+            'category':       _category,
+            'aggregate':      _aggregate,
+        }
+    else:
+        return {
+            'part_number':    pn,
+            'description':    desc,
+            'ebom':           '',
+            'mbom':           '',
+            'sbom':           '',
+            'revision':       '',
+            'type':           '',
+            'sub_type':       '',
+            'material':       '',
+            'identification': '',
+            'category':       '',
+            'aggregate':      '',
+        }
+
+
+# ================================================================
+# ASSEMBLY TRAVERSAL
+# ================================================================
+
+def _find_root_asm(doc):
+    """Return the top-level Assembly::AssemblyObject in *doc*, or None."""
+    for obj in doc.Objects:
+        if obj.TypeId == 'Assembly::AssemblyObject':
+            # root = no parent that is also an assembly
+            if not any(p.TypeId == 'Assembly::AssemblyObject' for p in obj.InList):
+                return obj
+    return None
+
+
+def _resolve(obj):
+    """If *obj* is a link return (linked_object, linked_doc); else (obj, None)."""
+    if hasattr(obj, 'LinkedObject') and obj.LinkedObject is not None:
+        linked = obj.LinkedObject
+        doc = linked.Document if hasattr(linked, 'Document') else None
+        return linked, doc
+    return obj, None
+
+
+def _ident_key(child_obj, resolved, linked_doc):
+    """
+    Hashable key for grouping identical children (QTY counting).
+    Prefers MP_PartNumber so that the same part referenced as an
+    internal body *and* an external App::Link gets the same key.
+    """
+    # 1) Try Model-Parameter part number on the child or resolved object
+    for probe in (child_obj, resolved):
+        src = find_mp_source(probe)
+        if src:
+            pn = getattr(src, 'MP_PartNumber', '')
+            if pn:
+                return ('pn', pn)
+
+    # 2) External link – use document path
+    if linked_doc and linked_doc.FileName:
+        return ('file', str(linked_doc.FileName))
+
+    # 3) Fallback – Label
+    lbl = getattr(resolved, 'Label', '') or getattr(child_obj, 'Label', '')
+    if lbl:
+        return ('label', lbl)
+
+    return ('id', id(resolved))
+
+
+def _stack_key(asm_obj):
+    """
+    Return a hashable key for *asm_obj* used in the recursion stack.
+    Uses **(FileName, object.Name)** so that sub-assemblies inside the
+    same document are treated as distinct, while a true circular link
+    back to the *same* assembly object is still caught.
+    Falls back to ``id()`` for unsaved / in-memory objects.
+    """
+    doc = getattr(asm_obj, 'Document', None)
+    obj_name = getattr(asm_obj, 'Name', '')
+    if doc and doc.FileName:
+        return ('file', str(doc.FileName), obj_name)
+    return ('id', id(asm_obj))
+
+
+def traverse(asm_obj, level, results, _stack=None):
+    """
+    Recursively walk the assembly tree rooted at *asm_obj*.
+    Appends ``{level, entry, qty}`` dicts to *results*.
+
+    *_stack*  – assembly keys on the current recursion path,
+               used to detect and break circular references.
+    """
+    if _stack is None:
+        _stack = set()
+
+    # ── Circular-reference guard (path-based) ───────────────────
+    sk = _stack_key(asm_obj)
+    if sk in _stack:
+        return                    # cycle detected – stop
+    _stack.add(sk)
+
+    # ── entry for the assembly node itself ──────────────────────
+    entry = extract_entry(asm_obj)
+    results.append({'level': level, 'entry': entry, 'qty': 1})
+
+    if not hasattr(asm_obj, 'Group'):
+        _stack.discard(sk)
+        return
+
+    # ── Determine current assembly's MP source (to skip phantoms) ─
+    asm_mp_src = find_mp_source(asm_obj)
+
+    # ── Collect IDs of all joint/constraint members to skip ─────
+    joint_ids = _joint_member_ids(asm_obj)
+
+    # ── Build ordered child list (tree order) ───────────────────
+    ordered_children = []
+
+    for child in asm_obj.Group:
+        if _should_skip(child):
+            continue
+        # Skip objects that live inside a JointGroup container
+        if id(child) in joint_ids:
+            continue
+
+        resolved, linked_doc = _resolve(child)
+
+        # is / contains a sub-assembly?
+        sub_asm = None
+        if resolved.TypeId == 'Assembly::AssemblyObject':
+            sub_asm = resolved
+        elif linked_doc:
+            sub_asm = _find_root_asm(linked_doc)
+
+        # ── Skip phantom children that inherit the parent's MP data ─
+        # ONLY apply to leaf parts (not real sub-assemblies).
+        if sub_asm is None:
+            child_mp_src = find_mp_source(child)
+            if (child_mp_src is not None
+                    and child_mp_src is asm_mp_src
+                    and not hasattr(child, 'MP_PartNumber')):
+                continue              # phantom – skip
+
+        # If the sub-assembly is already on the current recursion path,
+        # skip this child entirely (circular reference).
+        if sub_asm is not None and _stack_key(sub_asm) in _stack:
+            continue
+
+        key = _ident_key(child, resolved, linked_doc)
+        ordered_children.append({
+            'key':        key,
+            'resolved':   resolved,
+            'linked_doc': linked_doc,
+            'sub_asm':    sub_asm,
+            'child_obj':  child,
+        })
+
+    # ── Merge only consecutive identical children ───────────────
+    merged = []
+    for info in ordered_children:
+        if merged and merged[-1]['key'] == info['key']:
+            merged[-1]['count'] += 1
+        else:
+            merged.append({
+                'key':        info['key'],
+                'resolved':   info['resolved'],
+                'linked_doc': info['linked_doc'],
+                'sub_asm':    info['sub_asm'],
+                'child_obj':  info['child_obj'],
+                'count':      1,
+            })
+
+    # ── recurse / add leaf entries ──────────────────────────────
+    for info in merged:
+        qty = info['count']
+
+        if info['sub_asm']:
+            sub_start = len(results)
+            traverse(info['sub_asm'], level + 1, results,
+                     _stack)
+            # patch qty on the sub-assembly root row
+            if sub_start < len(results):
+                results[sub_start]['qty'] = qty
+        else:
+            row_entry = extract_entry(info['child_obj'])
+            results.append({'level': level + 1, 'entry': row_entry, 'qty': qty})
+
+    _stack.discard(sk)             # allow re-entry from sibling branches
+
+
+# ================================================================
+# EXCEL WORKBOOK GENERATION
+# ================================================================
+
+def write_bom_excel(results, doc, save_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'BOM'
+
+    num_cols = len(COLUMNS)
+
+    # ── Styles ──────────────────────────────────────────────────
+    dark_blue  = PatternFill('solid', fgColor='003366')
+    mid_blue   = PatternFill('solid', fgColor='1F4E79')
+    light_grey = PatternFill('solid', fgColor='D9E2F3')
+    white_fill = PatternFill('solid', fgColor='FFFFFF')
+
+    title_font = Font(name='Calibri', bold=True, color='FFFFFF', size=12)
+    proj_font  = Font(name='Calibri', bold=True, color='FFFFFF', size=9)
+    hdr_font   = Font(name='Calibri', bold=True, color='FFFFFF', size=10)
+    data_font  = Font(name='Calibri', size=9)
+
+    thin_side  = Side(style='thin', color='000000')
+    border_all = Border(left=thin_side, right=thin_side,
+                        top=thin_side, bottom=thin_side)
+
+    center     = Alignment(horizontal='center', vertical='center',
+                           wrap_text=True)
+    left_align = Alignment(horizontal='left',   vertical='center',
+                           wrap_text=True)
+
+    # ── Column widths ───────────────────────────────────────────
+    for i, (_, w) in enumerate(COLUMNS, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # ── ROW 1 : Title bar ──────────────────────────────────────
+    ws.merge_cells(start_row=1, start_column=1,
+                   end_row=1,   end_column=num_cols - 2)
+    title_cell = ws.cell(row=1, column=1)
+
+    # Use the assembly file name (base name only, no version/extension)
+    asm_label = ''
+    if doc.FileName:
+        asm_label = os.path.splitext(os.path.basename(str(doc.FileName)))[0]
+        # Strip .FCStd, then .prt/.asm/.drg, then .001 version number
+        asm_label = re.sub(r'\.FCStd$', '', asm_label, flags=re.IGNORECASE)
+        asm_label = re.sub(r'\.(prt|asm|drg)$', '', asm_label, flags=re.IGNORECASE)
+        asm_label = re.sub(r'\.\d+$', '', asm_label)
+    else:
+        asm_label = doc.Name or 'Assembly'
+
+    root_asm = _find_root_asm(doc)
+
+    title_cell.value     = f'{asm_label} - BILL OF MATERIALS'
+    title_cell.font      = title_font
+    title_cell.fill      = dark_blue
+    title_cell.alignment = Alignment(horizontal='center', vertical='center')
+
+    for c in range(1, num_cols + 1):
+        cell = ws.cell(row=1, column=c)
+        cell.fill   = dark_blue
+        cell.font   = title_font
+        cell.border = border_all
+
+    # Project info (top-right corner)
+    ws.merge_cells(start_row=1, start_column=num_cols - 1,
+                   end_row=1,   end_column=num_cols)
+    proj_cell = ws.cell(row=1, column=num_cols - 1)
+    today = datetime.date.today().strftime('%Y-%m-%d')
+    rev = ''
+    if root_asm:
+        src = find_mp_source(root_asm)
+        if src:
+            rev = _mp(src, 'MP_Revision')
+    proj_cell.value     = f'PROJECT CODE :\nREV : {rev}    DATE : {today}'
+    proj_cell.font      = proj_font
+    proj_cell.fill      = dark_blue
+    proj_cell.alignment = Alignment(horizontal='left', vertical='center',
+                                    wrap_text=True)
+    ws.row_dimensions[1].height = 36
+
+    # ── ROW 2-3 : Column headers ───────────────────────────────
+    # BOM TYPE label merged across F2:H2
+    ws.merge_cells(start_row=2, start_column=BOM_COL_START,
+                   end_row=2,   end_column=BOM_COL_END)
+    bom_lbl = ws.cell(row=2, column=BOM_COL_START)
+    bom_lbl.value     = 'BOM TYPE'
+    bom_lbl.font      = hdr_font
+    bom_lbl.fill      = mid_blue
+    bom_lbl.alignment = center
+    bom_lbl.border    = border_all
+
+    for i, (hdr_name, _) in enumerate(COLUMNS, 1):
+        if BOM_COL_START <= i <= BOM_COL_END:
+            # Sub-header in row 3 (EBOM / MBOM / S-BOM)
+            c3 = ws.cell(row=3, column=i)
+            c3.value     = hdr_name
+            c3.font      = hdr_font
+            c3.fill      = mid_blue
+            c3.alignment = center
+            c3.border    = border_all
+        else:
+            # Merge rows 2-3 for non-BOM columns
+            ws.merge_cells(start_row=2, start_column=i,
+                           end_row=3,   end_column=i)
+            c2 = ws.cell(row=2, column=i)
+            c2.value     = hdr_name
+            c2.font      = hdr_font
+            c2.fill      = mid_blue
+            c2.alignment = center
+            c2.border    = border_all
+
+    # Ensure every header-area cell has fill + border
+    for r in (2, 3):
+        for c in range(1, num_cols + 1):
+            cell = ws.cell(row=r, column=c)
+            if cell.fill.fgColor is None or str(cell.fill.fgColor.index) == '00000000':
+                cell.fill = mid_blue
+            cell.border = border_all
+
+    ws.row_dimensions[2].height = 22
+    ws.row_dimensions[3].height = 22
+
+    # ── DATA ROWS ───────────────────────────────────────────────
+    DATA_START = 4
+    for idx, row_data in enumerate(results):
+        r   = DATA_START + idx
+        lvl = row_data['level']
+        e   = row_data['entry']
+        qty = row_data['qty']
+
+        values = [
+            idx + 1,                              # S.NO
+            lvl,                                   # LEVEL
+            e['part_number'],                      # PART NUMBER
+            e['description'],                      # DESCRIPTION
+            qty,                                   # QTY
+            e['ebom'],                             # EBOM
+            e['mbom'],                             # MBOM
+            e['sbom'],                             # S-BOM
+            e['revision'],                         # REVISION
+            e['type'],                             # MAKE / BUY
+            e['sub_type'],                         # Sub-Ty
+            e['material'],                         # MATERIAL
+            e['identification'],                   # IDENTIFICATION
+            e['category'],                         # CATEGORY
+            e['aggregate'],                        # AGGREGATE
+        ]
+
+        fill = white_fill if idx % 2 == 0 else light_grey
+        for c, val in enumerate(values, 1):
+            cell = ws.cell(row=r, column=c, value=val)
+            cell.font   = data_font
+            cell.fill   = fill
+            cell.border = border_all
+            # centre narrow columns; left-align wide text columns
+            if c in (1, 2, 5, 6, 7, 8, 9):
+                cell.alignment = center
+            else:
+                cell.alignment = left_align
+
+        ws.row_dimensions[r].height = 18
+
+    # ── Auto-filter on the header row (row 3) ──────────────────
+    last_col = get_column_letter(num_cols)
+    last_row = DATA_START + len(results) - 1 if results else DATA_START
+    ws.auto_filter.ref = f'A3:{last_col}{last_row}'
+
+    # ── Freeze panes below header ───────────────────────────────
+    ws.freeze_panes = 'A4'
+
+    wb.save(save_path)
+    return save_path
+
+
+# ================================================================
+# MAIN
+# ================================================================
+
+def main():
+    doc = App.ActiveDocument
+    if not doc:
+        QtWidgets.QMessageBox.warning(None, 'BOM Export',
+                                      'No active document.')
+        return
+
+    root_asm = _find_root_asm(doc)
+    if not root_asm:
+        QtWidgets.QMessageBox.warning(None, 'BOM Export',
+                                      'No assembly found in the active document.')
+        return
+
+    # ── Traverse assembly tree ──────────────────────────────────
+    results = []
+    traverse(root_asm, level=1, results=results)
+
+    if not results:
+        QtWidgets.QMessageBox.warning(None, 'BOM Export',
+                                      'No components found in the assembly.')
+        return
+
+    # ── Determine save path (working directory) ─────────────────
+    if doc.FileName:
+        directory = os.path.dirname(str(doc.FileName))
+    else:
+        param = App.ParamGet('User parameter:BaseApp/Preferences/General')
+        directory = param.GetString('WorkingDirectory',
+                                    os.path.expanduser('~'))
+
+    asm_name = clean_doc_name(doc)
+    today    = datetime.date.today().strftime('%Y%m%d')
+    filename = f'BOM_{asm_name}_{today}.xlsx'
+    save_path = os.path.join(directory, filename)
+
+    # ── Generate Excel ──────────────────────────────────────────
+    # If the file is locked (e.g. open in Excel), try numbered suffixes.
+    final_path = save_path
+    for attempt in range(20):
+        try:
+            write_bom_excel(results, doc, final_path)
+            break
+        except PermissionError:
+            base, ext = os.path.splitext(save_path)
+            final_path = f'{base}_{attempt + 1}{ext}'
+    else:
+        QtWidgets.QMessageBox.critical(
+            None, 'BOM Export',
+            f'Cannot save BOM – the file is locked.\n'
+            f'Please close it in Excel and try again.\n\n{save_path}'
+        )
+        return
+
+    QtWidgets.QMessageBox.information(
+        None, 'BOM Export',
+        f'BOM exported successfully!\n\n{final_path}'
+    )
+
+    # Log to FreeCAD console
+    App.Console.PrintMessage(f'BOM saved → {final_path}\n')
+
+
+main()

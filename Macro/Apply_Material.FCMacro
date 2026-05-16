@@ -15,7 +15,10 @@ import uuid
 
 import FreeCAD
 import FreeCADGui
-from PySide2 import QtCore, QtWidgets
+try:
+    from PySide2 import QtCore, QtWidgets
+except ImportError:
+    from PySide6 import QtCore, QtWidgets
 
 # ---------------------------------------------------------------------------
 # Base folder — FreeCAD user Material directory
@@ -821,8 +824,12 @@ class AppearanceSettingsDialog(QtWidgets.QDialog):
             .format(bg=hex_val, fg=text_col))
 
     def _pick_color(self, cat):
-        from PySide2.QtWidgets import QColorDialog
-        from PySide2.QtGui import QColor
+        try:
+            from PySide2.QtWidgets import QColorDialog
+            from PySide2.QtGui import QColor
+        except ImportError:
+            from PySide6.QtWidgets import QColorDialog
+            from PySide6.QtGui import QColor
         current = self._colours.get(cat, "#808080")
         col = QColorDialog.getColor(
             QColor(current), self,
@@ -904,7 +911,7 @@ def show_material_info(obj, mat_dict):
     mb.setDetailedText(text)
     chg = mb.addButton("Change Material\u2026", QtWidgets.QMessageBox.ActionRole)
     mb.addButton(QtWidgets.QMessageBox.Close)
-    mb.exec_()
+    mb.exec()
     return mb.clickedButton() == chg
 
 
@@ -1029,7 +1036,7 @@ class MaterialTabWidget(QtWidgets.QWidget):
     def _on_add(self):
         """Open AddMaterialDialog pre-selected to this tab's category."""
         dlg = AddMaterialDialog(initial_cat=self.cat_name, parent=self)
-        if dlg.exec_() == QtWidgets.QDialog.Accepted and dlg.saved_path:
+        if dlg.exec() == QtWidgets.QDialog.Accepted and dlg.saved_path:
             if dlg.saved_cat == self.cat_name:
                 self.refresh_mats()
             else:
@@ -1148,7 +1155,7 @@ class MaterialDialog(QtWidgets.QDialog):
 
     def _on_appearance(self):
         dlg = AppearanceSettingsDialog(parent=self)
-        dlg.exec_()
+        dlg.exec()
 
     @property
     def selected_mat(self):
@@ -1337,7 +1344,7 @@ def run():
 
     # ── 4. Show material picker ───────────────────────────────────────────
     dlg = MaterialDialog()
-    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+    if dlg.exec() != QtWidgets.QDialog.Accepted:
         return
 
     mat = dlg.selected_mat
@@ -1365,7 +1372,7 @@ def run():
     if failed_on:
         parts.append("Failed:\n  " + "\n  ".join(failed_on))
     mb.setDetailedText("\n".join(parts))
-    mb.exec_()
+    mb.exec()
 
     FreeCAD.Console.PrintMessage(
         "\n\u2500\u2500 Apply Material \u2500\u2500\n  Material : {}\n  Density  : {:.4g} kg/m\u00b3\n  Applied  : {}\n"

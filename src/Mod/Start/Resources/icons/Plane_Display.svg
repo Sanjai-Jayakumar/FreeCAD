@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  PlaneDisplay.svg
+  FreeCAD "Plane Display ON/OFF" macro - toolbar icon
+  Size   : 24 x 24 px (native FreeCAD toolbar size)
+  Concept: a large 3D reference plane (iso parallelogram) filling the
+           canvas edge-to-edge, with a yellow eye / visibility badge in
+           the lower-right corner.
+  Palette: Yellow + blue FreeCAD Assembly theme.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="24" height="24"
+     viewBox="0 0 24 24">
+
+  <defs>
+    <linearGradient id="planeFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#9CC8F2"/>
+      <stop offset="100%" stop-color="#2E78B5"/>
+    </linearGradient>
+    <radialGradient id="badgeBg" cx="0.35" cy="0.35" r="0.85">
+      <stop offset="0%"   stop-color="#FFEE99"/>
+      <stop offset="55%"  stop-color="#FFCC00"/>
+      <stop offset="100%" stop-color="#8A6800"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ════════ 3D REFERENCE PLANE (iso parallelogram) ════════
+       Corners (now filling canvas edge-to-edge):
+         TL(0.5, 1.5)  TR(19, 1.5)  BR(23.5, 22.5)  BL(5, 22.5)
+  -->
+  <polygon points="0.5,1.5  19,1.5  23.5,22.5  5,22.5"
+           fill="url(#planeFill)"
+           stroke="#0A2E60" stroke-width="1.4"
+           stroke-linejoin="round"
+           opacity="0.92"/>
+
+  <!-- Top-edge specular highlight -->
+  <line x1="1.6" y1="2.3" x2="18" y2="2.3"
+        stroke="#CCE6F5" stroke-width="0.85"
+        opacity="0.9" stroke-linecap="round"/>
+
+  <!-- ════════ AXIS CROSS inside the plane (X / Y reference axes) ════════ -->
+  <!-- X-axis (horizontal) -->
+  <line x1="5" y1="12" x2="18.5" y2="12"
+        stroke="#0A2E60" stroke-width="1.1"
+        stroke-linecap="round" opacity="0.7"
+        stroke-dasharray="2.4,1.7"/>
+  <!-- Y-axis (slight tilt matching plane direction) -->
+  <line x1="10" y1="3" x2="14" y2="21"
+        stroke="#0A2E60" stroke-width="1.1"
+        stroke-linecap="round" opacity="0.7"
+        stroke-dasharray="2.4,1.7"/>
+  <!-- Origin dot at axes intersection -->
+  <circle cx="12" cy="12" r="1.2"
+          fill="#FFCC00"
+          stroke="#0A2E60" stroke-width="0.55"/>
+
+  <!-- ════════ EYE / VISIBILITY BADGE (lower-right corner) ════════ -->
+  <g transform="translate(18 18.5)">
+    <!-- Yellow circle background (enlarged) -->
+    <circle r="5.5"
+            fill="url(#badgeBg)"
+            stroke="#1a1a1a" stroke-width="1.0"/>
+    <!-- Highlight arc -->
+    <path d="M -3,-2.6 A 4 4 0 0 1 2.6,-3"
+          fill="none" stroke="#FFFFFF"
+          stroke-width="0.65" stroke-linecap="round"
+          opacity="0.75"/>
+
+    <!-- ── Eye shape (almond outline, scaled up) ── -->
+    <path d="M -3.7,0 Q 0,-2.9 3.7,0 Q 0,2.9 -3.7,0 Z"
+          fill="#FFFFFF"
+          stroke="#1a1a1a" stroke-width="0.8"
+          stroke-linejoin="round"/>
+    <!-- Iris -->
+    <circle r="1.4" fill="#1F66CC"
+            stroke="#0A2E60" stroke-width="0.4"/>
+    <!-- Pupil -->
+    <circle r="0.7" fill="#1a1a1a"/>
+    <!-- Catchlight -->
+    <circle cx="-0.55" cy="-0.55" r="0.4"
+            fill="#FFFFFF"/>
+  </g>
+
+</svg>

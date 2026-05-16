@@ -1,0 +1,251 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MassProperties.svg
+  FreeCAD "Mass Properties" macro – toolbar icon
+  Size   : 64 × 64 px
+  Concept: a classic balance / scale (weighing mass) overlaid with a
+           3D solid block on one pan and a data readout panel on the
+           other — instantly communicates "weigh this part & show results".
+  Palette: #2f5a8a / #1f3a5f / #14253d   (block – blue steel)
+           #5D9BC8 / #1F5187             (block highlight)
+           #9A7818 / #5A4210 / #D9B040   (brass scale arm & pivot)
+           #c8d0d8 / #5a6268             (pan / plate – steel)
+           #f0f4fa / #c8d0da             (readout panel)
+           #0E6A2E                        (positive / green value)
+           #1a2530                        (deep outlines)
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="64" height="64"
+     viewBox="-1 13 67 52">
+
+  <defs>
+    <!-- Block top face -->
+    <linearGradient id="blkTop" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0%"   stop-color="#5D9BC8"/>
+      <stop offset="100%" stop-color="#1F5187"/>
+    </linearGradient>
+    <!-- Block left face -->
+    <linearGradient id="blkLeft" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#1A4670"/>
+      <stop offset="100%" stop-color="#0A2545"/>
+    </linearGradient>
+    <!-- Block right face -->
+    <linearGradient id="blkRight" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#143258"/>
+      <stop offset="100%" stop-color="#0e2040"/>
+    </linearGradient>
+
+    <!-- Scale arm (brass) -->
+    <linearGradient id="brass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#D9B040"/>
+      <stop offset="50%"  stop-color="#9A7818"/>
+      <stop offset="100%" stop-color="#3A2400"/>
+    </linearGradient>
+
+    <!-- Pan surface (steel disc) -->
+    <radialGradient id="pan" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0%"   stop-color="#A8B2BC"/>
+      <stop offset="60%"  stop-color="#6E7682"/>
+      <stop offset="100%" stop-color="#1F2530"/>
+    </radialGradient>
+
+    <!-- Readout panel background -->
+    <linearGradient id="readout" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#8E9AAA"/>
+    </linearGradient>
+
+    <!-- Readout header -->
+    <linearGradient id="rdHdr" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#1A4670"/>
+      <stop offset="100%" stop-color="#1f3a5f"/>
+    </linearGradient>
+
+    <!-- Centre pivot sphere -->
+    <radialGradient id="pivot" cx="0.35" cy="0.3" r="0.8">
+      <stop offset="0%"   stop-color="#D9BA50"/>
+      <stop offset="55%"  stop-color="#9A7818"/>
+      <stop offset="100%" stop-color="#241800"/>
+    </radialGradient>
+
+    <!-- Block shadow -->
+    <filter id="blkShadow" x="-15%" y="-15%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="1.2"/>
+      <feOffset dx="1.2" dy="1.8"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.45"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+
+    <!-- General soft shadow -->
+    <filter id="softShadow" x="-20%" y="-20%" width="145%" height="145%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="0.9"/>
+      <feOffset dx="0.8" dy="1.2"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.40"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- ═══════════════════════════════════════════════════
+       SCALE STAND (vertical post + base)
+       ══════════════════════════════════════════════════ -->
+  <!-- Base plate -->
+  <ellipse cx="32" cy="61" rx="14" ry="3.0"
+           fill="#3a4248" stroke="#1a2530" stroke-width="0.8"/>
+  <ellipse cx="32" cy="61" rx="14" ry="3.0"
+           fill="url(#pan)" opacity="0.5"/>
+
+  <!-- Vertical post -->
+  <rect x="30.5" y="28" width="3" height="33"
+        rx="1.0"
+        fill="url(#brass)"
+        stroke="#1a2530" stroke-width="0.7"/>
+  <!-- Post highlight line -->
+  <line x1="31.2" y1="29" x2="31.2" y2="60"
+        stroke="#D9BA50" stroke-width="0.5" opacity="0.6"
+        stroke-linecap="round"/>
+
+  <!-- ═══════════════════════════════════════════════════
+       PIVOT SPHERE (centre of arm)
+       ══════════════════════════════════════════════════ -->
+  <circle cx="32" cy="28" r="4.2"
+          fill="url(#pivot)"
+          stroke="#1a2530" stroke-width="0.9"
+          filter="url(#softShadow)"/>
+  <!-- pivot specular -->
+  <ellipse cx="30.5" cy="26.5" rx="1.8" ry="1.0"
+           fill="#ffffff" opacity="0.65"/>
+
+  <!-- ═══════════════════════════════════════════════════
+       BALANCE ARM (slightly tilted – weighted by block)
+       Left pan (block side) is lower.
+       Arm from (8,30) through pivot (32,28) to (56,26)
+       ══════════════════════════════════════════════════ -->
+  <line x1="8" y1="30" x2="56" y2="26"
+        stroke="url(#brass)" stroke-width="2.8"
+        stroke-linecap="round"
+        filter="url(#softShadow)"/>
+  <!-- Arm top highlight -->
+  <line x1="8" y1="29.3" x2="56" y2="25.3"
+        stroke="#D9BA50" stroke-width="0.7"
+        opacity="0.65" stroke-linecap="round"/>
+
+  <!-- ═══════════════════════════════════════════════════
+       LEFT PAN SUSPENSION STRINGS + PAN
+       (block side — pan at y≈44 because arm is lower)
+       ══════════════════════════════════════════════════ -->
+  <line x1="8"  y1="30" x2="5"  y2="44"
+        stroke="#6A5018" stroke-width="0.8" stroke-linecap="round"/>
+  <line x1="8"  y1="30" x2="11" y2="44"
+        stroke="#6A5018" stroke-width="0.8" stroke-linecap="round"/>
+
+  <!-- Pan disc (left) -->
+  <ellipse cx="8" cy="44" rx="8.5" ry="2.2"
+           fill="url(#pan)"
+           stroke="#1a2530" stroke-width="0.9"
+           filter="url(#softShadow)"/>
+  <!-- Pan rim highlight -->
+  <ellipse cx="8" cy="43.5" rx="6.5" ry="1.2"
+           fill="none" stroke="#e8edf4"
+           stroke-width="0.5" opacity="0.7"/>
+
+  <!-- ═══════════════════════════════════════════════════
+       ISO BLOCK on left pan  (small, centred on pan)
+       Iso origin at (8, 37) — W=12, H=8, D=6
+         Top:  (2,37) (8,34) (14,37) (8,40)
+         Left: (2,37) (2,43) (8,46)  (8,40)
+         Right:(14,37)(14,43)(8,46)  (8,40)
+       ══════════════════════════════════════════════════ -->
+  <g filter="url(#blkShadow)">
+    <!-- Right face -->
+    <polygon points="14,37  14,43  8,46  8,40"
+             fill="url(#blkRight)"
+             stroke="#0e2040" stroke-width="0.8"
+             stroke-linejoin="round"/>
+    <!-- Left face -->
+    <polygon points="2,37  2,43  8,46  8,40"
+             fill="url(#blkLeft)"
+             stroke="#0e2040" stroke-width="0.8"
+             stroke-linejoin="round"/>
+    <!-- Top face -->
+    <polygon points="2,37  8,34  14,37  8,40"
+             fill="url(#blkTop)"
+             stroke="#0e2040" stroke-width="0.8"
+             stroke-linejoin="round"/>
+    <!-- Top rim highlight -->
+    <polyline points="2.5,37  8,34.5  13.5,37"
+              fill="none" stroke="#b8d4ee"
+              stroke-width="0.55" stroke-linecap="round"
+              opacity="0.75"/>
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════
+       RIGHT PAN SUSPENSION + PAN (readout side — higher)
+       ══════════════════════════════════════════════════ -->
+  <line x1="56" y1="26" x2="53" y2="38"
+        stroke="#6A5018" stroke-width="0.8" stroke-linecap="round"/>
+  <line x1="56" y1="26" x2="59" y2="38"
+        stroke="#6A5018" stroke-width="0.8" stroke-linecap="round"/>
+
+  <!-- Pan disc (right) -->
+  <ellipse cx="56" cy="38" rx="8.5" ry="2.2"
+           fill="url(#pan)"
+           stroke="#1a2530" stroke-width="0.9"
+           filter="url(#softShadow)"/>
+  <ellipse cx="56" cy="37.5" rx="6.5" ry="1.2"
+           fill="none" stroke="#e8edf4"
+           stroke-width="0.5" opacity="0.7"/>
+
+  <!-- ═══════════════════════════════════════════════════
+       READOUT PANEL on right pan
+       A small data card showing mass result.
+       ══════════════════════════════════════════════════ -->
+  <g filter="url(#softShadow)">
+    <!-- Card side wall (depth) -->
+    <rect x="64" y="16" width="1.5" height="23"
+          fill="#8a9aaa"/>
+    <!-- Card bottom lip -->
+    <rect x="48" y="38" width="17" height="1.5"
+          fill="#8a9aaa"/>
+
+    <!-- Card face -->
+    <rect x="48" y="16" width="16" height="23"
+          rx="1.0"
+          fill="url(#readout)"
+          stroke="#1a2530" stroke-width="0.9"/>
+
+    <!-- Header bar -->
+    <rect x="48" y="16" width="16" height="6"
+          rx="1.0"
+          fill="url(#rdHdr)"/>
+    <!-- "m" symbol in header -->
+    <text x="56" y="21"
+          font-family="Georgia, serif" font-size="5.5"
+          font-style="italic" font-weight="bold"
+          fill="#f0f4fa" text-anchor="middle">m</text>
+
+    <!-- Separator -->
+    <line x1="48" y1="22" x2="64" y2="22"
+          stroke="#1a3a5f" stroke-width="0.7"/>
+
+    <!-- Mass value row -->
+    <text x="56" y="29"
+          font-family="Arial, sans-serif" font-size="5.5"
+          font-weight="bold" fill="#0E6A2E"
+          text-anchor="middle">2.74</text>
+
+    <!-- Unit label -->
+    <text x="56" y="35"
+          font-family="Arial, sans-serif" font-size="3.8"
+          fill="#546e7a" text-anchor="middle">kg</text>
+
+    <!-- Separator -->
+    <line x1="50" y1="36" x2="62" y2="36"
+          stroke="#c0ccd8" stroke-width="0.6"/>
+
+    <!-- Density sub-line -->
+    <text x="56" y="39.5"
+          font-family="Arial, sans-serif" font-size="3.2"
+          fill="#8a9aaa" text-anchor="middle">2720 kg/m³</text>
+  </g>
+
+</svg>

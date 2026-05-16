@@ -529,7 +529,7 @@ MaterialManagerLocal::getConfiguredLibraries()
         auto libData =
             std::make_shared<MaterialLibraryLocal>(QStringLiteral("System"),
                                                    resourceDir,
-                                                   QStringLiteral(":/icons/freecad.svg"),
+                                                   QStringLiteral(":/icons/freecad-icon-32.png"),
                                                    true);
         libraryList->push_back(libData);
     }

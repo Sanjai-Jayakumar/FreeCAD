@@ -115,9 +115,6 @@ def set_bnc_default_theme():
             # Mark theme as initialized
             bnc_prefs.SetBool("ThemeInitialized", True)
 
-            FreeCAD.Console.PrintMessage("✓ BNC CAD solid gray background applied\n")
-        else:
-            FreeCAD.Console.PrintMessage("✓ BNC CAD gray background refreshed\n")
 
         # Apply preferences immediately
         try:

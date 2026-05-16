@@ -25,11 +25,11 @@
       <stop
          id="stop3866"
          offset="0"
-         style="stop-color:#9cd7ea;stop-opacity:1;" />
+         style="stop-color:#4A8FE5;stop-opacity:1;" />
       <stop
          id="stop3868"
          offset="1"
-         style="stop-color:#5f99b1;stop-opacity:1;" />
+         style="stop-color:#1F66CC;stop-opacity:1;" />
     </linearGradient>
     <radialGradient
        inkscape:collect="always"
@@ -44,11 +44,11 @@
     <linearGradient
        id="linearGradient3593">
       <stop
-         style="stop-color:#9cd7ea;stop-opacity:1;"
+         style="stop-color:#4A8FE5;stop-opacity:1;"
          offset="0"
          id="stop3595" />
       <stop
-         style="stop-color:#69a6bf;stop-opacity:1;"
+         style="stop-color:#4A8FE5;stop-opacity:1;"
          offset="1"
          id="stop3597" />
     </linearGradient>
@@ -83,11 +83,11 @@
     <linearGradient
        id="linearGradient3143">
       <stop
-         style="stop-color:#9cd7ea;stop-opacity:1;"
+         style="stop-color:#FFE066;stop-opacity:1;"
          offset="0.09706546"
          id="stop3145" />
       <stop
-         style="stop-color:#f1d66f;stop-opacity:1;"
+         style="stop-color:#4A8FE5;stop-opacity:1;"
          offset="0.4604966"
          id="stop3147" />
     </linearGradient>
@@ -105,19 +105,19 @@
     <linearGradient
        id="linearGradient3143-7">
       <stop
-         style="stop-color:#ffed99;stop-opacity:1;"
+         style="stop-color:#4A8FE5;stop-opacity:1;"
          offset="0.32279909"
          id="stop3145-0" />
       <stop
-         style="stop-color:#9cd7ea;stop-opacity:1;"
+         style="stop-color:#FFE066;stop-opacity:1;"
          offset="0.82392776"
          id="stop3147-9" />
     </linearGradient>
   </defs>
   <sodipodi:namedview
      id="base"
-     pagecolor="#f5f5f5"
-     bordercolor="#f1d66f"
+     pagecolor="#FFFFFF"
+     bordercolor="#4A8FE5"
      borderopacity="1.0"
      inkscape:pageopacity="0.0"
      inkscape:pageshadow="2"
@@ -135,7 +135,7 @@
      inkscape:window-maximized="1"
      inkscape:showpageshadow="2"
      inkscape:pagecheckerboard="0"
-     inkscape:deskcolor="#ffed99">
+     inkscape:deskcolor="#4A8FE5">
     <inkscape:grid
        type="xygrid"
        id="grid2996"
@@ -200,7 +200,7 @@
          sodipodi:cy="34.571426"
          sodipodi:cx="53.214287"
          id="path3550-3"
-         style="fill:url(#radialGradient3090);fill-opacity:1;fill-rule:evenodd;stroke:#257fa6;stroke-width:1.95265329;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none;stroke-dashoffset:0;marker:none;visibility:visible;display:inline;overflow:visible;enable-background:accumulate"
+         style="fill:url(#radialGradient3090);fill-opacity:1;fill-rule:evenodd;stroke:#222222;stroke-width:1.95265329;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none;stroke-dashoffset:0;marker:none;visibility:visible;display:inline;overflow:visible;enable-background:accumulate"
          sodipodi:type="arc" />
       <path
          transform="matrix(1.0029659,0,0,1.0132241,-125.52192,-9.3509494)"
@@ -210,7 +210,7 @@
          sodipodi:cy="34.571426"
          sodipodi:cx="53.214287"
          id="path3550-3-1"
-         style="fill:none;stroke:#9cd7ea;stroke-width:2.18236232;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none;stroke-dashoffset:0;marker:none;visibility:visible;display:inline;overflow:visible;enable-background:accumulate"
+         style="fill:none;stroke:#FFE066;stroke-width:2.18236232;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none;stroke-dashoffset:0;marker:none;visibility:visible;display:inline;overflow:visible;enable-background:accumulate"
          sodipodi:type="arc" />
       <path
          transform="matrix(1.1209541,0,0,1.1324194,-151.52151,2.0236756)"
@@ -220,7 +220,7 @@
          sodipodi:cy="34.571426"
          sodipodi:cx="53.214287"
          id="path3550-3-3"
-         style="fill:url(#radialGradient3165);fill-opacity:1;fill-rule:evenodd;stroke:#257fa6;stroke-width:1.95265329;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none;stroke-dashoffset:0;marker:none;visibility:visible;display:inline;overflow:visible;enable-background:accumulate"
+         style="fill:url(#radialGradient3165);fill-opacity:1;fill-rule:evenodd;stroke:#222222;stroke-width:1.95265329;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none;stroke-dashoffset:0;marker:none;visibility:visible;display:inline;overflow:visible;enable-background:accumulate"
          sodipodi:type="arc" />
       <path
          transform="matrix(1.0029659,0,0,1.0132241,-145.24287,6.1444238)"
@@ -230,7 +230,7 @@
          sodipodi:cy="34.571426"
          sodipodi:cx="53.214287"
          id="path3550-3-1-6"
-         style="fill:none;stroke:#9cd7ea;stroke-width:2.18236232;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none;stroke-dashoffset:0;marker:none;visibility:visible;display:inline;overflow:visible;enable-background:accumulate"
+         style="fill:none;stroke:#FFE066;stroke-width:2.18236232;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none;stroke-dashoffset:0;marker:none;visibility:visible;display:inline;overflow:visible;enable-background:accumulate"
          sodipodi:type="arc" />
     </g>
   </g>

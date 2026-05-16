@@ -767,7 +767,15 @@ class Std_VersionSave:
         return App.ActiveDocument is not None
 
     def Activated(self):
-        save_version()
+        import os
+        macro_path = os.path.join(App.getHomePath(), "Macro", "Save.FCMacro")
+        if os.path.exists(macro_path):
+            try:
+                exec(open(macro_path, encoding="utf-8").read(), {"__name__": "__main__"})
+            except Exception as e:
+                App.Console.PrintError(f"BNC Save error: {e}\n")
+        else:
+            App.Console.PrintError(f"BNC Save: macro not found at {macro_path}\n")
 
 try:
     Gui.addCommand('Std_VersionSave', Std_VersionSave())

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SetWorkingDirectory.svg
+  FreeCAD "Set Working Directory" macro - toolbar icon
+  Size   : 24 x 24 px (native FreeCAD toolbar size)
+  Style  : flat FreeCAD palette - blue folder with red gear overlay
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="24" height="24"
+     viewBox="0 0 24 24">
+
+  <defs>
+    <linearGradient id="frontFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#6AB4E0"/>
+      <stop offset="100%" stop-color="#2E78B5"/>
+    </linearGradient>
+    <linearGradient id="backFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#3A85C2"/>
+      <stop offset="100%" stop-color="#1A5285"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Back flap with tab -->
+  <path d="M 1 2
+           L 9 2
+           L 11 4.5
+           L 23 4.5
+           L 23 22.5
+           L 1 22.5 Z"
+        fill="url(#backFill)"
+        stroke="#0D3F6E" stroke-width="0.9"
+        stroke-linejoin="round"/>
+
+  <!-- Front pocket -->
+  <path d="M 2 22
+           L 3.5 6.5
+           L 23.5 6.5
+           L 22 22 Z"
+        fill="url(#frontFill)"
+        stroke="#0D3F6E" stroke-width="0.9"
+        stroke-linejoin="round"/>
+
+  <!-- Top edge highlight -->
+  <line x1="4.2"  y1="7.3" x2="22.8" y2="7.3"
+        stroke="#CCE6F5" stroke-width="0.6"
+        stroke-linecap="round" opacity="0.85"/>
+
+  <!-- ============================================================
+       GEAR BADGE (lower-right, overlapping folder corner)
+       ============================================================ -->
+  <g transform="translate(19 21)">
+    <!-- 8-tooth ring -->
+    <g fill="#F39C12" stroke="#8B4500"
+       stroke-width="0.25" stroke-linejoin="round">
+      <rect x="-0.7" y="-4.6" width="1.4" height="1.7" rx="0.2"/>
+      <rect x="-0.7" y="2.9"  width="1.4" height="1.7" rx="0.2"/>
+      <rect x="-4.6" y="-0.7" width="1.7" height="1.4" rx="0.2"/>
+      <rect x="2.9"  y="-0.7" width="1.7" height="1.4" rx="0.2"/>
+      <g transform="rotate(45)">
+        <rect x="-0.7" y="-4.6" width="1.4" height="1.7" rx="0.2"/>
+        <rect x="-0.7" y="2.9"  width="1.4" height="1.7" rx="0.2"/>
+        <rect x="-4.6" y="-0.7" width="1.7" height="1.4" rx="0.2"/>
+        <rect x="2.9"  y="-0.7" width="1.7" height="1.4" rx="0.2"/>
+      </g>
+    </g>
+
+    <!-- Gear body -->
+    <circle r="3.0"
+            fill="#F39C12"
+            stroke="#8B4500" stroke-width="0.5"/>
+
+    <!-- Highlight arc on gear -->
+    <path d="M -1.7,-1.6 A 2.4,2.4 0 0 1 1.6,-1.7"
+          fill="none" stroke="#FFFFFF"
+          stroke-width="0.4" stroke-linecap="round"
+          opacity="0.7"/>
+
+    <!-- Center hole -->
+    <circle r="1.0" fill="#FFFFFF" stroke="#8B4500" stroke-width="0.35"/>
+  </g>
+
+</svg>

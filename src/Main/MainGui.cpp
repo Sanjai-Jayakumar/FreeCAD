@@ -195,12 +195,13 @@ int main(int argc, char** argv)
 
     // set the banner (for logging and console)
     App::Application::Config()["CopyrightInfo"] = sBanner;
-    App::Application::Config()["AppIcon"] = "freecad-icon";
+    App::Application::Config()["AppIcon"] = "freecad-icon-32";
     App::Application::Config()["SplashScreen"] = "freecadsplash";
     App::Application::Config()["AboutImage"] = App::Application::isDevelopmentVersion()
         ? "freecadaboutdev"
         : "freecadabout";
     App::Application::Config()["StartWorkbench"] = "PartDesignWorkbench";
+    App::Application::Config()["SingleInstance"] = "true";
     // App::Application::Config()["HiddenDockWindow"] = "Property editor";
     App::Application::Config()["SplashAlignment"] = "Bottom|Left";
     App::Application::Config()["SplashTextColor"] = "#418FDE";

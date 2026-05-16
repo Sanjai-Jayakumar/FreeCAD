@@ -1,141 +1,164 @@
 # -*- coding: utf-8 -*-
-# BNC Global Commands - GUI Initialization
-# This file is loaded when FreeCAD GUI starts
-
 import FreeCAD
 import FreeCADGui
 import os
 import sys
-from PySide import QtCore, QtGui
+from PySide import QtCore, QtGui, QtWidgets
 
-# =============================================================================
-# SET WORKBENCH SELECTOR DEFAULT - RUN IMMEDIATELY
-# Force Tab mode on EVERY launch to ensure it persists
-# =============================================================================
-
-# Set the default workbench selector style immediately at import time
-# ALWAYS set to Tab mode on every launch to ensure it persists
+# Force Tab workbench selector on every launch
 try:
-    param_group = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/General")
-
-    # ALWAYS set WorkbenchSelector to 1 (Tab selector) on every launch
-    # 0 = Combo/List selector (dropdown), 1 = Tab selector (buttons)
-    param_group.SetInt("WorkbenchSelector", 1)
-    FreeCAD.Console.PrintMessage("✓ Workbench selector forced to Tab mode\n")
-
+    FreeCAD.ParamGet("User parameter:BaseApp/Preferences/General").SetInt("WorkbenchSelector", 1)
 except Exception as e:
-    FreeCAD.Console.PrintError(f"Error setting workbench selector at import: {str(e)}\n")
+    FreeCAD.Console.PrintError("Error setting workbench selector: " + str(e) + "\n")
 
-# Get the icons directory path
-ICON_PATH = os.path.join(FreeCAD.getResourceDir(), "Mod", "BNCGlobal", "Resources", "icons")
-
-# Capture module directory at load time (when __file__ is available)
-_BNC_GLOBAL_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Add icon path to FreeCAD's icon search paths
-FreeCADGui.addIconPath(ICON_PATH)
-
-FreeCAD.Console.PrintMessage("BNC Global module loaded\n")
+_BNC_GLOBAL_DIR = os.path.join(FreeCAD.getHomePath(), "Mod", "BNCGlobal", "BNCGlobal")
 
 
 def remove_help_menu():
-    """Remove the Help menu from the menu bar"""
     try:
         mw = FreeCADGui.getMainWindow()
         menubar = mw.menuBar()
-
-        # Find and remove Help menu
-        help_menu_action = None
         for menu_action in menubar.actions():
             menu = menu_action.menu()
             if menu and "Help" in menu.title():
-                help_menu_action = menu_action
-                FreeCAD.Console.PrintMessage(f"✓ Found Help menu: {menu.title()}\n")
+                menubar.removeAction(menu_action)
                 break
-
-        if help_menu_action:
-            # Remove the Help menu from the menu bar
-            menubar.removeAction(help_menu_action)
-            FreeCAD.Console.PrintMessage("✓ Help menu removed successfully\n")
-        else:
-            FreeCAD.Console.PrintWarning("Help menu not found\n")
-
     except Exception as e:
-        FreeCAD.Console.PrintError(f"Error removing Help menu: {str(e)}\n")
-        import traceback
-        FreeCAD.Console.PrintError(traceback.format_exc())
+        FreeCAD.Console.PrintError("Error removing Help menu: " + str(e) + "\n")
 
 
 def set_workbench_selector_style():
-    """Force Tab mode and refresh workbench selector GUI"""
     try:
-        from PySide import QtCore, QtGui
-
-        # ALWAYS force WorkbenchSelector to 1 (Tab mode)
-        param_group = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/General")
-        param_group.SetInt("WorkbenchSelector", 1)
-
-        FreeCAD.Console.PrintMessage("✓ Workbench selector forced to Tab mode (delayed)\n")
-
-        # Force the main window to refresh the workbench selector
+        FreeCAD.ParamGet("User parameter:BaseApp/Preferences/General").SetInt("WorkbenchSelector", 1)
         mw = FreeCADGui.getMainWindow()
-
-        # Find and configure the workbench selector toolbar
-        all_toolbars = mw.findChildren(QtGui.QToolBar)
-
-        for toolbar in all_toolbars:
-            toolbar_name = toolbar.objectName()
-            toolbar_title = toolbar.windowTitle()
-
-            # Look for workbench selector toolbar
-            if "workbench" in toolbar_name.lower() or "Workbenches" in toolbar_title:
-                FreeCAD.Console.PrintMessage(f"✓ Found workbench toolbar: {toolbar_name} ({toolbar_title})\n")
-
-                # Ensure toolbar is visible and using icon+text style
+        for toolbar in mw.findChildren(QtGui.QToolBar):
+            if "workbench" in toolbar.objectName().lower() or "Workbenches" in toolbar.windowTitle():
                 toolbar.setVisible(True)
                 toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-
-                FreeCAD.Console.PrintMessage("✓ Workbench selector toolbar refreshed\n")
                 break
-
-        FreeCAD.Console.PrintMessage("✓ Workbench selector GUI refresh complete\n")
-
     except Exception as e:
-        FreeCAD.Console.PrintError(f"Error refreshing workbench selector: {str(e)}\n")
-        import traceback
-        FreeCAD.Console.PrintError(traceback.format_exc())
+        FreeCAD.Console.PrintError("Error refreshing workbench selector: " + str(e) + "\n")
 
 
-def add_bnc_model_toolbar():
-    """Create the BNC Model toolbar with Save and Model Parameters buttons."""
+_macro_path = os.path.join(FreeCAD.getHomePath(), "Macro", "Version_Save.FCMacro")
+_open_macro_path = os.path.join(FreeCAD.getHomePath(), "Macro", "OPEN_File.FCMacro")
+
+
+def _force_clear_modified():
+    # FreeCADGui.updateGui() calls qApp->processEvents(), which can fire pending
+    # Qt events that re-call setModified(true). So drain all events FIRST, then
+    # set Modified=False as the very last operation so nothing undoes it.
     try:
-        sys.path.insert(0, _BNC_GLOBAL_DIR)
-        import CommandStdVersionSave
-        import CommandStdModelParameters
-
-        mw = FreeCADGui.getMainWindow()
-
-        # Avoid duplicate toolbar
-        for tb in mw.findChildren(QtGui.QToolBar):
-            if tb.objectName() == "BNC_Model":
-                return
-
-        toolbar = mw.addToolBar("BNC Model")
-        toolbar.setObjectName("BNC_Model")
-        toolbar.addAction(FreeCADGui.Command.get("BNC_VersionSave").getAction()[0])
-        toolbar.addAction(FreeCADGui.Command.get("BNC_ModelParameters").getAction()[0])
-        toolbar.setVisible(True)
-        toolbar.show()
-
-        FreeCAD.Console.PrintMessage("✓ BNC Model toolbar created\n")
-
+        FreeCADGui.updateGui()  # drain all pending Qt events (may set Modified=True)
+        for name in list(FreeCAD.listDocuments().keys()):
+            try:
+                gui_doc = FreeCADGui.getDocument(name)
+                if gui_doc:
+                    gui_doc.Modified = False
+            except Exception:
+                pass
     except Exception as e:
-        FreeCAD.Console.PrintError(f"Error creating BNC Model toolbar: {str(e)}\n")
-        import traceback
-        FreeCAD.Console.PrintError(traceback.format_exc())
+        FreeCAD.Console.PrintError("BNC clear modified: " + str(e) + "\n")
 
 
-# Call the function when the GUI is ready (delayed to ensure UI is loaded)
-QtCore.QTimer.singleShot(2000, add_bnc_model_toolbar)
+def _run_version_save():
+    if os.path.exists(_macro_path):
+        try:
+            exec(open(_macro_path, encoding="utf-8").read(), {"__name__": "__main__"})
+        except Exception as e:
+            FreeCAD.Console.PrintError("BNC Version Save error: " + str(e) + "\n")
+        QtCore.QTimer.singleShot(500, _force_clear_modified)
+    else:
+        FreeCAD.Console.PrintError("BNC Version Save: macro not found at " + _macro_path + "\n")
+
+
+def _run_open_file():
+    if os.path.exists(_open_macro_path):
+        try:
+            exec(open(_open_macro_path, encoding="utf-8").read(), {"__name__": "__main__"})
+        except Exception as e:
+            FreeCAD.Console.PrintError("BNC Open File error: " + str(e) + "\n")
+    else:
+        FreeCAD.Console.PrintError("BNC Open File: macro not found at " + _open_macro_path + "\n")
+
+
+def _apply_std_open_override():
+    try:
+        mw = FreeCADGui.getMainWindow()
+        for old_action in mw.findChildren(QtGui.QAction):
+            if old_action.objectName() != "Std_Open":
+                continue
+            try:
+                containers = [w for w in old_action.associatedObjects()
+                              if isinstance(w, QtWidgets.QWidget)]
+            except AttributeError:
+                containers = old_action.associatedWidgets()
+            for widget in list(containers):
+                already = [a for a in widget.actions()
+                           if a.objectName() == "BNC_Std_Open_Override"]
+                if already:
+                    continue
+                new_action = QtGui.QAction(old_action.icon(), old_action.text(), widget)
+                new_action.setObjectName("BNC_Std_Open_Override")
+                new_action.setToolTip(old_action.toolTip())
+                new_action.setShortcut(old_action.shortcut())
+                new_action.setShortcutContext(QtCore.Qt.ApplicationShortcut)
+                new_action.triggered.connect(_run_open_file)
+                widget.insertAction(old_action, new_action)
+                widget.removeAction(old_action)
+            old_action.setEnabled(False)
+            old_action.setShortcut(QtGui.QKeySequence())
+    except Exception as e:
+        FreeCAD.Console.PrintError("BNC override_std_open error: " + str(e) + "\n")
+
+
+def _apply_std_save_override():
+    try:
+        mw = FreeCADGui.getMainWindow()
+        for old_action in mw.findChildren(QtGui.QAction):
+            if old_action.objectName() != "Std_Save":
+                continue
+            # Replace this action inside each widget that contains it
+            # PySide6 removed associatedWidgets() — use associatedObjects() instead
+            try:
+                containers = [w for w in old_action.associatedObjects()
+                              if isinstance(w, QtWidgets.QWidget)]
+            except AttributeError:
+                containers = old_action.associatedWidgets()
+            for widget in list(containers):
+                # Skip if we already replaced it in this widget
+                already = [a for a in widget.actions()
+                           if a.objectName() == "BNC_Std_Save_Override"]
+                if already:
+                    continue
+                new_action = QtGui.QAction(old_action.icon(), old_action.text(), widget)
+                new_action.setObjectName("BNC_Std_Save_Override")
+                new_action.setToolTip(old_action.toolTip())
+                new_action.setShortcut(old_action.shortcut())
+                new_action.setShortcutContext(QtCore.Qt.ApplicationShortcut)
+                new_action.triggered.connect(_run_version_save)
+                widget.insertAction(old_action, new_action)
+                widget.removeAction(old_action)
+            old_action.setEnabled(False)
+            old_action.setShortcut(QtGui.QKeySequence())
+    except Exception as e:
+        FreeCAD.Console.PrintError("BNC override_std_save error: " + str(e) + "\n")
+
+
+def override_std_actions():
+    _apply_std_save_override()
+    _apply_std_open_override()
+    # Re-apply after every workbench switch — FreeCAD rebuilds toolbars on each switch
+    try:
+        mw = FreeCADGui.getMainWindow()
+        def _on_wb_change(wb_name=None):
+            QtCore.QTimer.singleShot(400, _apply_std_save_override)
+            QtCore.QTimer.singleShot(400, _apply_std_open_override)
+        mw.workbenchActivated.connect(_on_wb_change)
+    except Exception as e:
+        FreeCAD.Console.PrintError("BNC wb-hook error: " + str(e) + "\n")
+
+
 QtCore.QTimer.singleShot(3000, remove_help_menu)
 QtCore.QTimer.singleShot(3500, set_workbench_selector_style)
+QtCore.QTimer.singleShot(4000, override_std_actions)

@@ -1,0 +1,421 @@
+# -*- coding: utf-8 -*-
+# BNC CAD View Manager
+# Creo-style named view management for Part Design and TechDraw
+
+import FreeCAD
+import FreeCADGui
+import math
+
+try:
+    from PySide2 import QtWidgets, QtCore, QtGui
+except ImportError:
+    from PySide import QtWidgets, QtCore, QtGui
+
+App = FreeCAD
+Gui = FreeCADGui
+
+# ---------------------------------------------------------------------------
+# Standard view directions — stored as getViewDirection() convention
+# (the direction the camera looks, viewer→part).
+#
+# Convention key:
+#   _apply_view      : uses direction directly as the camera look direction
+#   _insert_techdraw : negates direction → TechDraw Direction (part→viewer)
+#   XDirection       : cross(up, TechDraw_direction) = horizontal axis of drawing
+# ---------------------------------------------------------------------------
+STANDARD_VIEWS = [
+    ("Front",      ( 0,  1,  0), ( 0,  0,  1)),
+    ("Back",       ( 0, -1,  0), ( 0,  0,  1)),
+    ("Left",       ( 1,  0,  0), ( 0,  0,  1)),   # camera looks +X → at -X side → left face
+    ("Right",      (-1,  0,  0), ( 0,  0,  1)),   # camera looks -X → at +X side → right face
+    ("Top",        ( 0,  0, -1), ( 0,  1,  0)),   # camera looks -Z → at +Z side → top face
+    ("Bottom",     ( 0,  0,  1), ( 0, -1,  0)),
+    ("Isometric",  ( 1,  1, -1), ( 0,  0,  1)),
+    ("Iso-Back",   (-1, -1, -1), ( 0,  0,  1)),
+]
+
+PARAM_PATH = "User parameter:BaseApp/BNCViewManager/Views"
+
+
+def _normalize(v):
+    length = math.sqrt(v[0]**2 + v[1]**2 + v[2]**2)
+    if length == 0:
+        return v
+    return (v[0]/length, v[1]/length, v[2]/length)
+
+
+def _cross(a, b):
+    return (
+        a[1]*b[2] - a[2]*b[1],
+        a[2]*b[0] - a[0]*b[2],
+        a[0]*b[1] - a[1]*b[0],
+    )
+
+
+def _load_user_views():
+    views = []
+    try:
+        grp = App.ParamGet(PARAM_PATH)
+        names = grp.GetString("__names__", "")
+        if names:
+            for name in names.split("|"):
+                name = name.strip()
+                if not name:
+                    continue
+                d = grp.GetString(name + "_dir", "")
+                u = grp.GetString(name + "_up", "")
+                if d and u:
+                    dv = tuple(float(x) for x in d.split(","))
+                    uv = tuple(float(x) for x in u.split(","))
+                    views.append((name, dv, uv))
+    except Exception:
+        pass
+    return views
+
+
+def _save_user_view(name, direction, up):
+    grp = App.ParamGet(PARAM_PATH)
+    names_str = grp.GetString("__names__", "")
+    names = [n.strip() for n in names_str.split("|") if n.strip()]
+    if name not in names:
+        names.append(name)
+    grp.SetString("__names__", "|".join(names))
+    grp.SetString(name + "_dir", ",".join(str(x) for x in direction))
+    grp.SetString(name + "_up",  ",".join(str(x) for x in up))
+
+
+def _delete_user_view(name):
+    grp = App.ParamGet(PARAM_PATH)
+    names_str = grp.GetString("__names__", "")
+    names = [n.strip() for n in names_str.split("|") if n.strip() and n.strip() != name]
+    grp.SetString("__names__", "|".join(names))
+    grp.RemString(name + "_dir")
+    grp.RemString(name + "_up")
+
+
+def _apply_view(direction, up):
+    """Orient the 3D viewport.
+
+    direction: camera look direction in world space (viewer→part convention,
+               same as ActiveView.getViewDirection()).
+    up:        camera up vector in world space.
+
+    Builds a rotation matrix whose columns are (right, up_corrected, -look),
+    matching the OpenInventor camera convention (camera looks down local -Z).
+    """
+    try:
+        view = Gui.ActiveDocument.ActiveView
+
+        d = _normalize(direction)
+        u = _normalize(up)
+
+        # right = look × up
+        r = _normalize(_cross(d, u))
+        if r == d:  # degenerate
+            return
+
+        # recompute orthonormal up = right × look
+        u2 = _cross(r, d)
+
+        # Rotation matrix: columns = (right, up2, -look)
+        # In FreeCAD row-major: A[row][col]
+        m = App.Matrix()
+        m.A11, m.A21, m.A31 = r[0],    r[1],    r[2]
+        m.A12, m.A22, m.A32 = u2[0],   u2[1],   u2[2]
+        m.A13, m.A23, m.A33 = -d[0],  -d[1],   -d[2]
+
+        view.setCameraOrientation(App.Rotation(m).Q)
+        view.fitAll()
+
+    except Exception as e:
+        App.Console.PrintError("ViewManager: could not apply view: " + str(e) + "\n")
+
+
+def _insert_techdraw_view(direction, up):
+    """Insert a TechDraw projection view.
+
+    direction: getViewDirection convention (viewer→part).
+    up:        camera up vector in world space.
+
+    TechDraw's Direction property is part→viewer (opposite sign).
+    XDirection = cross(up, td_direction) gives the correct drawing horizontal axis.
+    """
+    doc = App.ActiveDocument
+    if doc is None:
+        QtWidgets.QMessageBox.warning(None, "View Manager", "No active document.")
+        return
+
+    pages = [o for o in doc.Objects if o.TypeId == "TechDraw::DrawPage"]
+    if not pages:
+        QtWidgets.QMessageBox.warning(None, "View Manager",
+                                      "No TechDraw page found in document.\n"
+                                      "Create a page first (TechDraw → New Default Page).")
+        return
+
+    page = pages[0] if len(pages) == 1 else None
+    if page is None:
+        names = [p.Label for p in pages]
+        chosen, ok = QtWidgets.QInputDialog.getItem(
+            None, "Select Page", "Insert on which page?", names, 0, False)
+        if not ok:
+            return
+        page = next(p for p in pages if p.Label == chosen)
+
+    skip_types = {"TechDraw::DrawPage", "TechDraw::DrawViewPart",
+                  "TechDraw::DrawViewSection", "TechDraw::DrawProjGroup",
+                  "TechDraw::DrawViewAnnotation"}
+    objects = [o for o in doc.Objects if o.TypeId not in skip_types
+               and hasattr(o, "Shape")]
+    if not objects:
+        QtWidgets.QMessageBox.warning(None, "View Manager", "No 3D objects found in document.")
+        return
+
+    d = _normalize(direction)
+    u = _normalize(up)
+
+    # TechDraw Direction = part→viewer = opposite of getViewDirection
+    td = (-d[0], -d[1], -d[2])
+
+    # XDirection = cross(up, TechDraw_direction) → drawing horizontal axis
+    xd = _normalize(_cross(u, td))
+    # fallback if up is parallel to td
+    if math.sqrt(xd[0]**2 + xd[1]**2 + xd[2]**2) < 1e-10:
+        xd = (1.0, 0.0, 0.0)
+
+    view = doc.addObject("TechDraw::DrawViewPart", "View")
+    page.addView(view)
+    view.Source = objects
+    view.Direction = App.Vector(td[0], td[1], td[2])
+    view.XDirection = App.Vector(xd[0], xd[1], xd[2])
+    view.Scale = 1.0
+    doc.recompute()
+
+
+# ---------------------------------------------------------------------------
+# Dialog
+# ---------------------------------------------------------------------------
+
+class ViewManagerDialog(QtWidgets.QDialog):
+
+    def __init__(self, parent=None):
+        mw = Gui.getMainWindow()
+        super(ViewManagerDialog, self).__init__(mw)
+        self.setWindowTitle("View Manager")
+        self.setFixedWidth(280)
+        self.setWindowFlags(QtCore.Qt.Tool | QtCore.Qt.WindowStaysOnTopHint)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setSpacing(6)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        tab_label = QtWidgets.QLabel("Orient")
+        tab_label.setStyleSheet(
+            "font-weight: bold; font-size: 13px; "
+            "border-bottom: 2px solid #0078d7; padding-bottom: 3px;")
+        layout.addWidget(tab_label)
+
+        list_label = QtWidgets.QLabel("Names")
+        list_label.setStyleSheet("font-size: 11px; color: #555;")
+        layout.addWidget(list_label)
+
+        self.list_widget = QtWidgets.QListWidget()
+        self.list_widget.setAlternatingRowColors(True)
+        self.list_widget.setStyleSheet("font-size: 12px;")
+        self.list_widget.itemDoubleClicked.connect(self._on_double_click)
+        layout.addWidget(self.list_widget)
+
+        self._populate_list()
+
+        btn_row = QtWidgets.QHBoxLayout()
+
+        self.new_btn = QtWidgets.QPushButton("New")
+        self.new_btn.setToolTip("Save current 3D orientation as a named view")
+        self.new_btn.clicked.connect(self._on_new)
+
+        self.edit_btn = QtWidgets.QPushButton("Edit")
+        self.edit_btn.setToolTip("Rename selected user view")
+        self.edit_btn.clicked.connect(self._on_edit)
+
+        self.del_btn = QtWidgets.QPushButton("Delete")
+        self.del_btn.setToolTip("Delete selected user view")
+        self.del_btn.clicked.connect(self._on_delete)
+
+        btn_row.addWidget(self.new_btn)
+        btn_row.addWidget(self.edit_btn)
+        btn_row.addWidget(self.del_btn)
+        layout.addLayout(btn_row)
+
+        # Apply/Insert button — always reflects current workbench
+        self.apply_btn = QtWidgets.QPushButton()
+        self.apply_btn.setStyleSheet(
+            "background: #0078d7; color: white; font-weight: bold; padding: 6px;")
+        layout.addWidget(self.apply_btn)
+
+        close_btn = QtWidgets.QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
+
+        # Update button whenever the workbench changes
+        try:
+            mw.workbenchActivated.connect(self._on_wb_change)
+        except Exception:
+            pass
+        self._update_apply_btn()
+
+    # ------------------------------------------------------------------
+
+    def _is_techdraw_active(self):
+        try:
+            return Gui.activeWorkbench().__class__.__name__ == "TechDrawWorkbench"
+        except Exception:
+            return False
+
+    def _update_apply_btn(self):
+        try:
+            self.apply_btn.clicked.disconnect()
+        except Exception:
+            pass
+        if self._is_techdraw_active():
+            self.apply_btn.setText("Insert TechDraw View")
+            self.apply_btn.clicked.connect(self._on_insert_td)
+        else:
+            self.apply_btn.setText("Apply View")
+            self.apply_btn.clicked.connect(self._on_apply)
+
+    def _on_wb_change(self, wb_name=None):
+        self._update_apply_btn()
+
+    def closeEvent(self, event):
+        try:
+            Gui.getMainWindow().workbenchActivated.disconnect(self._on_wb_change)
+        except Exception:
+            pass
+        super(ViewManagerDialog, self).closeEvent(event)
+
+    # ------------------------------------------------------------------
+
+    def _populate_list(self):
+        self.list_widget.clear()
+        self._view_data = {}
+
+        for name, direction, up in STANDARD_VIEWS:
+            item = QtWidgets.QListWidgetItem(name)
+            item.setForeground(QtGui.QColor("#003080"))
+            self.list_widget.addItem(item)
+            self._view_data[name] = (direction, up)
+
+        for name, direction, up in _load_user_views():
+            item = QtWidgets.QListWidgetItem(name)
+            item.setForeground(QtGui.QColor("#006030"))
+            self.list_widget.addItem(item)
+            self._view_data[name] = (direction, up)
+
+        if self.list_widget.count() > 0:
+            self.list_widget.setCurrentRow(0)
+
+    def _selected_view(self):
+        item = self.list_widget.currentItem()
+        if item is None:
+            return None, None
+        name = item.text()
+        return name, self._view_data.get(name)
+
+    def _on_double_click(self, item):
+        if self._is_techdraw_active():
+            self._on_insert_td()
+        else:
+            self._on_apply()
+
+    def _on_apply(self):
+        name, data = self._selected_view()
+        if data is None:
+            return
+        direction, up = data
+        _apply_view(direction, up)
+
+    def _on_insert_td(self):
+        name, data = self._selected_view()
+        if data is None:
+            QtWidgets.QMessageBox.information(self, "View Manager", "Select a view first.")
+            return
+        direction, up = data
+        _insert_techdraw_view(direction, up)
+
+    def _on_new(self):
+        # Capture current viewport orientation.
+        # getViewDirection() returns viewer→part (camera look direction).
+        # Store directly — same convention as STANDARD_VIEWS.
+        try:
+            view = Gui.ActiveDocument.ActiveView
+            d = view.getViewDirection()
+            direction = (d.x, d.y, d.z)
+            up_vec = view.getUpDirection()
+            up = (up_vec.x, up_vec.y, up_vec.z)
+        except Exception:
+            direction = (0, 1, 0)
+            up = (0, 0, 1)
+
+        name, ok = QtWidgets.QInputDialog.getText(
+            self, "Save View", "Enter a name for the current orientation:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        _save_user_view(name, direction, up)
+        self._populate_list()
+        for i in range(self.list_widget.count()):
+            if self.list_widget.item(i).text() == name:
+                self.list_widget.setCurrentRow(i)
+                break
+
+    def _on_edit(self):
+        name, data = self._selected_view()
+        if data is None:
+            return
+        if any(name == s[0] for s in STANDARD_VIEWS):
+            QtWidgets.QMessageBox.information(
+                self, "View Manager", "Standard views cannot be renamed.")
+            return
+        new_name, ok = QtWidgets.QInputDialog.getText(
+            self, "Rename View", "New name:", text=name)
+        if not ok or not new_name.strip() or new_name.strip() == name:
+            return
+        direction, up = data
+        _delete_user_view(name)
+        _save_user_view(new_name.strip(), direction, up)
+        self._populate_list()
+
+    def _on_delete(self):
+        name, data = self._selected_view()
+        if data is None:
+            return
+        if any(name == s[0] for s in STANDARD_VIEWS):
+            QtWidgets.QMessageBox.information(
+                self, "View Manager", "Standard views cannot be deleted.")
+            return
+        reply = QtWidgets.QMessageBox.question(
+            self, "Delete View",
+            "Delete view '" + name + "'?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+        if reply == QtWidgets.QMessageBox.Yes:
+            _delete_user_view(name)
+            self._populate_list()
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def show_view_manager():
+    mw = Gui.getMainWindow()
+    existing = getattr(mw, '_bnc_view_manager_dlg', None)
+    if existing is not None and existing.isVisible():
+        existing.raise_()
+        existing.activateWindow()
+        return
+    dlg = ViewManagerDialog(mw)
+    dlg.setObjectName("BNCViewManager")
+    mw._bnc_view_manager_dlg = dlg
+    dlg.show()
+
+
+show_view_manager()

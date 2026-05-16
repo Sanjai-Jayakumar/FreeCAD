@@ -341,7 +341,7 @@ PyMOD_INIT_FUNC(FreeCADGui)
     try {
         // clang-format off
         Base::Interpreter().loadModule("FreeCAD");
-        App::Application::Config()["AppIcon"] = "freecad-icon";
+        App::Application::Config()["AppIcon"] = "freecad-icon-32";
         App::Application::Config()["SplashScreen"] = "freecadsplash";
         App::Application::Config()["CopyrightInfo"] = fmt::format("\xc2\xa9 Juergen Riegel, Werner Mayer, Yorik van Havre and others 2001-{}\n", FCCopyrightYear);
         App::Application::Config()["LicenseInfo"] = "FreeCAD is free and open-source software licensed under the terms of LGPL2+ license.\n";

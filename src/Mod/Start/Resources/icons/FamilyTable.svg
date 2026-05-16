@@ -1,20 +1,126 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-  <!-- Table header -->
-  <rect x="4" y="6" width="56" height="10" fill="#1263a8" rx="2"/>
-  
-  <!-- First row -->
-  <rect x="4" y="20" width="26" height="8" fill="#34495e" rx="1"/>
-  <rect x="34" y="20" width="26" height="8" fill="#34495e" rx="1"/>
-  
-  <!-- Second row -->
-  <rect x="4" y="32" width="26" height="8" fill="#546e7a" rx="1"/>
-  <rect x="34" y="32" width="26" height="8" fill="#546e7a" rx="1"/>
-  
-  <!-- Third row -->
-  <rect x="4" y="44" width="26" height="8" fill="#546e7a" rx="1"/>
-  <rect x="34" y="44" width="26" height="8" fill="#546e7a" rx="1"/>
-  
-  <!-- Fourth row -->
-  <rect x="4" y="56" width="26" height="4" fill="#78909c" rx="1"/>
-  <rect x="34" y="56" width="26" height="4" fill="#78909c" rx="1"/>
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  family_table.svg
+  FreeCAD Family Table macro - toolbar icon
+  Size   : 24 x 24 px
+  Concept: family TREE - large yellow parent at top with 3 blue children
+           connected by branches. Fills the canvas edge-to-edge.
+  Palette: Yellow + blue FreeCAD Assembly theme.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="24" height="24"
+     viewBox="0 0 24 24">
+
+  <defs>
+    <linearGradient id="yTop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#FFEE99"/>
+      <stop offset="100%" stop-color="#FFCC00"/>
+    </linearGradient>
+    <linearGradient id="yLeft" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#E5B800"/>
+      <stop offset="100%" stop-color="#8A6800"/>
+    </linearGradient>
+    <linearGradient id="yRight" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#C8A000"/>
+      <stop offset="100%" stop-color="#6A4A00"/>
+    </linearGradient>
+    <linearGradient id="bTop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#7AB0EE"/>
+      <stop offset="100%" stop-color="#4A8FE5"/>
+    </linearGradient>
+    <linearGradient id="bLeft" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#4A8FE5"/>
+      <stop offset="100%" stop-color="#0F3F8F"/>
+    </linearGradient>
+    <linearGradient id="bRight" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#1F66CC"/>
+      <stop offset="100%" stop-color="#0A2E60"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ════════ BRANCH LINES ════════ -->
+  <line x1="12" y1="11" x2="12" y2="13"
+        stroke="#222222" stroke-width="1.6"
+        stroke-linecap="round"/>
+  <line x1="4" y1="13" x2="20" y2="13"
+        stroke="#222222" stroke-width="1.6"
+        stroke-linecap="round"/>
+  <line x1="4" y1="13" x2="4" y2="15"
+        stroke="#222222" stroke-width="1.6"
+        stroke-linecap="round"/>
+  <line x1="12" y1="13" x2="12" y2="15"
+        stroke="#222222" stroke-width="1.6"
+        stroke-linecap="round"/>
+  <line x1="20" y1="13" x2="20" y2="15"
+        stroke="#222222" stroke-width="1.6"
+        stroke-linecap="round"/>
+
+  <!-- ════════ PARENT CUBE (yellow, large) ════════ -->
+  <g>
+    <polygon points="5.5,4  12,7.5  12,11  5.5,7.5"
+             fill="url(#yLeft)"
+             stroke="#222222" stroke-width="1.0"
+             stroke-linejoin="round"/>
+    <polygon points="18.5,4  12,7.5  12,11  18.5,7.5"
+             fill="url(#yRight)"
+             stroke="#222222" stroke-width="1.0"
+             stroke-linejoin="round"/>
+    <polygon points="12,0.5  18.5,4  12,7.5  5.5,4"
+             fill="url(#yTop)"
+             stroke="#222222" stroke-width="1.0"
+             stroke-linejoin="round"/>
+    <polyline points="6,4  12,0.8  18,4"
+              fill="none" stroke="#FFF7CC"
+              stroke-width="0.65" stroke-linecap="round"
+              opacity="0.95"/>
+  </g>
+
+  <!-- ════════ CHILD 1 (lower-left, blue) ════════ -->
+  <g>
+    <polygon points="0.5,17  4,18.75  4,22  0.5,20.25"
+             fill="url(#bLeft)"
+             stroke="#222222" stroke-width="0.7"
+             stroke-linejoin="round"/>
+    <polygon points="7.5,17  4,18.75  4,22  7.5,20.25"
+             fill="url(#bRight)"
+             stroke="#222222" stroke-width="0.7"
+             stroke-linejoin="round"/>
+    <polygon points="4,15.25  7.5,17  4,18.75  0.5,17"
+             fill="url(#bTop)"
+             stroke="#222222" stroke-width="0.7"
+             stroke-linejoin="round"/>
+  </g>
+
+  <!-- ════════ CHILD 2 (center, blue) ════════ -->
+  <g>
+    <polygon points="8.5,17  12,18.75  12,22  8.5,20.25"
+             fill="url(#bLeft)"
+             stroke="#222222" stroke-width="0.7"
+             stroke-linejoin="round"/>
+    <polygon points="15.5,17  12,18.75  12,22  15.5,20.25"
+             fill="url(#bRight)"
+             stroke="#222222" stroke-width="0.7"
+             stroke-linejoin="round"/>
+    <polygon points="12,15.25  15.5,17  12,18.75  8.5,17"
+             fill="url(#bTop)"
+             stroke="#222222" stroke-width="0.7"
+             stroke-linejoin="round"/>
+  </g>
+
+  <!-- ════════ CHILD 3 (lower-right, blue) ════════ -->
+  <g>
+    <polygon points="16.5,17  20,18.75  20,22  16.5,20.25"
+             fill="url(#bLeft)"
+             stroke="#222222" stroke-width="0.7"
+             stroke-linejoin="round"/>
+    <polygon points="23.5,17  20,18.75  20,22  23.5,20.25"
+             fill="url(#bRight)"
+             stroke="#222222" stroke-width="0.7"
+             stroke-linejoin="round"/>
+    <polygon points="20,15.25  23.5,17  20,18.75  16.5,17"
+             fill="url(#bTop)"
+             stroke="#222222" stroke-width="0.7"
+             stroke-linejoin="round"/>
+  </g>
+
 </svg>
