@@ -83,7 +83,7 @@ function Invoke-Sync {
     }
 
     # New BNC modules (full directories)
-    foreach ($mod in @("BNC_Init", "BNCCustomTools", "BNCGlobal", "BNCMCP")) {
+    foreach ($mod in @("BNC_Init", "BNCCustomTools", "BNCGlobal", "BNCMCP", "BNCMoldTools")) {
         Sync-Dir (Join-Path $repoRoot "src\Mod\$mod") (Join-Path $Target "Mod\$mod")
     }
 
@@ -97,7 +97,14 @@ function Invoke-Sync {
     }
 
     # Modified FreeCAD module files
-    foreach ($rel in @("Mod\Assembly\InitGui.py", "Mod\TechDraw\InitGui.py", "Mod\Tux\InitGui.py")) {
+    foreach ($rel in @(
+        "Mod\Assembly\InitGui.py",
+        "Mod\Assembly\CommandInsertNewPart.py",
+        "Mod\Assembly\CommandCreateAssembly.py",
+        "Mod\Assembly\Assembly\__init__.py",
+        "Mod\TechDraw\InitGui.py",
+        "Mod\Tux\InitGui.py"
+    )) {
         Sync-File (Join-Path $repoRoot "src\$rel") (Join-Path $Target $rel)
     }
 
@@ -130,6 +137,63 @@ function Invoke-Sync {
     $sysCfg = Join-Path $repoRoot "branding\system.cfg"
     if (Test-Path $sysCfg) {
         Sync-File $sysCfg (Join-Path $Target "system.cfg")
+    }
+
+    # BNC theme stylesheets (YAML params + QSS aliases)
+    $styleDir    = Join-Path $Target "data\Gui\Stylesheets"
+    $paramSrcDir = Join-Path $repoRoot "branding\Stylesheets\parameters"
+    $paramDstDir = Join-Path $styleDir "parameters"
+    $fcQss       = Join-Path $styleDir "FreeCAD.qss"
+    $fcOverlay   = Join-Path $styleDir "overlay\Freecad Overlay.qss"
+    if ((Test-Path $styleDir) -and (Test-Path $paramSrcDir)) {
+        New-Item -ItemType Directory -Path $paramDstDir -Force | Out-Null
+        Copy-Item "$paramSrcDir\BNC Theme Light.yaml" $paramDstDir -Force
+        Copy-Item "$paramSrcDir\BNC Theme Dark.yaml"  $paramDstDir -Force
+        foreach ($theme in @("BNC Theme Light", "BNC Theme Dark")) {
+            if (Test-Path $fcQss)    { Copy-Item $fcQss    (Join-Path $styleDir "$theme.qss")         -Force }
+            if (Test-Path $fcOverlay){ Copy-Item $fcOverlay (Join-Path $styleDir "$theme Overlay.qss") -Force }
+        }
+        Write-Ok "BNC theme stylesheets"
+    }
+
+    # BNC PreferencePacks (theme picker entries)
+    $packsDir    = Join-Path $Target "data\Gui\PreferencePacks"
+    $packsSrcDir = Join-Path $repoRoot "branding\PreferencePacks"
+    if ((Test-Path $packsDir) -and (Test-Path $packsSrcDir)) {
+        foreach ($theme in @("BNC Theme Light", "BNC Theme Dark")) {
+            $dst = Join-Path $packsDir $theme
+            $src = Join-Path $packsSrcDir $theme
+            if (Test-Path $src) {
+                New-Item -ItemType Directory -Path $dst -Force | Out-Null
+                Copy-Item "$src\*" $dst -Force
+            }
+        }
+        $pkgSrc = Join-Path $packsSrcDir "package.xml"
+        if (Test-Path $pkgSrc) { Copy-Item $pkgSrc $packsDir -Force }
+        Write-Ok "BNC PreferencePacks"
+    }
+
+    # Community workbench shims (clone once if missing, then sync shim file)
+    $communityMods = @(
+        [pscustomobject]@{ Name="Fasteners";    Url="https://github.com/shaise/FreeCAD_FastenersWB.git" },
+        [pscustomobject]@{ Name="SheetMetal";   Url="https://github.com/shaise/FreeCAD_SheetMetal.git" },
+        [pscustomobject]@{ Name="CurvedShapes"; Url="https://github.com/chbergmann/CurvedShapesWorkbench.git" },
+        [pscustomobject]@{ Name="Curves";       Url="https://github.com/tomate44/CurvesWB.git" }
+    )
+    foreach ($wb in $communityMods) {
+        $dstMod = Join-Path $Target "Mod\$($wb.Name)"
+        if (-not (Test-Path $dstMod)) {
+            Write-Step "Cloning $($wb.Name) community workbench..."
+            git clone --depth=1 $wb.Url $dstMod 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { Write-Ok "$($wb.Name) cloned" }
+            else { Write-Warn "Failed to clone $($wb.Name)" }
+        }
+    }
+    # Curves namespace-package shim
+    $curvesShim = Join-Path $repoRoot "Mod\Curves\InitGui.py"
+    $curvesDir  = Join-Path $Target "Mod\Curves"
+    if ((Test-Path $curvesDir) -and (Test-Path $curvesShim)) {
+        Sync-File $curvesShim (Join-Path $curvesDir "InitGui.py")
     }
 
     Write-Host "--------------------------------------------" -ForegroundColor DarkGray

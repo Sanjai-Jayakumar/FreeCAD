@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Main shape with undercut pocket -->
+  <!-- Top face - clear (green) -->
+  <rect x="8" y="6"  width="48" height="16" rx="2" fill="#00aa44" stroke="#007730" stroke-width="1.5"/>
+  <!-- Side faces - clear (green) -->
+  <rect x="8" y="22" width="10" height="22" fill="#00aa44" stroke="#007730" stroke-width="1"/>
+  <rect x="46" y="22" width="10" height="22" fill="#00aa44" stroke="#007730" stroke-width="1"/>
+  <!-- Undercut pocket (red - trapped) -->
+  <rect x="18" y="22" width="28" height="16" rx="1" fill="#cc2200" stroke="#880000" stroke-width="1.5"/>
+  <!-- Bottom face - clear (green) -->
+  <rect x="8" y="44" width="48" height="12" rx="2" fill="#00aa44" stroke="#007730" stroke-width="1.5"/>
+  <!-- Pull direction arrow -->
+  <line x1="56" y1="52" x2="56" y2="14" stroke="#1f4e79" stroke-width="2"/>
+  <polygon points="56,6 51,16 61,16" fill="#1f4e79"/>
+  <!-- Undercut warning X -->
+  <line x1="24" y1="26" x2="38" y2="36" stroke="white" stroke-width="2"/>
+  <line x1="38" y1="26" x2="24" y2="36" stroke="white" stroke-width="2"/>
+</svg>

@@ -90,16 +90,25 @@ HRMS_ref.drawio
 
 # BNC installer artifacts
 installer/*.7z
+installer/*.7z.tmp*
 installer/7z.dll
 installer/7z_rebuild_log.txt
+installer/7z_rebuild*.log
+installer/7z_log*.txt
+installer/7z_new_build.log
 installer/test_extract/
 installer/*.exe
 installer/*.exe.old
 installer/7zr.exe
-installer/7z_log.txt
 installer/nsis_*.txt
 installer/nsis_*.log
 installer/BNC_CAD.ico
+installer/b64_chunks.txt
+installer/icon_b64.txt
+installer/new_icon_b64.txt
+
+# Python cache
+__pycache__/
 
 # BNC test scripts (not part of source)
 test_*.py

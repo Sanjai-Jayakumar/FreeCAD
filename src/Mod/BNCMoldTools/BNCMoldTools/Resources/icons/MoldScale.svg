@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Central box -->
+  <rect x="18" y="18" width="28" height="28" rx="2" fill="#2e75b6" stroke="#1f4e79" stroke-width="2"/>
+  <!-- Corner arrows (scale outward) -->
+  <polygon points="8,8 8,16 16,8" fill="#ffc000"/>
+  <polygon points="56,8 48,8 56,16" fill="#ffc000"/>
+  <polygon points="8,56 16,56 8,48" fill="#ffc000"/>
+  <polygon points="56,56 56,48 48,56" fill="#ffc000"/>
+  <!-- Diagonal lines from box corners to arrows -->
+  <line x1="18" y1="18" x2="8" y2="8" stroke="#ffc000" stroke-width="2"/>
+  <line x1="46" y1="18" x2="56" y2="8" stroke="#ffc000" stroke-width="2"/>
+  <line x1="18" y1="46" x2="8" y2="56" stroke="#ffc000" stroke-width="2"/>
+  <line x1="46" y1="46" x2="56" y2="56" stroke="#ffc000" stroke-width="2"/>
+</svg>

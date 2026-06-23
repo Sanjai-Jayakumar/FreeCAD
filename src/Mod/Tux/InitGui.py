@@ -246,31 +246,63 @@ def _ensure_toggle_button():
 
 
 def _initialise_theme():
+    # All sibling-function calls are wrapped in try/except NameError because
+    # FreeCADGuiInit.RunInitGuiPy uses exec() without an explicit globals dict,
+    # so functions' __globals__ is FreeCADGuiInit's module dict — not the dict
+    # where sibling functions were defined.  The fallback paths keep the theme
+    # initialisation working even when name lookup fails.
     try:
         _rename_legacy_opentheme_files()
-    except NameError:
+    except Exception:
         FreeCAD.Console.PrintWarning(
             "Theme migration helper missing; proceeding without renaming legacy OpenTheme files.\n"
         )
+
     stylesheet = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/MainWindow").GetString(
         "StyleSheet", ""
     )
-    theme_settings = _theme_settings()
-    if stylesheet not in (
+
+    try:
+        theme_settings = _theme_settings()
+    except NameError:
+        theme_settings = {
+            "dark": {"stylesheet": "BNC Theme Dark.qss"},
+            "light": {"stylesheet": "BNC Theme Light.qss"},
+        }
+
+    bnc_stylesheets = (
         theme_settings["dark"]["stylesheet"],
         theme_settings["light"]["stylesheet"],
-    ):
+    )
+
+    if stylesheet not in bnc_stylesheets:
         # BNC CAD: Default to light theme instead of dark
-        _apply_theme_mode("light")
+        try:
+            _apply_theme_mode("light")
+        except NameError:
+            _mp = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/MainWindow")
+            _mp.SetString("StyleSheet", "BNC Theme Light.qss")
+            _mp.SetString("OverlayActiveStyleSheet", "BNC Theme Light Overlay.qss")
+            _mp.SetString("Theme", "BNC Theme Light")
     else:
-        _THEME_PREFS.SetString("Mode", _current_mode())
-        _apply_view_settings(_current_mode())
-    QtCore.QTimer.singleShot(0, _ensure_toggle_button)
+        try:
+            _THEME_PREFS.SetString("Mode", _current_mode())
+            _apply_view_settings(_current_mode())
+        except NameError:
+            pass
+
+    try:
+        QtCore.QTimer.singleShot(0, _ensure_toggle_button)
+    except NameError:
+        pass
 
 
 # Ensure BNC Theme is used by default and prepare toggle UI
 if FreeCAD.GuiUp:
-    _initialise_theme()
+    try:
+        _initialise_theme()
+    except Exception as _e:
+        FreeCAD.Console.PrintWarning(f"BNC: theme initialisation failed: {_e}\n")
 
 
 # Navigation indicator

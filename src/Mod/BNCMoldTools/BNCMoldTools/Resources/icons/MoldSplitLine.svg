@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Solid body -->
+  <rect x="8" y="12" width="48" height="40" rx="3" fill="#2e75b6" stroke="#1f4e79" stroke-width="2"/>
+  <!-- Split line projected across face -->
+  <line x1="8" y1="32" x2="56" y2="20" stroke="#ffc000" stroke-width="3"/>
+  <!-- Small circles at endpoints showing split points -->
+  <circle cx="8"  cy="32" r="3" fill="#ffc000"/>
+  <circle cx="56" cy="20" r="3" fill="#ffc000"/>
+  <!-- Sketch plane (above) -->
+  <rect x="14" y="4" width="36" height="8" rx="1" fill="none" stroke="#cc2200" stroke-width="1.5" stroke-dasharray="4,2"/>
+  <!-- Projection arrows -->
+  <line x1="20" y1="12" x2="18" y2="20" stroke="#cc2200" stroke-width="1.5"/>
+  <line x1="44" y1="12" x2="42" y2="18" stroke="#cc2200" stroke-width="1.5"/>
+</svg>

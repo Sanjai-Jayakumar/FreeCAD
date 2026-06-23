@@ -44,6 +44,20 @@ __author__ = "Ondsel"
 __url__ = "https://www.freecad.org"
 
 
+class _BNCPartViewProxy:
+    """ViewObject proxy that overrides the tree icon for BNC-created App::Part objects.
+    Attached after part creation so the App::Link in the assembly tree mirrors this icon."""
+    def getIcon(self):
+        import os as _os
+        return _os.path.normpath(_os.path.join(
+            _os.path.dirname(__file__), "..", "PartDesign", "Gui", "Resources", "icons", "PartDesignWorkbench.svg"
+        ))
+    def attach(self, vobj): pass
+    def onChanged(self, vobj, prop): pass
+    def __getstate__(self): return None
+    def __setstate__(self, state): pass
+
+
 def _save_asm_doc_to_work_dir(doc):
     """Save *doc* to the configured Working Directory without showing a file-path dialog.
 
@@ -483,6 +497,13 @@ class CommandInsertNewBody:
         part, body = UtilsAssembly.createPart(body_name, new_doc)
         part.Label = body_name
 
+        # Override the tree icon to show PartDesign workbench icon
+        if App.GuiUp:
+            try:
+                part.ViewObject.Proxy = _BNCPartViewProxy()
+            except Exception:
+                pass
+
         # --- Add model parameters to document and part ---
         for target in (new_doc, part):
             _ensure_mp_properties(target)
@@ -534,12 +555,12 @@ class CommandInsertNewAssembly:
         pass
 
     def GetResources(self):
-        _icon = os.path.join(
-            os.path.dirname(__file__),
-            "Gui", "Resources", "icons", "Subassembly.svg"
-        )
+        import os as _os
+        _icon = _os.path.normpath(_os.path.join(
+            _os.path.dirname(__file__), "Gui", "Resources", "icons", "Subassembly.svg"
+        ))
         return {
-            "Pixmap": os.path.normpath(_icon),
+            "Pixmap": _icon,
             "MenuText": QT_TRANSLATE_NOOP("Assembly_InsertNewAssembly", "Create Subassembly"),
             "Accel": "",
             "ToolTip": QT_TRANSLATE_NOOP(
@@ -777,12 +798,12 @@ class CommandInsertNewBodyInline:
         pass
 
     def GetResources(self):
-        _icon = os.path.join(
-            os.path.dirname(__file__),
-            "..", "PartDesign", "Gui", "Resources", "icons", "PartDesignWorkbench.svg"
-        )
+        import os as _os
+        _icon = _os.path.normpath(_os.path.join(
+            _os.path.dirname(__file__), "..", "PartDesign", "Gui", "Resources", "icons", "PartDesignWorkbench.svg"
+        ))
         return {
-            "Pixmap": os.path.normpath(_icon),
+            "Pixmap": _icon,
             "MenuText": QT_TRANSLATE_NOOP("Assembly_InsertNewBodyInline", "Create New Part"),
             "Accel": "",
             "ToolTip": QT_TRANSLATE_NOOP(

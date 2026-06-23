@@ -97,34 +97,38 @@ class CommandCreateAssembly:
                     return
 
         App.setActiveTransaction("New Assembly")
+        Gui.addModule("UtilsAssembly")
 
-        # Create assembly object directly via Python API (avoids Gui.doCommand exec-context
-        # issues where Assembly::AssemblyObject type is not visible)
-        try:
-            if activeAssembly:
-                assembly = activeAssembly.newObject("Assembly::AssemblyObject", "Assembly")
-            else:
-                assembly = App.ActiveDocument.addObject("Assembly::AssemblyObject", "Assembly")
+        if activeAssembly:
+            commands = (
+                "activeAssembly = UtilsAssembly.activeAssembly()\n"
+                'assembly = activeAssembly.newObject("Assembly::AssemblyObject", "Assembly")\n'
+                'assembly.Label = App.ActiveDocument.Label\n'
+            )
+        else:
+            commands = (
+                'assembly = App.ActiveDocument.addObject("Assembly::AssemblyObject", "Assembly")\n'
+                'assembly.Label = App.ActiveDocument.Label\n'
+            )
 
-            assembly.Label = App.ActiveDocument.Label
-            assembly.Type = "Assembly"
-            assembly.newObject("Assembly::JointGroup", "Joints")
-        except Exception as e:
-            App.closeActiveTransaction(True)
-            App.Console.PrintError(f"Assembly_CreateAssembly failed: {e}\n")
-            return
+        commands = commands + 'assembly.Type = "Assembly"\n'
+        commands = commands + 'assembly.newObject("Assembly::JointGroup", "Joints")'
 
+        Gui.doCommand(commands)
         if not activeAssembly:
-            Gui.doCommandGui(f"Gui.ActiveDocument.setEdit('{assembly.Name}')")
+            Gui.doCommandGui("Gui.ActiveDocument.setEdit(assembly)")
 
         App.closeActiveTransaction()
 
         # Apply description and save
         if not activeAssembly and description:
             doc = App.ActiveDocument
-            if not hasattr(assembly, "Description"):
-                assembly.addProperty("App::PropertyString", "Description", "Base", "")
-            assembly.Description = description
+            for obj in doc.Objects:
+                if obj.isDerivedFrom("Assembly::AssemblyObject"):
+                    if not hasattr(obj, "Description"):
+                        obj.addProperty("App::PropertyString", "Description", "Base", "")
+                    obj.Description = description
+                    break
             try:
                 doc.save()
             except Exception:
@@ -782,9 +786,54 @@ def _pick_sketch_plane(body):
     return options[idx][1]
 
 
+def _find_doc_with_direct_link_to(body_doc, asm_doc):
+    """Find any open document that has an App::Link/AssemblyLink directly
+    pointing to body_doc, preferring documents that are reachable from asm_doc
+    via the link chain. Returns the document, or None."""
+    candidates = []
+    for d in App.listDocuments().values():
+        if d is body_doc:
+            continue
+        for obj in d.Objects:
+            try:
+                if not (obj.isDerivedFrom("App::Link") or obj.isDerivedFrom("Assembly::AssemblyLink")):
+                    continue
+                linked = getattr(obj, "LinkedObject", None)
+                if linked is None:
+                    continue
+                if linked.Document is body_doc:
+                    candidates.append(d)
+                    break
+            except Exception:
+                pass
+    if not candidates:
+        return None
+    # Prefer a candidate that's NOT asm_doc (i.e., a subasm doc), since we
+    # want to use the deepest direct-link doc
+    for d in candidates:
+        if d is not asm_doc:
+            return d
+    return candidates[0]
+
+
 def _find_link_to_body_doc(asm_doc, body_doc):
-    """Walk asm_doc looking for an App::Link whose LinkedObject lives in
-    body_doc. Returns (link_obj, body_in_link_subname) or (None, None)."""
+    """Walk asm_doc looking for a link chain that reaches body_doc.
+    Returns (top_link_obj, sub_prefix) where sub_prefix is the dotted
+    subname path INSIDE the top link, NOT including the body name/sketch name
+    (callers append those).
+
+    FreeCAD subname convention for traversing links:
+        "LinkName.LinkedObjectName.{children…}"
+
+    So for a single-level link directly to body_doc:
+        sub_prefix = ""  (the body.Name is appended by the caller)
+
+    For a nested chain (asm → AssemblyLink → SubAsm → InnerLink → body):
+        sub_prefix = "<SubAsmName>.<InnerLinkName>."
+        Then caller appends "<BodyName>.<SketchName>." giving the full
+        path like "Link002.22.Link._5.Sketch."
+    """
+    # Level 1 — direct link to body_doc
     for obj in asm_doc.Objects:
         if not (obj.isDerivedFrom("App::Link") or obj.isDerivedFrom("Assembly::AssemblyLink")):
             continue
@@ -793,7 +842,9 @@ def _find_link_to_body_doc(asm_doc, body_doc):
             continue
         if linked.Document is body_doc:
             return obj, ""
-    # Recursive: walk through asm-level links
+    # Level 2 — through a subassembly link
+    # sub_prefix is just sub_obj.Name + "." because setEdit subnames are
+    # relative to the linked document's root, not to the linked object itself.
     for obj in asm_doc.Objects:
         if not (obj.isDerivedFrom("App::Link") or obj.isDerivedFrom("Assembly::AssemblyLink")):
             continue
@@ -803,13 +854,38 @@ def _find_link_to_body_doc(asm_doc, body_doc):
         sub_doc = linked.Document
         if sub_doc is asm_doc:
             continue
-        # Try to find body_doc inside sub_doc's links (one level deeper)
         for sub_obj in sub_doc.Objects:
             if not (sub_obj.isDerivedFrom("App::Link") or sub_obj.isDerivedFrom("Assembly::AssemblyLink")):
                 continue
             sl = getattr(sub_obj, "LinkedObject", None)
             if sl is not None and sl.Document is body_doc:
                 return obj, sub_obj.Name + "."
+    # Level 3 — through two nested subassembly links (deep nesting)
+    for obj in asm_doc.Objects:
+        if not (obj.isDerivedFrom("App::Link") or obj.isDerivedFrom("Assembly::AssemblyLink")):
+            continue
+        linked = getattr(obj, "LinkedObject", None)
+        if linked is None:
+            continue
+        sub_doc = linked.Document
+        if sub_doc is asm_doc:
+            continue
+        for sub_obj in sub_doc.Objects:
+            if not (sub_obj.isDerivedFrom("App::Link") or sub_obj.isDerivedFrom("Assembly::AssemblyLink")):
+                continue
+            sl = getattr(sub_obj, "LinkedObject", None)
+            if sl is None:
+                continue
+            sub_sub_doc = sl.Document
+            if sub_sub_doc is sub_doc or sub_sub_doc is asm_doc:
+                continue
+            for sss_obj in sub_sub_doc.Objects:
+                if not (sss_obj.isDerivedFrom("App::Link") or sss_obj.isDerivedFrom("Assembly::AssemblyLink")):
+                    continue
+                ssl = getattr(sss_obj, "LinkedObject", None)
+                if ssl is not None and ssl.Document is body_doc:
+                    return obj, (linked.Name + "." + sub_obj.Name + "." +
+                                 sl.Name + "." + sss_obj.Name + ".")
     return None, None
 
 
@@ -1025,22 +1101,46 @@ def _new_sketch_in_active_body_inplace():
             except Exception:
                 pass
 
-        # Strategy 1: edit the sketch through a link in the assembly doc.
-        # This is how FreeCAD edits objects in linked documents in-place.
-        if asm_doc is not body_doc:
-            link, sub_prefix = _find_link_to_body_doc(asm_doc, body_doc)
-            if link is not None:
-                subname = sub_prefix + body.Name + "." + sketch.Name + "."
-                App.Console.PrintMessage(
-                    "[Asm] inplace: attempting setEdit via link '{}' subname '{}'\n".format(
-                        link.Name, subname))
-                try:
-                    if gd_asm.setEdit(link, 0, subname):
-                        App.Console.PrintMessage("[Asm] inplace: setEdit via link OK\n")
-                        # Add reference-axes overlay since FreeCAD won't render
-                        # the native ones through link/subname editing
-                        _add_sketch_overlay(asm_view, sketch, link, body)
-                        # Install observer to clean up the overlay on close
+        # Strategy 0: when the body lives via a multi-level link chain
+        # (main asm → subasm → body), FreeCAD's setEdit-via-link cannot
+        # traverse the chain. Fall back to the LEVEL that has a direct link
+        # to the body — typically the subasm document. Switch active doc to
+        # the subasm doc and use the same in-place technique that works for
+        # the direct case. Auto-return to the original (main asm) tab when
+        # the sketch closes.
+        direct_link_doc = _find_doc_with_direct_link_to(body_doc, asm_doc)
+        if direct_link_doc is not None and direct_link_doc is not asm_doc:
+            App.Console.PrintMessage(
+                "[Asm] inplace: using subasm-level in-place edit (doc='{}')\n".format(
+                    direct_link_doc.Name))
+            try:
+                inner_link, _ = _find_link_to_body_doc(direct_link_doc, body_doc)
+                if inner_link is not None:
+                    asm_doc_name = asm_doc.Name
+                    # Switch to subasm tab
+                    App.setActiveDocument(direct_link_doc.Name)
+                    try:
+                        Gui.ActiveDocument = Gui.getDocument(direct_link_doc.Name)
+                    except Exception:
+                        pass
+                    sub_gd = Gui.getDocument(direct_link_doc.Name)
+                    # Do setEdit with the simple (direct-case) subname format
+                    subname = body.Name + "." + sketch.Name + "."
+                    App.Console.PrintMessage(
+                        "[Asm] inplace: subasm-level setEdit link='{}' subname='{}'\n".format(
+                            inner_link.Name, subname))
+                    if sub_gd and sub_gd.setEdit(inner_link, 0, subname):
+                        App.Console.PrintMessage("[Asm] inplace: subasm-level OK\n")
+                        # Add overlay (in subasm view this time)
+                        if sub_gd.ActiveView is not None:
+                            _add_sketch_overlay(sub_gd.ActiveView, sketch, inner_link, body)
+                        # Auto-return to main asm tab when sketch closes
+                        try:
+                            Gui.addDocumentObserver(_AutoReturnObserver(asm_doc_name))
+                            App.Console.PrintMessage(
+                                "[Asm] inplace: auto-return to '{}' installed\n".format(asm_doc_name))
+                        except Exception:
+                            pass
                         try:
                             Gui.addDocumentObserver(
                                 _InplaceCleanupObserver(body_doc.Name, sketch.Name))
@@ -1049,9 +1149,74 @@ def _new_sketch_in_active_body_inplace():
                         _fit_view_to_sketch()
                         return
                     else:
-                        App.Console.PrintMessage("[Asm] inplace: setEdit via link returned False\n")
-                except Exception as e:
-                    App.Console.PrintMessage("[Asm] inplace: setEdit via link raised: {}\n".format(e))
+                        App.Console.PrintMessage("[Asm] inplace: subasm-level returned False\n")
+            except Exception as e:
+                App.Console.PrintMessage("[Asm] inplace: subasm-level raised: {}\n".format(e))
+
+        # Strategy 1: edit the sketch through a link in the assembly doc.
+        # This is how FreeCAD edits objects in linked documents in-place.
+        if asm_doc is not body_doc:
+            link, sub_prefix = _find_link_to_body_doc(asm_doc, body_doc)
+            if link is not None:
+                # Try multiple subname variations — exact format depends on
+                # FreeCAD's internal naming for links and bodies
+                # sub_prefix for nested case is like "_123.Link."
+                # body.Name is like "_12", sketch.Name is like "Sketch"
+                bn = body.Name
+                sn = sketch.Name
+                # Also try with labels (without underscore prefixes)
+                lbl_body = (body.Label or bn).replace(" ", "_")
+                lbl_sketch = (sketch.Label or sn).replace(" ", "_")
+                candidates = [
+                    sub_prefix + bn + "." + sn + ".",                       # standard
+                    sub_prefix + sn + ".",                                   # skip body
+                    sub_prefix.replace("_", "") + bn + "." + sn + ".",      # no underscores
+                    sub_prefix + lbl_body + "." + lbl_sketch + ".",         # labels
+                    bn + "." + sn + ".",                                     # just body+sketch
+                    sn + ".",                                                 # just sketch
+                ]
+                # For 2-level chains: also try with the inner link name only (last segment of sub_prefix)
+                if sub_prefix and "." in sub_prefix.rstrip("."):
+                    parts = sub_prefix.rstrip(".").split(".")
+                    inner = parts[-1] + "."
+                    candidates.insert(1, inner + bn + "." + sn + ".")
+                    candidates.insert(2, inner + sn + ".")
+                # Also try fully qualified path through all prefix segments individually
+                if sub_prefix:
+                    pfx_no_trail = sub_prefix.rstrip(".")
+                    # Try with leading underscore stripped from each segment
+                    cleaned = ".".join(p.lstrip("_") for p in pfx_no_trail.split(".")) + "."
+                    if cleaned != sub_prefix:
+                        candidates.append(cleaned + bn + "." + sn + ".")
+                App.Console.PrintMessage(
+                    "[Asm] inplace: body.Name='{}' sketch.Name='{}' sub_prefix='{}'\n".format(
+                        body.Name, sketch.Name, sub_prefix))
+                edited = False
+                for candidate in candidates:
+                    App.Console.PrintMessage(
+                        "[Asm] inplace: trying setEdit via link '{}' subname '{}'\n".format(
+                            link.Name, candidate))
+                    try:
+                        if gd_asm.setEdit(link, 0, candidate):
+                            App.Console.PrintMessage("[Asm] inplace: setEdit via link OK\n")
+                            edited = True
+                            break
+                        else:
+                            App.Console.PrintMessage("[Asm] inplace: returned False\n")
+                    except Exception as e:
+                        App.Console.PrintMessage("[Asm] inplace: raised: {}\n".format(e))
+                if edited:
+                    # Add reference-axes overlay since FreeCAD won't render
+                    # the native ones through link/subname editing
+                    _add_sketch_overlay(asm_view, sketch, link, body)
+                    # Install observer to clean up the overlay on close
+                    try:
+                        Gui.addDocumentObserver(
+                            _InplaceCleanupObserver(body_doc.Name, sketch.Name))
+                    except Exception:
+                        pass
+                    _fit_view_to_sketch()
+                    return
 
         # Strategy 2: direct setEdit on the sketch (only works if asm_doc is body_doc)
         try:
@@ -1062,12 +1227,21 @@ def _new_sketch_in_active_body_inplace():
         except Exception as e:
             App.Console.PrintMessage("[Asm] inplace: direct setEdit raised: {}\n".format(e))
 
-        # Strategy 3 (fallback): switch to body's doc tab and open sketcher there
-        App.Console.PrintMessage("[Asm] inplace: falling back to tab switch\n")
+        # Strategy 3 (fallback): switch to body's doc tab and open sketcher there.
+        # Install auto-return observer so we come back to the assembly tab on close.
+        App.Console.PrintMessage("[Asm] inplace: falling back to tab switch (with auto-return)\n")
         try:
+            asm_doc_name = asm_doc.Name
             App.setActiveDocument(body_doc.Name)
             Gui.ActiveDocument = Gui.getDocument(body_doc.Name)
             Gui.getDocument(body_doc.Name).setEdit(sketch)
+            try:
+                Gui.addDocumentObserver(_AutoReturnObserver(asm_doc_name))
+                App.Console.PrintMessage(
+                    "[Asm] inplace: auto-return observer installed (returns to '{}')\n".format(
+                        asm_doc_name))
+            except Exception:
+                pass
             _fit_view_to_sketch()
         except Exception as e2:
             App.Console.PrintMessage("[Asm] inplace: fallback also failed: {}\n".format(e2))
@@ -1110,9 +1284,34 @@ def _feature_in_active_body_inplace(type_id, name_hint):
                 break
 
         if selected_sketch is None:
-            App.Console.PrintMessage("[Asm] feature: no sketch selected — falling back to native\n")
-            _run_pd_cmd_in_body_doc("PartDesign_" + name_hint)
+            # No explicit selection — auto-find the most recent SketchObject in
+            # the active body's tree. This handles the common case where the
+            # user just closed New Sketch and immediately clicks Pad/Pocket.
+            try:
+                # Prefer the body's Tip if it's a sketch
+                tip = getattr(body, "Tip", None)
+                if tip is not None and tip.isDerivedFrom("Sketcher::SketchObject"):
+                    selected_sketch = tip
+            except Exception:
+                pass
+            if selected_sketch is None:
+                # Walk the body's Group in reverse to find the newest sketch
+                try:
+                    for child in reversed(body.Group):
+                        if child.isDerivedFrom("Sketcher::SketchObject"):
+                            selected_sketch = child
+                            break
+                except Exception:
+                    pass
+        if selected_sketch is None:
+            App.Console.PrintMessage("[Asm] feature: no sketch found in body\n")
+            QtWidgets.QMessageBox.information(
+                Gui.getMainWindow(),
+                name_hint,
+                "Select a sketch first (or create one with New Sketch), then click " + name_hint + ".",
+            )
             return
+        App.Console.PrintMessage("[Asm] feature: using sketch '{}'\n".format(selected_sketch.Name))
 
         # Create the feature in the body's document
         App.setActiveTransaction("Create " + name_hint)
@@ -1138,7 +1337,41 @@ def _feature_in_active_body_inplace(type_id, name_hint):
         App.Console.PrintMessage("[Asm] feature: created '{}' in '{}'\n".format(
             feature.Name, body_doc.Name))
 
-        # Try in-place edit through link
+        # Strategy 0: subasm-level direct edit (same trick as new sketch)
+        direct_link_doc = _find_doc_with_direct_link_to(body_doc, asm_doc)
+        if direct_link_doc is not None and direct_link_doc is not asm_doc:
+            App.Console.PrintMessage(
+                "[Asm] feature: using subasm-level edit (doc='{}')\n".format(
+                    direct_link_doc.Name))
+            try:
+                inner_link, _ = _find_link_to_body_doc(direct_link_doc, body_doc)
+                if inner_link is not None:
+                    asm_doc_name = asm_doc.Name
+                    App.setActiveDocument(direct_link_doc.Name)
+                    try:
+                        Gui.ActiveDocument = Gui.getDocument(direct_link_doc.Name)
+                    except Exception:
+                        pass
+                    sub_gd = Gui.getDocument(direct_link_doc.Name)
+                    subname = body.Name + "." + feature.Name + "."
+                    App.Console.PrintMessage(
+                        "[Asm] feature: subasm-level setEdit link='{}' subname='{}'\n".format(
+                            inner_link.Name, subname))
+                    if sub_gd and sub_gd.setEdit(inner_link, 0, subname):
+                        App.Console.PrintMessage("[Asm] feature: subasm-level OK\n")
+                        try:
+                            Gui.addDocumentObserver(_AutoReturnObserver(asm_doc_name))
+                            App.Console.PrintMessage(
+                                "[Asm] feature: auto-return to '{}' installed\n".format(asm_doc_name))
+                        except Exception:
+                            pass
+                        return
+                    else:
+                        App.Console.PrintMessage("[Asm] feature: subasm-level returned False\n")
+            except Exception as e:
+                App.Console.PrintMessage("[Asm] feature: subasm-level raised: {}\n".format(e))
+
+        # Strategy 1: try in-place edit through link from main asm
         if asm_doc is not body_doc:
             link, sub_prefix = _find_link_to_body_doc(asm_doc, body_doc)
             if link is not None:
@@ -1155,15 +1388,15 @@ def _feature_in_active_body_inplace(type_id, name_hint):
                 except Exception as e:
                     App.Console.PrintMessage("[Asm] feature: setEdit via link raised: {}\n".format(e))
 
-        # Fallback: switch tabs and edit
+        # Fallback: switch tabs and edit (last resort) with auto-return
         App.Console.PrintMessage("[Asm] feature: falling back to tab switch\n")
         try:
+            asm_doc_name = asm_doc.Name
             App.setActiveDocument(body_doc.Name)
             Gui.ActiveDocument = Gui.getDocument(body_doc.Name)
             Gui.getDocument(body_doc.Name).setEdit(feature)
-            # Auto-return when feature panel closes
             try:
-                Gui.addDocumentObserver(_AutoReturnObserver(asm_doc.Name))
+                Gui.addDocumentObserver(_AutoReturnObserver(asm_doc_name))
             except Exception:
                 pass
         except Exception as e:

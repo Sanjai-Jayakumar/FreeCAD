@@ -3,11 +3,11 @@
 !include "MUI2.nsh"
 
 !define PRODUCT_NAME "BNC CAD"
-!define PRODUCT_VERSION "1.1.1"
+!define PRODUCT_VERSION "1.1.2"
 !define PRODUCT_PUBLISHER "BNC Corporation"
 !define INSTALL_ARCHIVE "BNC-CAD-Output.7z"
 !define PAYLOAD_EXTRACTOR "7zr.exe"
-!define OUTPUT_FILE "BNC CAD 1.1.1.exe"
+!define OUTPUT_FILE "BNC CAD 1.1.2.exe"
 !define PRODUCT_REGKEY "Software\\${PRODUCT_NAME}"
 !define PRODUCT_UNREG "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${PRODUCT_NAME}"
 !define MUI_ABORTWARNING
@@ -24,12 +24,12 @@ InstallDir "$LOCALAPPDATA\BNC_CAD"
 InstallDirRegKey HKCU "${PRODUCT_REGKEY}" "InstallLocation"
 RequestExecutionLevel user
 SetCompress off
-VIProductVersion "1.1.1.0"
+VIProductVersion "1.1.2.0"
 VIAddVersionKey "ProductName" "${PRODUCT_NAME}"
 VIAddVersionKey "ProductVersion" "${PRODUCT_VERSION}"
 VIAddVersionKey "CompanyName" "${PRODUCT_PUBLISHER}"
 VIAddVersionKey "FileDescription" "${PRODUCT_NAME} Installation Package"
-VIAddVersionKey "FileVersion" "1.1.1.0"
+VIAddVersionKey "FileVersion" "1.1.2.0"
 VIAddVersionKey "LegalCopyright" "(c) 2026 ${PRODUCT_PUBLISHER}"
 VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE}"
 

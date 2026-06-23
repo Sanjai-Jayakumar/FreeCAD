@@ -23,31 +23,7 @@
 
 import re
 import os
-
-# Add FreeCAD DLL directories so AssemblyApp/AssemblyGui .pyd dependencies load
-# correctly under Python 3.8+ DLL isolation rules. Cookies MUST stay alive at
-# module level — GC removes the dirs if the return values are discarded.
-_dll_cookies = []
-try:
-    import FreeCAD as _FC
-    _home = _FC.getHomePath()
-    for _subdir in ("bin", "lib"):
-        _d = os.path.join(_home, _subdir)
-        if os.path.isdir(_d):
-            _dll_cookies.append(os.add_dll_directory(_d))
-    del _FC, _home, _subdir, _d
-except Exception:
-    pass
-
-try:
-    import AssemblyApp  # noqa: F401 — registers C++ types before anything else
-except ImportError:
-    pass
-
-try:
-    import Assembly_rc  # noqa: F401
-except ImportError:
-    pass
+import Assembly_rc
 
 # Register recolored icons folder so it overrides the embedded Assembly_rc icons
 def _register_recolored_icons():
@@ -179,6 +155,8 @@ class AssemblyWorkbench(Workbench):
         self.__class__.ToolTip = "Assembly workbench"
 
     def Initialize(self):
+        global AssemblyCommandGroup
+
         translate = FreeCAD.Qt.translate
 
         # load the builtin modules
@@ -500,19 +478,33 @@ class AssemblyWorkbench(Workbench):
                 def workbenchDeactivated(self, wb_name):
                     pass
 
+            # In FreeCAD 1.1 there's no addWorkbenchListener — use a 200ms
+            # QTimer to snap back to Assembly when another workbench gets active.
+            from PySide.QtCore import QTimer
             self._wb_lock = _WBLock()
-            FreeCADGui.addWorkbenchListener(self._wb_lock)
+            self._wb_lock_timer = QTimer()
+            def _check():
+                try:
+                    name = FreeCADGui.activeWorkbench().__class__.__name__
+                    if name != "AssemblyWorkbench":
+                        self._wb_lock.workbenchActivated(name)
+                except Exception:
+                    pass
+            self._wb_lock_timer.timeout.connect(_check)
+            self._wb_lock_timer.start(200)
         except Exception as e:
             FreeCAD.Console.PrintMessage("[Asm] _install_wb_lock failed: {}\n".format(e))
 
     def _remove_wb_lock(self):
-        wbl = getattr(self, "_wb_lock", None)
-        if wbl is not None:
+        t = getattr(self, "_wb_lock_timer", None)
+        if t is not None:
             try:
-                FreeCADGui.removeWorkbenchListener(wbl)
+                t.stop()
+                t.deleteLater()
             except Exception:
                 pass
-            self._wb_lock = None
+            self._wb_lock_timer = None
+        self._wb_lock = None
 
     def ContextMenu(self, recipient):
         if recipient != "Tree":

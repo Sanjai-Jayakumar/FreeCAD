@@ -607,6 +607,7 @@ class TechDrawWorkbench(Gui.Workbench):
                 ("BNC_GenerateDrawing.svg",     "Generate Drawing",       "GenerateDrawing.FCMacro"),
                 ("BNC_InsertTitleBlock.svg",     "Fill Title Block",       "FillTitleBlock.FCMacro"),
                 ("BNC_InsertToleranceTable.svg", "Insert Tolerance Table", "InsertToleranceTable.FCMacro"),
+                ("BNC_ExportPDF.svg",            "Export PDF",             "ExportPDF.FCMacro"),
             ]:
                 icon_path = _o2.path.join(icon_dir, icon_file)
                 action = (QtWidgets.QAction(QtGui.QIcon(icon_path), tip, mw)

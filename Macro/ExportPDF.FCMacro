@@ -1,0 +1,348 @@
+# -*- coding: utf-8 -*-
+"""BNC CAD - Export TechDraw page as PDF without Acrobat errors.
+
+Strategy (tried in order):
+  1. Export page SVG via FreeCAD, convert with Microsoft Edge headless
+     (Edge produces standards-compliant PDF; SVG is perfect quality).
+  2. Export page SVG via FreeCAD, convert with Qt QPdfWriter + QSvgRenderer.
+  3. Native FreeCAD PDF export (fallback — known to produce Acrobat warnings).
+"""
+
+import FreeCAD
+import FreeCADGui as Gui
+from PySide import QtWidgets, QtCore, QtGui
+import os
+import tempfile
+import subprocess
+import time
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _recompute_all(doc):
+    doc.recompute()
+    Gui.updateGui()
+    for obj in doc.Objects:
+        try:
+            if obj.TypeId.startswith("TechDraw::DrawView") or \
+               obj.TypeId == "TechDraw::DrawProjGroup":
+                obj.touch()
+                obj.recompute(True)
+        except Exception:
+            pass
+    for obj in doc.Objects:
+        try:
+            if obj.TypeId == "TechDraw::DrawPage":
+                obj.touch()
+                obj.recompute(True)
+        except Exception:
+            pass
+    doc.recompute()
+    Gui.updateGui()
+    time.sleep(0.5)
+
+
+def _page_size_mm(page):
+    w, h = 420.0, 297.0
+    try:
+        tmpl = page.Template
+        for attr, default in [("Width", w), ("Height", h)]:
+            val = getattr(tmpl, attr, None)
+            if val is None:
+                continue
+            if hasattr(val, "Value"):
+                val = val.Value
+            try:
+                if attr == "Width":
+                    w = float(val)
+                else:
+                    h = float(val)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return w, h
+
+
+def _export_svg(page, svg_path):
+    """Try every known FreeCAD API to export SVG. Returns True on success."""
+
+    # Try each known ViewObject method name for SVG export
+    for name in ("saveSvg", "saveSVG", "SaveSvg", "SaveSVG",
+                 "exportSvg", "exportSVG", "dumpSvg", "dumpSVG"):
+        try:
+            method = getattr(page.ViewObject, name, None)
+            if method is not None:
+                method(svg_path)
+                if os.path.exists(svg_path) and os.path.getsize(svg_path) > 200:
+                    return True
+        except Exception:
+            pass
+
+    # TechDrawGui module-level export
+    try:
+        import TechDrawGui
+        for fn_name in ("exportPageAsSvg", "exportPageAsSVG"):
+            fn = getattr(TechDrawGui, fn_name, None)
+            if fn is not None:
+                fn(page, svg_path)
+                if os.path.exists(svg_path) and os.path.getsize(svg_path) > 200:
+                    return True
+    except Exception:
+        pass
+
+    # ImportGui with .svg extension
+    try:
+        import ImportGui
+        ImportGui.export([page], svg_path)
+        if os.path.exists(svg_path) and os.path.getsize(svg_path) > 200:
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def _find_edge():
+    paths = [
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            return p
+    try:
+        import winreg
+        key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as k:
+            return winreg.QueryValue(k, "")
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(["where", "msedge"], capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            return r.stdout.strip().splitlines()[0]
+    except Exception:
+        pass
+    return None
+
+
+def _svg_to_pdf_edge(svg_path, pdf_path, w_mm, h_mm):
+    """Convert SVG → PDF using Microsoft Edge headless."""
+    edge = _find_edge()
+    if not edge:
+        return False
+    try:
+        # Read SVG and embed directly in HTML for exact page-size control
+        with open(svg_path, "r", encoding="utf-8", errors="replace") as f:
+            svg_content = f.read()
+
+        html = (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'><style>"
+            f"*{{margin:0;padding:0;}}@page{{size:{w_mm:.1f}mm {h_mm:.1f}mm;margin:0;}}"
+            f"html,body{{width:{w_mm:.1f}mm;height:{h_mm:.1f}mm;overflow:hidden;background:white;}}"
+            "svg{display:block;width:100%;height:100%;}</style></head><body>"
+            + svg_content
+            + "</body></html>"
+        )
+
+        tmp_html = os.path.join(tempfile.gettempdir(), "bnc_td_edge_export.html")
+        with open(tmp_html, "w", encoding="utf-8") as f:
+            f.write(html)
+
+        html_url = "file:///" + tmp_html.replace("\\", "/")
+
+        result = subprocess.run(
+            [edge, "--headless", "--disable-gpu", "--no-sandbox",
+             "--disable-extensions",
+             f"--print-to-pdf={pdf_path}",
+             "--print-to-pdf-no-header",
+             html_url],
+            capture_output=True, timeout=40
+        )
+        try:
+            os.remove(tmp_html)
+        except Exception:
+            pass
+
+        return os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 1000
+    except Exception:
+        return False
+
+
+def _svg_to_pdf_qt(svg_path, pdf_path, w_mm, h_mm):
+    """Convert SVG → PDF using Qt QSvgRenderer + QPdfWriter."""
+    try:
+        from PySide import QtSvg
+        renderer = QtSvg.QSvgRenderer(svg_path)
+        if not renderer.isValid():
+            return False
+
+        writer = QtGui.QPdfWriter(pdf_path)
+
+        # Set page size — try modern API first, then enum fallback
+        page_set = False
+        for ns in ("PySide2.QtGui", "PySide.QtGui"):
+            try:
+                mod = __import__(ns, fromlist=["QPageSize", "QMarginsF"])
+                QPageSize  = getattr(mod, "QPageSize")
+                QMarginsF  = getattr(mod, "QMarginsF", None)
+                ps = QPageSize(QtCore.QSizeF(w_mm, h_mm),
+                               QPageSize.Millimeter, "",
+                               QPageSize.FuzzyOrientationMatch)
+                writer.setPageSize(ps)
+                if QMarginsF:
+                    writer.setPageMargins(QMarginsF(0, 0, 0, 0))
+                page_set = True
+                break
+            except Exception:
+                pass
+
+        if not page_set:
+            std = {(420, 297): "A3", (297, 210): "A4", (210, 297): "A4",
+                   (297, 420): "A3", (594, 420): "A2", (841, 594): "A1"}
+            name = std.get((round(w_mm / 10) * 10, round(h_mm / 10) * 10), "A3")
+            try:
+                writer.setPageSize(getattr(QtGui.QPagedPaintDevice, name,
+                                           QtGui.QPagedPaintDevice.A3))
+            except Exception:
+                pass
+
+        writer.setResolution(300)
+
+        painter = QtGui.QPainter()
+        if not painter.begin(writer):
+            return False
+
+        target = QtCore.QRectF(0, 0, writer.width(), writer.height())
+        renderer.render(painter, target)
+        painter.end()
+
+        return os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 500
+    except Exception:
+        return False
+
+
+def _native_export(page, pdf_path):
+    try:
+        import TechDrawGui
+        if hasattr(TechDrawGui, "exportPageAsPdf"):
+            TechDrawGui.exportPageAsPdf(page, pdf_path)
+            if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 500:
+                return True
+    except Exception:
+        pass
+    try:
+        import ImportGui
+        ImportGui.export([page], pdf_path)
+        if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 500:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+# ── main ──────────────────────────────────────────────────────────────────────
+
+def export_pdf():
+    doc = FreeCAD.ActiveDocument
+    if not doc:
+        QtWidgets.QMessageBox.warning(
+            Gui.getMainWindow(), "Export PDF", "No document is open.")
+        return
+
+    pages = [obj for obj in doc.Objects if obj.TypeId == "TechDraw::DrawPage"]
+    if not pages:
+        QtWidgets.QMessageBox.warning(
+            Gui.getMainWindow(), "Export PDF",
+            "No TechDraw drawing page found in the active document.")
+        return
+
+    page = pages[0]
+    _recompute_all(doc)
+
+    # Default save path
+    if doc.FileName:
+        default_dir  = os.path.dirname(doc.FileName)
+        default_name = os.path.splitext(os.path.basename(doc.FileName))[0] + ".pdf"
+    else:
+        default_dir  = os.path.expanduser("~/Desktop")
+        default_name = (doc.Label or "drawing") + ".pdf"
+
+    out_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+        Gui.getMainWindow(), "Export Drawing as PDF",
+        os.path.join(default_dir, default_name),
+        "PDF Files (*.pdf)")
+    if not out_path:
+        return
+    if not out_path.lower().endswith(".pdf"):
+        out_path += ".pdf"
+
+    w_mm, h_mm = _page_size_mm(page)
+    tmp_svg = os.path.join(tempfile.gettempdir(), "bnc_td_export_tmp.svg")
+    method  = "native"
+    ok      = False
+
+    # ── Try SVG-based export (clean) ──────────────────────────────────────
+    svg_ok = _export_svg(page, tmp_svg)
+
+    if svg_ok:
+        # Primary: Edge headless (best quality, no Acrobat errors)
+        if not ok:
+            ok = _svg_to_pdf_edge(tmp_svg, out_path, w_mm, h_mm)
+            if ok:
+                method = "svg→Edge PDF"
+
+        # Secondary: Qt SVG renderer
+        if not ok:
+            ok = _svg_to_pdf_qt(tmp_svg, out_path, w_mm, h_mm)
+            if ok:
+                method = "svg→Qt PDF"
+
+        try:
+            os.remove(tmp_svg)
+        except Exception:
+            pass
+    else:
+        # SVG export failed — ask the user to provide the SVG manually
+        # (They can export via TechDraw → Export Page as SVG)
+        reply = QtWidgets.QMessageBox.question(
+            Gui.getMainWindow(), "Export PDF — Locate SVG",
+            "Automatic SVG export could not run.\n\n"
+            "To get a clean PDF:\n"
+            "1. In TechDraw menu → Export Page as SVG  (save anywhere)\n"
+            "2. Click Yes below and select that SVG file\n\n"
+            "Click No to export with the standard method instead.",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.Yes)
+
+        if reply == QtWidgets.QMessageBox.Yes:
+            svg_file, _ = QtWidgets.QFileDialog.getOpenFileName(
+                Gui.getMainWindow(), "Select the exported SVG",
+                default_dir, "SVG Files (*.svg *.SVG *_svg *)")
+            if svg_file and os.path.exists(svg_file):
+                ok = _svg_to_pdf_edge(svg_file, out_path, w_mm, h_mm)
+                if ok:
+                    method = "svg→Edge PDF"
+                if not ok:
+                    ok = _svg_to_pdf_qt(svg_file, out_path, w_mm, h_mm)
+                    if ok:
+                        method = "svg→Qt PDF"
+
+    # ── Fallback: native FreeCAD PDF ──────────────────────────────────────
+    if not ok:
+        ok = _native_export(page, out_path)
+        if ok:
+            method = "native (Acrobat warning expected)"
+
+    if ok:
+        QtWidgets.QMessageBox.information(
+            Gui.getMainWindow(), "Export PDF",
+            f"PDF exported successfully ({method}):\n{out_path}")
+    else:
+        QtWidgets.QMessageBox.critical(
+            Gui.getMainWindow(), "Export PDF",
+            "Could not export PDF.\nUse File → Export → PDF as a last resort.")
+
+
+export_pdf()

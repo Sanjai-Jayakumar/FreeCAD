@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 import json
+import platform
 import threading
 import urllib.request
 import urllib.error
 import ssl
 import FreeCAD
 
-CURRENT_VERSION = "1.1.1"   # <-- update this for each release
+CURRENT_VERSION = "1.1.2"   # <-- update this for each release
 _API_URL = "https://bnc-ai.com/api/software/latest"
 _API_KEY  = "dt_159391eaf5d473b843d92dc765b2668a386d756d54302c4a5951b7d38f6a558a"
 
@@ -24,7 +25,10 @@ def check_for_updates_async(callback):
         }
         try:
             FreeCAD.Console.PrintLog("BNC: Calling update API...\n")
-            payload = json.dumps({"version": CURRENT_VERSION}).encode("utf-8")
+            payload = json.dumps({
+                "version": CURRENT_VERSION,
+                "os_type": platform.system(),
+            }).encode("utf-8")
             req = urllib.request.Request(
                 _API_URL,
                 data=payload,

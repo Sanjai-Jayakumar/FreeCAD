@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Cavity (top half) -->
+  <rect x="6" y="4" width="52" height="22" rx="3" fill="#2e75b6" stroke="#1f4e79" stroke-width="2"/>
+  <ellipse cx="32" cy="26" rx="13" ry="9" fill="#9dc3e6" stroke="#2e75b6" stroke-width="1"/>
+  <!-- Parting line gap -->
+  <rect x="4" y="27" width="56" height="4" rx="1" fill="#ffc000"/>
+  <!-- Core (bottom half) -->
+  <rect x="6" y="33" width="52" height="22" rx="3" fill="#ed7d31" stroke="#c05800" stroke-width="2"/>
+  <ellipse cx="32" cy="33" rx="11" ry="7" fill="#f4b183" stroke="#ed7d31" stroke-width="1"/>
+  <!-- Split arrows -->
+  <polygon points="32,0 28,6 36,6" fill="#ffc000"/>
+  <polygon points="32,64 28,58 36,58" fill="#ffc000"/>
+</svg>

@@ -18,23 +18,14 @@ from PySide import QtCore
 # This must execute early to ensure the Tab selector is used by default
 # ============================================================================
 def set_workbench_selector_default():
-    """Set workbench selector to Tab mode if not already configured by user."""
+    """Set workbench selector to TabBar mode if not already configured by user."""
     try:
-        general_prefs = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/General")
-        main_prefs = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/MainWindow")
-
-        # Set General/WorkbenchSelector to 1 (Tab mode) if not already set
-        # 0 = Combo/List selector, 1 = Tab selector
-        if not general_prefs.HasParameter("WorkbenchSelector"):
-            general_prefs.SetInt("WorkbenchSelector", 1)
-            FreeCAD.Console.PrintLog("✓ Workbench selector default set to Tab mode (General)\n")
-
-        # Also set MainWindow/WorkbenchSelectorType for compatibility
-        # 0 = Dropdown only, 1 = Toolbar buttons only, 2 = Both
-        if not main_prefs.HasParameter("WorkbenchSelectorType"):
-            main_prefs.SetInt("WorkbenchSelectorType", 1)
-            FreeCAD.Console.PrintLog("✓ Workbench selector default set to Tab mode (MainWindow)\n")
-
+        # Correct path: User parameter:BaseApp/Preferences/Workbenches
+        # WorkbenchSelectorType: 0 = ComboBox (FreeCAD default), 1 = TabBar
+        wb_prefs = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Workbenches")
+        if not wb_prefs.HasParameter("WorkbenchSelectorType"):
+            wb_prefs.SetInt("WorkbenchSelectorType", 1)
+            FreeCAD.Console.PrintLog("BNC: Workbench selector type defaulted to TabBar\n")
     except Exception as e:
         FreeCAD.Console.PrintWarning(f"Could not set workbench selector default: {e}\n")
 
@@ -105,9 +96,8 @@ def set_bnc_default_theme():
             main_prefs.SetString("OverlayActiveStyleSheet", "BNC Theme Light Overlay.qss")
             main_prefs.SetString("Theme", "BNC Theme Light")
 
-            # Set workbench selector to toolbar button style (Tab mode)
-            main_prefs.SetInt("WorkbenchSelectorType", 1)
-            general_prefs.SetInt("WorkbenchSelector", 1)
+            # Set workbench selector type to TabBar (correct path)
+            FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Workbenches").SetInt("WorkbenchSelectorType", 1)
 
             # Set mode preference
             bnc_prefs.SetString("Mode", "light")

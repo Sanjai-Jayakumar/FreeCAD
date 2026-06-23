@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Drafted (tapered) shape — wider at bottom -->
+  <polygon points="22,8 42,8 50,54 14,54" fill="#2e75b6" stroke="#1f4e79" stroke-width="2"/>
+  <!-- Neutral plane line -->
+  <line x1="10" y1="8" x2="54" y2="8" stroke="#ffc000" stroke-width="2"/>
+  <!-- Draft angle arcs on left and right -->
+  <path d="M 14 54 L 14 20 A 6 6 0 0 1 20 14" fill="none" stroke="#ffc000" stroke-width="1.5"/>
+  <text x="6" y="18" font-size="8" fill="#ffc000" font-family="sans-serif">θ</text>
+  <!-- Vertical pull arrow -->
+  <line x1="56" y1="54" x2="56" y2="16" stroke="#cc2200" stroke-width="2"/>
+  <polygon points="56,8 52,18 60,18" fill="#cc2200"/>
+</svg>

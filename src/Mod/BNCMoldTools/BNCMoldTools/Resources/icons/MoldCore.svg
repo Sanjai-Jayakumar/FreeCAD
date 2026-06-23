@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Main mold body -->
+  <rect x="8" y="12" width="36" height="40" rx="2" fill="#ed7d31" stroke="#c05800" stroke-width="2"/>
+  <!-- Side core piece (separate block being pulled out sideways) -->
+  <rect x="44" y="22" width="16" height="20" rx="2" fill="#2e75b6" stroke="#1f4e79" stroke-width="2"/>
+  <!-- Side core pocket in main body -->
+  <rect x="30" y="22" width="14" height="20" fill="#9dc3e6" stroke="#1f4e79" stroke-width="1"/>
+  <!-- Pull arrow for side core -->
+  <line x1="60" y1="32" x2="52" y2="32" stroke="#ffc000" stroke-width="2"/>
+  <polygon points="62,32 56,28 56,36" fill="#ffc000"/>
+</svg>
