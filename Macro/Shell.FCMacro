@@ -1,0 +1,2827 @@
+# -*- coding: utf-8 -*-
+# =============================================================================
+# BNC_FixThickness.FCMacro  v5
+# FreeCAD 1.1 | Python 3.11 | PySide2/6 | Windows
+#
+# Reproduces the SolidWorks / Creo behaviour: FILLET the solid first, THEN
+# shell it (open top, uniform wall). This is the order those kernels use
+# internally and the only way to keep the top-edge fillet on a thin wall.
+#
+# Pipeline (matches Pad → Fillet → Shell):
+#   1. Reset body to the base Pad (idempotent; removes prior macro output).
+#   2. Re-apply the fillet on the Pad's TOP outer edges (radius from original).
+#   3. Shell the filleted solid with the top face open and a uniform wall:
+#        a) makeThickSolid (all join/tol combos)
+#        b) makeOffsetShape inner-void + boolean cut   ← handles filleted solids
+#        c) bottom-wire 2D offset + boolean cut        ← last resort (no top fillet)
+#   4. Store result as a Part::Feature, hide the Pad.
+#   5. MEASURE the actual wall thickness and corner radii and report them,
+#      so the "9.36 mm" (inner corner radius) confusion is settled with numbers.
+# =============================================================================
+
+__title__   = "BNC_FixThickness"
+__author__  = "BNC"
+__version__ = "5.0.0"
+__date__    = "2026-06-16"
+
+import os
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+try:
+    from PySide6 import QtWidgets
+except ImportError:
+    from PySide2 import QtWidgets
+
+# Resolve the macro directory once (while __file__ is available) so the Shell
+# view provider can find its icon later.
+try:
+    _MACRO_DIR = os.path.dirname(os.path.abspath(__file__))
+except Exception:
+    _MACRO_DIR = App.getUserMacroDir(True)
+_SHELL_ICON = os.path.join(App.getHomePath().rstrip('/\\'),
+                           "Mod", "BNCPartDesign", "icons", "BNC_Shell.svg")
+# Fallback: look next to the macro file
+if not os.path.isfile(_SHELL_ICON):
+    _SHELL_ICON = os.path.join(_MACRO_DIR, "BNC_Shell.svg")
+
+
+# ===========================================================================
+# Geometry helpers
+# ===========================================================================
+
+def _face_normal(face):
+    try:
+        return face.normalAt(0, 0).normalize()
+    except Exception:
+        return App.Vector(0, 0, 1)
+
+def _face_centroid(face):
+    try:
+        return face.CenterOfMass
+    except Exception:
+        return App.Vector(0, 0, 0)
+
+def _edge_midpoint(edge):
+    try:
+        return edge.valueAt((edge.FirstParameter + edge.LastParameter) * 0.5)
+    except Exception:
+        return App.Vector(0, 0, 0)
+
+def _edge_length(edge):
+    try:
+        return edge.Length
+    except Exception:
+        return 0.0
+
+def _is_planar(face):
+    try:
+        return type(face.Surface).__name__ == "Plane"
+    except Exception:
+        return False
+
+
+def _top_planar_face(shape):
+    """Highest upward-facing planar face."""
+    best, best_z = None, -float("inf")
+    for f in shape.Faces:
+        if not _is_planar(f):
+            continue
+        n = _face_normal(f)
+        c = _face_centroid(f)
+        if n.z > 0.5 and c.z > best_z:
+            best_z, best = c.z, f
+    return best
+
+
+def _bottom_planar_face(shape):
+    """Lowest downward-facing planar face."""
+    best, best_z = None, float("inf")
+    for f in shape.Faces:
+        if not _is_planar(f):
+            continue
+        n = _face_normal(f)
+        c = _face_centroid(f)
+        if n.z < -0.5 and c.z < best_z:
+            best_z, best = c.z, f
+    return best
+
+
+def _detect_corner_radius(shape):
+    """Radius of vertical (Z-axis) cylindrical corner faces, or None."""
+    radii = []
+    for face in shape.Faces:
+        try:
+            surf = face.Surface
+            if type(surf).__name__ == "Cylinder" and abs(surf.Axis.z) > 0.9:
+                radii.append(round(surf.Radius, 4))
+        except Exception:
+            pass
+    if not radii:
+        return None
+    return min(radii)
+
+
+def _shape_edges_matching(shape, ref_edges, tol=0.1):
+    """Return shape's own Edge objects that geometrically match ref_edges."""
+    out = []
+    se_list = shape.Edges
+    for re in ref_edges:
+        rm, rl = _edge_midpoint(re), _edge_length(re)
+        best, best_d = None, float("inf")
+        for se in se_list:
+            d = (_edge_midpoint(se) - rm).Length + abs(_edge_length(se) - rl)
+            if d < best_d:
+                best_d, best = d, se
+        if best is not None and best_d < tol:
+            out.append(best)
+    return out
+
+
+# ===========================================================================
+# Step 2: fillet the solid's top outer edges
+# ===========================================================================
+
+def _fillet_top_edges(solid, radius):
+    """
+    Apply a fillet of `radius` to the TOP face outer-perimeter edges of `solid`
+    (this is where the original fillet was, per the source model).
+    Returns (filleted_solid, n_edges) or (solid, 0) if it cannot be applied.
+    """
+    if not radius or radius <= 0:
+        return solid, 0
+
+    top = _top_planar_face(solid)
+    if top is None:
+        App.Console.PrintWarning("[BNC] No top planar face to fillet.\n")
+        return solid, 0
+
+    try:
+        wire_edges = top.OuterWire.Edges
+    except Exception:
+        wire_edges = top.Edges
+
+    edges = _shape_edges_matching(solid, wire_edges)
+    if not edges:
+        App.Console.PrintWarning("[BNC] Could not match top edges for fillet.\n")
+        return solid, 0
+
+    try:
+        result = solid.makeFillet(radius, edges)
+        if result.isValid() and result.Volume > 0:
+            App.Console.PrintMessage(
+                f"[BNC] Top fillet r={radius} on {len(edges)} edge(s) OK\n"
+            )
+            return result, len(edges)
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] Top fillet failed: {exc}\n")
+
+    return solid, 0
+
+
+# ===========================================================================
+# Step 3: shell the (filleted) solid, open top, uniform wall
+# ===========================================================================
+
+def _shell_via_makethick(solid, thickness):
+    """
+    OCCT makeThickSolid removing the top face — the TRUE shell operation that
+    gives uniform wall AND flat rim (exact Creo result) when it succeeds.
+    Tried exhaustively: raw solid + removeSplitter variants, both signs,
+    all join + offsetMode + tol combos including coarser tolerances.
+    """
+    # Build candidate bases: try the raw input FIRST (removeSplitter can break
+    # face references on some OCCT builds), then the cleaned-up variants.
+    candidates = [solid]
+    try:
+        if solid.Solids:
+            candidates.append(solid.Solids[0])
+    except Exception:
+        pass
+    try:
+        cleaned = solid.removeSplitter()
+        if cleaned.isValid() and cleaned not in candidates:
+            candidates.append(cleaned)
+    except Exception:
+        pass
+
+    for base in candidates:
+        top = _top_planar_face(base)
+        if top is None:
+            continue
+
+        for off in (-abs(thickness), abs(thickness)):
+            for mode in (0, 1, 2):           # Skin / Pipe / RectoVerso
+                for join in (0, 1, 2):       # Arc / Tangent / Intersection
+                    for inter in (False, True):
+                        for tol in (1e-3, 1e-2, 1e-4, 1e-1, 0.5, 1.0):
+                            try:
+                                r = base.makeThickSolid([top], off, tol,
+                                                        inter, False, mode, join)
+                                if (r.isValid() and r.Volume > 0
+                                        and r.Volume < base.Volume):
+                                    App.Console.PrintMessage(
+                                        f"[BNC] makeThickSolid OK "
+                                        f"(off={off}, mode={mode}, join={join}, tol={tol})\n"
+                                    )
+                                    return r
+                            except Exception:
+                                pass
+    return None
+
+
+def _shell_via_openoffset(solid, thickness):
+    """
+    Emulate Creo's shell exactly: REMOVE the top face, then thicken the
+    remaining open face-shell inward by t with makeOffsetShape(fill=True).
+    Because the top face is removed (not offset), the inner wall and its
+    top fillet reach the full rim height → a clean FLAT rim, no sloped patch.
+    """
+    t = abs(thickness)
+    base = solid
+    try:
+        if solid.Solids:
+            base = solid.Solids[0]
+        base = base.removeSplitter()
+    except Exception:
+        base = solid
+
+    top = _top_planar_face(base)
+    if top is None:
+        return None
+
+    faces = []
+    for f in base.Faces:
+        try:
+            if f.isSame(top):
+                continue
+        except Exception:
+            pass
+        faces.append(f)
+    if not faces:
+        return None
+
+    try:
+        open_shell = Part.Shell(faces)
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] open-shell build failed: {exc}\n")
+        return None
+
+    # Try fill=True first (ideal: closes the rim), then fill=False (more lenient,
+    # works on OCCT builds where fill=True triggers "not done" for curved faces).
+    for fill in (True, False):
+        for join in (0, 1, 2):
+            for tol in (1e-3, 1e-2, 1e-4, 0.5):
+                try:
+                    r = open_shell.makeOffsetShape(-t, tol, False, False,
+                                                   0, join, fill)
+                    if r.isValid() and r.Volume > 0 and r.Volume < base.Volume:
+                        App.Console.PrintMessage(
+                            f"[BNC] open-shell offset OK "
+                            f"(join={join}, tol={tol}, fill={fill})\n"
+                        )
+                        return r
+                except Exception:
+                    pass
+    return None
+
+
+def _shell_via_offsetshape(solid, thickness):
+    """
+    3D offset shell that PRESERVES the top fillet:
+      inner cavity = inward 3D offset of the filleted solid
+      void = inner cavity, extended upward past the top
+      open shell = solid - void
+    """
+    t = abs(thickness)
+    try:
+        off = solid.makeOffsetShape(-t, 0.01)   # inward offset boundary
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] makeOffsetShape failed: {exc}\n")
+        return None
+
+    # Convert offset boundary to a solid cavity
+    inner_solid = None
+    try:
+        if off.Solids:
+            inner_solid = off.Solids[0]
+        elif off.Shells:
+            inner_solid = Part.makeSolid(off.Shells[0])
+        else:
+            inner_solid = Part.makeSolid(off)
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] Offset->solid failed: {exc}\n")
+        return None
+
+    if inner_solid is None or not inner_solid.isValid():
+        return None
+
+    try:
+        # Open the top WITHOUT leaving a flange.
+        # The cavity cut already removes the inner fillet/wall material up to
+        # the cavity top. To open the top wall we extrude the cavity's own TOP
+        # FACE straight up past the solid — a prism that matches the opening
+        # exactly. Fusing it with the cavity and cutting gives a clean rim.
+        # (A translated copy of the whole cavity used the straight-wall section
+        #  near the rounded top, leaving a thin upstanding sliver = the flange.)
+        solid_top  = solid.BoundBox.ZMax
+        inner_top_f = _top_planar_face(inner_solid)
+        if inner_top_f is not None:
+            col_h  = (solid_top - inner_top_f.CenterOfMass.z) + 2.0 * t + 1.0
+            column = inner_top_f.extrude(App.Vector(0, 0, col_h))
+            void   = inner_solid.fuse(column)
+        else:
+            raised = inner_solid.copy()
+            raised.translate(App.Vector(0, 0, (solid_top - inner_solid.BoundBox.ZMax)
+                                              + 2.0 * t + 1.0))
+            void = inner_solid.fuse(raised)
+
+        result = solid.cut(void)
+        if result.isValid() and result.Volume > 0 and result.Shells:
+            try:
+                result = result.removeSplitter()   # merge coplanar faces
+            except Exception:
+                pass
+            App.Console.PrintMessage("[BNC] Offset-shell + open-top cut OK\n")
+            return result
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] Offset-shell boolean failed: {exc}\n")
+
+    return None
+
+
+def _shell_via_scale_cut(solid, thickness):
+    """
+    Creo/SolidWorks-style shell without any OCCT offset API:
+      1. Extract the main solid (largest sub-solid if compound).
+      2. Scale it in XY only from its XY centroid by (L-2t)/L — the rounded
+         fillet corners scale down proportionally, so inner walls follow the
+         outer contour (uniform wall at flats, ~uniform at corners).
+      3. Translate the scaled body UP by t → floor of thickness t.
+      4. Fuse with a full-width box that covers the top → removes the entire
+         top face so the shell is open.
+      5. Cut the void from the original solid.  Result: open-top hollow body
+         that looks exactly like Creo's shell — NOT a rectangular inner void.
+    """
+    t = abs(thickness)
+
+    # Extract largest solid from any compound (PartDesign Shape may be one).
+    src = solid
+    try:
+        subs = [s for s in (solid.Solids or []) if s.isValid() and s.Volume > 1e-6]
+        if subs:
+            src = max(subs, key=lambda s: s.Volume)
+    except Exception:
+        pass
+
+    bb = src.BoundBox
+    if bb.XLength < 2 * t + 0.5 or bb.YLength < 2 * t + 0.5 or bb.ZLength < t + 0.5:
+        App.Console.PrintWarning("[BNC] scale-cut: solid too thin for this thickness\n")
+        return None
+
+    sx = (bb.XLength - 2.0 * t) / bb.XLength
+    sy = (bb.YLength - 2.0 * t) / bb.YLength
+    cx = (bb.XMin + bb.XMax) / 2.0
+    cy = (bb.YMin + bb.YMax) / 2.0
+
+    App.Console.PrintMessage(
+        f"[BNC] scale-cut: src={bb.XLength:.2f}x{bb.YLength:.2f}x{bb.ZLength:.2f} "
+        f"sx={sx:.4f} sy={sy:.4f}\n")
+
+    try:
+        # XY-scale matrix centred at (cx, cy): P_new = S*(P-C)+C = S*P + C*(1-S)
+        m = App.Matrix()
+        m.A11 = sx;   m.A14 = cx * (1.0 - sx)
+        m.A22 = sy;   m.A24 = cy * (1.0 - sy)
+        m.A33 = 1.0;  m.A34 = 0.0
+        m.A44 = 1.0
+
+        # Narrowed solid: same Z range as source, XY scaled in
+        inner_narrow = src.transformGeometry(m)
+        if not inner_narrow.isValid():
+            App.Console.PrintWarning("[BNC] scale-cut: transformGeometry → invalid\n")
+            return None
+
+        # Shift UP by t → floor of thickness t between ZMin and ZMin+t
+        inner_narrow.translate(App.Vector(0.0, 0.0, t))
+
+        # Step 1: hollow out the body — narrow void removes inner column, leaves
+        # floor + rounded walls + a thin top rim (closed solid at this point).
+        result = src.cut(inner_narrow)
+        App.Console.PrintMessage(
+            f"[BNC] scale-cut step1 BBox={result.BoundBox.XLength:.2f}x"
+            f"{result.BoundBox.YLength:.2f}x{result.BoundBox.ZLength:.2f}\n")
+
+        # Step 2: remove the entire top face with an oversized box.
+        # The box is wider than the solid → removes every bit of the top cap,
+        # giving a fully open top just like Creo/SolidWorks.
+        pad = max(t + 1.0, 3.0)
+        topcap = Part.makeBox(
+            bb.XLength + 2.0 * pad,
+            bb.YLength + 2.0 * pad,
+            bb.ZLength + 2.0 * t + 2.0,
+            App.Vector(bb.XMin - pad, bb.YMin - pad, bb.ZMax - 0.02)
+        )
+        try:
+            result = result.cut(topcap)
+            App.Console.PrintMessage(
+                f"[BNC] scale-cut step2 (open-top) BBox={result.BoundBox.XLength:.2f}x"
+                f"{result.BoundBox.YLength:.2f}x{result.BoundBox.ZLength:.2f}\n")
+        except Exception as ce:
+            App.Console.PrintWarning(f"[BNC] scale-cut: topcap cut failed ({ce}), "
+                                     f"result has closed top rim\n")
+
+        # Extract largest solid piece from any compound
+        try:
+            subs2 = [s for s in (result.Solids or []) if s.isValid() and s.Volume > 1e-6]
+            if subs2:
+                result = max(subs2, key=lambda s: s.Volume)
+        except Exception:
+            pass
+
+        vol = getattr(result, "Volume", 0.0)
+        if vol <= 1e-6 or vol >= src.Volume * 0.999:
+            App.Console.PrintWarning(
+                f"[BNC] scale-cut: bad volume {vol:.2f} / {src.Volume:.2f}\n")
+            return None
+
+        if not result.isValid():
+            App.Console.PrintWarning("[BNC] scale-cut: result invalid\n")
+            return None
+
+        try:
+            result = result.removeSplitter()
+        except Exception:
+            pass
+
+        App.Console.PrintMessage(
+            f"[BNC] scale-cut OK: vol={vol:.1f}/{src.Volume:.1f} "
+            f"BBox={result.BoundBox.XLength:.2f}x{result.BoundBox.YLength:.2f}x"
+            f"{result.BoundBox.ZLength:.2f}\n")
+        return result
+
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] scale-cut failed: {exc}\n")
+        import traceback as _tb2
+        App.Console.PrintWarning(_tb2.format_exc())
+        return None
+
+
+def _shell_via_poly_offset(solid, thickness):
+    """
+    TRUE uniform-thickness shell — exactly what Creo / SolidWorks "Shell" does:
+    every point of the inner wall is the perpendicular distance `t` from the
+    outer wall, so the wall is `t` thick everywhere (flat faces AND fillets).
+
+    Curve-type agnostic (works when the profile is stored as BSplineCurve and
+    every OCCT offset API fails):
+      1. Take the bottom planar face's outer wire = the constant cross-section.
+      2. Discretize it into a dense point loop (no arc/line detection needed).
+      3. Move each point inward by `t` along the local inward normal
+         (bisector of the two adjacent segment normals, with the
+         1/cos(half-angle) correction so the PERPENDICULAR distance is exactly t).
+      4. Build the inner profile, extrude it up leaving a `t` floor, cut.
+    """
+    import math as _m
+    t = abs(thickness)
+
+    # Main solid (from compound if needed)
+    src = solid
+    try:
+        subs = [s for s in (solid.Solids or []) if s.isValid() and s.Volume > 1e-6]
+        if subs:
+            src = max(subs, key=lambda s: s.Volume)
+    except Exception:
+        pass
+
+    bb = src.BoundBox
+    bottom = _bottom_planar_face(src)
+    if bottom is None:
+        App.Console.PrintWarning("[BNC] poly-offset: no planar bottom face\n")
+        return None
+
+    wire = bottom.OuterWire
+    z = float(bottom.BoundBox.ZMin)
+
+    # ── Discretize the cross-section into a dense, ordered point loop ─────────
+    pts = None
+    for N in (800, 400, 200):
+        try:
+            raw = wire.discretize(Number=N)
+            if raw and len(raw) >= 8:
+                pts = raw
+                break
+        except Exception:
+            pass
+    if not pts:
+        App.Console.PrintWarning("[BNC] poly-offset: discretize failed\n")
+        return None
+
+    # Drop a duplicated closing point if present
+    if (pts[0] - pts[-1]).Length < 1e-6:
+        pts = pts[:-1]
+    n = len(pts)
+    if n < 8:
+        return None
+
+    cx = sum(p.x for p in pts) / n
+    cy = sum(p.y for p in pts) / n
+
+    App.Console.PrintMessage(
+        f"[BNC] poly-offset: {n} pts, centroid=({cx:.2f},{cy:.2f}) "
+        f"wall={t:.2f} z={z:.2f}\n")
+
+    def _inward_normal(p, d):
+        """Unit normal of 2-D segment direction d, flipped to point at centroid."""
+        if d.Length < 1e-12:
+            return None
+        nrm = App.Vector(-d.y, d.x, 0.0)
+        nrm.normalize()
+        toC = App.Vector(cx - p.x, cy - p.y, 0.0)
+        if nrm.dot(toC) < 0:
+            nrm = nrm.multiply(-1.0)
+        return nrm
+
+    inner_pts = []
+    for i in range(n):
+        p_prev = pts[(i - 1) % n]
+        p = pts[i]
+        p_next = pts[(i + 1) % n]
+        d1 = App.Vector(p.x - p_prev.x, p.y - p_prev.y, 0.0)
+        d2 = App.Vector(p_next.x - p.x, p_next.y - p.y, 0.0)
+        n1 = _inward_normal(p, d1)
+        n2 = _inward_normal(p, d2)
+
+        if n1 and n2:
+            bis = App.Vector(n1.x + n2.x, n1.y + n2.y, 0.0)
+            if bis.Length < 1e-9:
+                bis = n1
+            else:
+                bis.normalize()
+            # perpendicular-distance correction: move t / (bisector · edge-normal)
+            denom = bis.dot(n1)
+            if denom < 0.2:           # near-degenerate spike → fall back to t
+                denom = 1.0
+            move = t / denom
+        elif n1 or n2:
+            bis = n1 or n2
+            move = t
+        else:
+            continue
+
+        inner_pts.append(App.Vector(p.x + bis.x * move,
+                                    p.y + bis.y * move, z))
+
+    if len(inner_pts) < 8:
+        App.Console.PrintWarning("[BNC] poly-offset: too few inner points\n")
+        return None
+
+    # Drop consecutive coincident points — zero-length edges make Part.Face fail.
+    clean = [inner_pts[0]]
+    for p in inner_pts[1:]:
+        if (p - clean[-1]).Length > 1e-4:
+            clean.append(p)
+    if (clean[-1] - clean[0]).Length < 1e-4:
+        clean = clean[:-1]
+    inner_pts = clean
+    if len(inner_pts) < 8:
+        App.Console.PrintWarning("[BNC] poly-offset: too few inner points after dedup\n")
+        return None
+    App.Console.PrintMessage(f"[BNC] poly-offset: {len(inner_pts)} inner pts after dedup\n")
+
+    def _build_inner_face(points):
+        """Try several constructions; return a valid planar face or None."""
+        # 1) Smooth CLOSED B-spline through the offset points → clean face.
+        try:
+            bs = Part.BSplineCurve()
+            bs.interpolate(points, PeriodicFlag=True)
+            wf = Part.Wire(bs.toShape())
+            f = Part.Face(wf)
+            if f.isValid() and f.Area > 1e-6:
+                App.Console.PrintMessage("[BNC] poly-offset: inner face via BSpline\n")
+                return f
+        except Exception as e1:
+            App.Console.PrintWarning(f"[BNC] poly-offset: BSpline face failed ({e1})\n")
+        # 2) Straight-segment polygon → face.
+        try:
+            poly = Part.makePolygon(points + [points[0]])
+            f = Part.Face(poly)
+            if f.isValid() and f.Area > 1e-6:
+                App.Console.PrintMessage("[BNC] poly-offset: inner face via polygon\n")
+                return f
+        except Exception as e2:
+            App.Console.PrintWarning(f"[BNC] poly-offset: polygon face failed ({e2})\n")
+        return None
+
+    try:
+        inner_face = _build_inner_face(inner_pts)
+        if inner_face is None:
+            App.Console.PrintWarning("[BNC] poly-offset: inner face invalid\n")
+            return None
+
+        # Void: extrude inner profile up, leaving a t-thick floor, open the top.
+        ext_h = bb.ZLength - t + 1.5
+        void = inner_face.extrude(App.Vector(0, 0, ext_h))
+        dz = (bb.ZMin + t) - z
+        if abs(dz) > 1e-4:
+            void.translate(App.Vector(0, 0, dz))
+
+        App.Console.PrintMessage(
+            f"[BNC] poly-offset: void Z [{void.BoundBox.ZMin:.2f} → "
+            f"{void.BoundBox.ZMax:.2f}]\n")
+
+        result = src.cut(void)
+
+        try:
+            subs2 = [s for s in (result.Solids or [])
+                     if s.isValid() and s.Volume > 1e-6]
+            if subs2:
+                result = max(subs2, key=lambda s: s.Volume)
+        except Exception:
+            pass
+
+        vol = getattr(result, "Volume", 0.0)
+        if vol <= 1e-6 or vol >= src.Volume * 0.999 or not result.isValid():
+            App.Console.PrintWarning(
+                f"[BNC] poly-offset: bad result vol={vol:.2f}/{src.Volume:.2f}\n")
+            return None
+
+        try:
+            result = result.removeSplitter()
+        except Exception:
+            pass
+
+        App.Console.PrintMessage(
+            f"[BNC] poly-offset OK — BBox {result.BoundBox.XLength:.2f}x"
+            f"{result.BoundBox.YLength:.2f}x{result.BoundBox.ZLength:.2f}\n")
+        return result
+
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] poly-offset failed: {exc}\n")
+        import traceback as _tbp
+        App.Console.PrintWarning(_tbp.format_exc())
+        return None
+
+
+def _rounded_rect_inner_face(xmn, xmx, ymn, ymx, R, t, z):
+    """Build a clean inner rounded-rectangle Part.Face inset by `t`
+    (radius R→R-t).  Returns a planar face at height z, or None."""
+    import math as _m
+    Ri = max(R - t, 0.0)
+    x0, x1 = xmn + t, xmx - t
+    y0, y1 = ymn + t, ymx - t
+    if (x1 - x0) < 2 * Ri + 1e-3 or (y1 - y0) < 2 * Ri + 1e-3:
+        return None
+    za = App.Vector(0, 0, 1)
+    def P(x, y): return App.Vector(x, y, z)
+    if Ri < 1e-4:
+        # sharp inner corners → plain rectangle
+        wire = Part.makePolygon([P(x0, y0), P(x1, y0), P(x1, y1),
+                                 P(x0, y1), P(x0, y0)])
+        f = Part.Face(wire)
+        return f if f.isValid() else None
+    cx0, cx1 = x0 + Ri, x1 - Ri
+    cy0, cy1 = y0 + Ri, y1 - Ri
+    def A(cn, r, a1, a2):
+        c = Part.Circle(cn, za, r)
+        return Part.Arc(c, _m.radians(a1), _m.radians(a2)).toShape()
+    edges = [
+        Part.makeLine(P(cx0, y0), P(cx1, y0)), A(P(cx1, cy0), Ri, 270, 360),
+        Part.makeLine(P(x1, cy0), P(x1, cy1)), A(P(cx1, cy1), Ri, 0, 90),
+        Part.makeLine(P(cx1, y1), P(cx0, y1)), A(P(cx0, cy1), Ri, 90, 180),
+        Part.makeLine(P(x0, cy1), P(x0, cy0)), A(P(cx0, cy0), Ri, 180, 270),
+    ]
+    w = Part.Wire(edges)
+    if not w.isClosed():
+        return None
+    f = Part.Face(w)
+    return f if f.isValid() else None
+
+
+def _rrect_wire(xmn, xmx, ymn, ymx, R, z):
+    """Closed rounded-rectangle wire at height z (R clamped to fit)."""
+    import math as _m
+    W = xmx - xmn; H = ymx - ymn
+    R = max(min(R, W / 2.0 - 0.05, H / 2.0 - 0.05), 0.0)
+    za = App.Vector(0, 0, 1)
+    def P(x, y): return App.Vector(x, y, z)
+    if R < 0.05:
+        return Part.makePolygon([P(xmn, ymn), P(xmx, ymn), P(xmx, ymx),
+                                 P(xmn, ymx), P(xmn, ymn)])
+    cx0, cx1 = xmn + R, xmx - R
+    cy0, cy1 = ymn + R, ymx - R
+    def A(cn, r, a1, a2):
+        c = Part.Circle(cn, za, r)
+        return Part.Arc(c, _m.radians(a1), _m.radians(a2)).toShape()
+    e = [Part.makeLine(P(cx0, ymn), P(cx1, ymn)), A(P(cx1, cy0), R, 270, 360),
+         Part.makeLine(P(xmx, cy0), P(xmx, cy1)), A(P(cx1, cy1), R, 0, 90),
+         Part.makeLine(P(cx1, ymx), P(cx0, ymx)), A(P(cx0, cy1), R, 90, 180),
+         Part.makeLine(P(xmn, cy1), P(xmn, cy0)), A(P(cx0, cy0), R, 180, 270)]
+    return Part.Wire(e)
+
+
+# ===========================================================================
+# EXACT shell via PartDesign feature roll-back (the Creo/SolidWorks method)
+# ===========================================================================
+#
+# Some native PartDesign tips cannot be offset by OCCT at all: a fillet/chamfer
+# can leave BSpline faces that BRepOffsetAPI_MakeThickSolid refuses ("command
+# not done") — and FreeCAD's own Thickness feature fails on them identically.
+# Real MCAD kernels avoid this by SEQUENCING: shell the body BEFORE the
+# problematic fillet, then re-apply that fillet to the hollow part so both the
+# outer and the inner wall get rounded and the wall stays an exact t.
+#
+# This reproduces that exactly and preserves the OUTER shape 1:1 (verified):
+#   1. Walk the body's feature chain (tip -> base via BaseFeature).
+#   2. Find the LATEST feature whose shape CAN be shelled (makeThickness OK).
+#   3. Shell that stage (true uniform-t walls + floor, open faces removed).
+#   4. RE-APPLY every rolled-over Fillet/Chamfer: outer edges at radius R,
+#      inner edges at R - t  -> exact original outer profile + uniform t wall.
+
+def _feature_chain(tip):
+    """Ordered [tip, ..., base] following PartDesign BaseFeature links."""
+    chain = []
+    f = tip
+    seen = set()
+    while f is not None and getattr(f, "Name", None) not in seen:
+        seen.add(f.Name)
+        chain.append(f)
+        f = getattr(f, "BaseFeature", None)
+    return chain
+
+
+def _map_faces_by_geometry(shape, ref_faces, dist_tol=3.0, dot_tol=0.85):
+    """Map ref_faces (from another feature stage) onto faces of `shape`
+    by matching surface normal + centroid. Returns the matched faces."""
+    matched, _ = _map_faces_confident(shape, ref_faces, dist_tol, dot_tol)
+    return matched
+
+
+def _map_faces_confident(shape, ref_faces, dist_tol=0.8, dot_tol=0.9):
+    """Map ref_faces onto faces of `shape`, accepting a match only when a point
+    ON the ref face actually LIES ON a normal-aligned face of `shape`. Returns
+    (matched_faces, unmatched_ref_faces).
+
+    Point-on-face distance (not centroid-to-centroid) is what makes this robust
+    across feature stages: a side WALL trimmed shorter by a later bottom fillet
+    has a shifted centroid but a point on it still lies on the base wall (dist
+    ~0 → matched), while a face CREATED by the skipped fillet lies off every
+    base face (dist large → unmatched, so its fillet gets opened/sharpened)."""
+    matched = []
+    unmatched = []
+    for rf in ref_faces:
+        try:
+            rn = rf.normalAt(0, 0)
+            pv = Part.Vertex(rf.CenterOfMass)
+        except Exception:
+            unmatched.append(rf)
+            continue
+        best = None
+        bd = 1e18
+        for f in shape.Faces:
+            try:
+                if f.normalAt(0, 0).dot(rn) < dot_tol:
+                    continue
+                d = f.distToShape(pv)[0]
+                if d < bd:
+                    bd = d
+                    best = f
+            except Exception:
+                pass
+        if best is not None and bd < dist_tol:
+            matched.append(best)
+        else:
+            unmatched.append(rf)
+    return matched, unmatched
+
+
+def _fillet_band_z(feat):
+    """Mean Z of the edges a PartDesign Fillet/Chamfer targets, or None."""
+    try:
+        bobj, enames = feat.Base
+        bs = bobj.Shape
+        zs = []
+        for en in enames:
+            idx = int(en.replace("Edge", "")) - 1
+            if 0 <= idx < len(bs.Edges):
+                zs.append(bs.Edges[idx].CenterOfMass.z)
+        if zs:
+            return sum(zs) / len(zs)
+    except Exception:
+        pass
+    return None
+
+
+def _try_makethick(shape, faces, t):
+    """makeThickness removing `faces`, trying join/tol combos. Returns a
+    genuinely HOLLOW solid or None. A result whose volume is still ~the input
+    solid means the kernel silently did nothing (a known failure mode) — reject
+    it so we don't accept a near-solid 'shell'."""
+    if not faces:
+        return None
+    try:
+        v0 = shape.Volume
+    except Exception:
+        v0 = None
+    for jn in (0, 2, 1):
+        for tol in (1e-3, 1e-2, 1e-4):
+            try:
+                r = shape.makeThickness(faces, -abs(t), tol, False, False, jn)
+                if r.isValid() and r.Solids and r.Volume > 1e-6:
+                    if v0 is None or r.Volume < 0.92 * v0:
+                        return max(r.Solids, key=lambda s: s.Volume)
+            except Exception:
+                pass
+    return None
+
+
+def _reapply_fillet_feature(tub, feat, t, zbot, ztop, cx, cy):
+    """Re-apply a skipped PartDesign Fillet/Chamfer to the hollow tub:
+    round the outer edge loop at radius R and the matching inner loop at R-t."""
+    R = None
+    for attr in ("Radius", "Size"):
+        try:
+            R = float(getattr(feat, attr))
+            break
+        except Exception:
+            pass
+    if R is None or R <= 1e-6:
+        return tub
+
+    # target edge midpoints (on the feature's own base shape)
+    mids = []
+    try:
+        bobj, enames = feat.Base
+        bs = bobj.Shape
+        for en in enames:
+            idx = int(en.replace("Edge", "")) - 1
+            if 0 <= idx < len(bs.Edges):
+                mids.append(bs.Edges[idx].CenterOfMass)
+    except Exception:
+        pass
+    if not mids:
+        return tub
+    tz = sum(p.z for p in mids) / len(mids)
+
+    # A horizontal (bottom/top) edge fillet rounds the WHOLE perimeter loop at
+    # that Z (PartDesign propagates along the tangent-connected loop). Otherwise
+    # match the outer edges nearest the target midpoints.
+    horiz_band = (abs(tz - zbot) < 1.0) or (abs(tz - ztop) < 1.0)
+    if horiz_band:
+        bandz = zbot if abs(tz - zbot) < abs(tz - ztop) else ztop
+        outer = [e for e in tub.Edges
+                 if e.BoundBox.ZLength < 0.3
+                 and abs(e.CenterOfMass.z - bandz) < 0.3]
+    else:
+        def _near(e):
+            m = e.CenterOfMass
+            return (any(m.distanceToPoint(p) < R + t + 0.6 for p in mids)
+                    and abs(m.z - tz) < R + 0.6)
+        outer = [e for e in tub.Edges if _near(e)]
+
+    res = tub
+    if outer:
+        try:
+            res = res.makeFillet(R, outer)
+        except Exception as exc:
+            App.Console.PrintWarning(
+                f"[BNC] rollback: outer fillet R={R:.2f} failed ({exc})\n")
+            return tub
+
+    # inner counterpart loop at R - t (keeps the wall an exact t round the edge)
+    if R > t + 1e-6:
+        if horiz_band:
+            inz = (zbot + t) if abs(tz - zbot) < abs(tz - ztop) else (ztop - t)
+            inner = [e for e in res.Edges
+                     if e.BoundBox.ZLength < 0.3
+                     and abs(e.CenterOfMass.z - inz) < 0.6]
+        else:
+            inner = []
+            for e in res.Edges:
+                m = e.CenterOfMass
+                rad = App.Vector(m.x - cx, m.y - cy, 0)
+                if rad.Length < 1e-6:
+                    continue
+                rad.normalize()
+                out_pt = App.Vector(m.x + t * rad.x, m.y + t * rad.y, m.z)
+                if any(eo.CenterOfMass.distanceToPoint(out_pt) < 0.5
+                       for eo in outer):
+                    inner.append(e)
+        if inner:
+            try:
+                res = res.makeFillet(R - t, inner)
+            except Exception as exc:
+                App.Console.PrintWarning(
+                    f"[BNC] rollback: inner fillet R={R - t:.2f} failed ({exc})\n")
+    return res
+
+
+def _shell_via_feature_rollback(source_feature, open_faces, thickness):
+    """Exact shell of a native PartDesign body whose tip OCCT cannot offset.
+    Returns a solid (exact outer shape, uniform-t walls) or None to fall back."""
+    if source_feature is None:
+        return None
+    t = abs(thickness)
+    try:
+        chain = _feature_chain(source_feature)
+    except Exception:
+        return None
+    if not chain:
+        return None
+
+    # 1+2. latest feature in the chain whose shape can be shelled. Faces are
+    #      mapped with CONFIDENCE: a selected face that only exists because of a
+    #      later/skipped fillet (no genuine counterpart at this stage) is NOT
+    #      force-mapped — it just won't be opened at the base stage (the skipped
+    #      fillet that created it is opened/sharpened instead).
+    base_feat = None
+    base_idx = None
+    for i, F in enumerate(chain):
+        try:
+            sh = F.Shape
+        except Exception:
+            continue
+        faces, _unm = _map_faces_confident(sh, open_faces)
+        if not faces:
+            continue
+        if _try_makethick(sh, faces, t) is not None:
+            base_feat = F
+            base_idx = i
+            break
+    if base_feat is None:
+        return None
+
+    skipped = chain[:base_idx]          # features applied AFTER the shell point
+    # only fillets/chamfers can be safely re-applied; anything else -> bail out
+    for S in skipped:
+        tid = getattr(S, "TypeId", "")
+        if "Fillet" not in tid and "Chamfer" not in tid:
+            App.Console.PrintWarning(
+                f"[BNC] rollback: cannot re-apply {S.Name} ({tid}); skipping method\n")
+            return None
+
+    faces, unmatched = _map_faces_confident(base_feat.Shape, open_faces)
+    tub = _try_makethick(base_feat.Shape, faces, t)
+    if tub is None:
+        return None
+
+    # z extents + centre of the shellable stage (for edge classification)
+    zb = zt = None
+    for f in base_feat.Shape.Faces:
+        try:
+            if type(f.Surface).__name__ == 'Plane':
+                n = f.normalAt(0, 0)
+                z = f.CenterOfMass.z
+                if n.z > 0.9:
+                    zt = z if zt is None else max(zt, z)
+                elif n.z < -0.9:
+                    zb = z if zb is None else min(zb, z)
+        except Exception:
+            pass
+    if zb is None or zt is None:
+        bb0 = base_feat.Shape.BoundBox
+        zb = bb0.ZMin if zb is None else zb
+        zt = bb0.ZMax if zt is None else zt
+    bb = tub.BoundBox
+    cx = (bb.XMin + bb.XMax) / 2.0
+    cy = (bb.YMin + bb.YMax) / 2.0
+
+    if not skipped:
+        App.Console.PrintMessage(
+            f"[BNC] rollback: tip shells directly — wall={t:.2f} mm, "
+            f"{len(tub.Faces)} faces\n")
+        return tub
+
+    # A skipped fillet whose OWN faces the user selected to remove must NOT be
+    # re-applied — that edge is meant to be opened/sharp ("removing the fillet"
+    # in Creo).  Detect it: an unmapped selected face (curved, no base
+    # counterpart) sitting in the fillet's Z band marks that fillet as opened.
+    opened = set()
+    for S in skipped:
+        bz = _fillet_band_z(S)
+        if bz is None:
+            continue
+        try:
+            R = float(getattr(S, "Radius", getattr(S, "Size", 0.0)))
+        except Exception:
+            R = 0.0
+        for rf in unmatched:
+            try:
+                if (type(rf.Surface).__name__ != 'Plane'
+                        and abs(rf.CenterOfMass.z - bz) < R + 1.0):
+                    opened.add(S.Name)
+                    break
+            except Exception:
+                pass
+
+    to_apply = [s for s in reversed(skipped) if s.Name not in opened]
+    if opened:
+        App.Console.PrintMessage(
+            f"[BNC] rollback: opening (no re-fillet) {', '.join(sorted(opened))}\n")
+    App.Console.PrintMessage(
+        f"[BNC] rollback: shelled at '{base_feat.Name}'"
+        + (f", re-applying {', '.join(s.Name for s in to_apply)}" if to_apply else "")
+        + "\n")
+
+    # re-apply surviving skipped features in ORIGINAL order (earliest first)
+    for S in to_apply:
+        tub = _reapply_fillet_feature(tub, S, t, zb, zt, cx, cy)
+
+    try:
+        if tub.Solids:
+            tub = max(tub.Solids, key=lambda s: s.Volume)
+    except Exception:
+        pass
+    App.Console.PrintMessage(
+        f"[BNC] rollback OK — exact shape, wall={t:.2f} mm, "
+        f"{len(tub.Faces)} faces, vol={tub.Volume:.1f}\n")
+    return tub
+
+
+def _shell_via_reconstruct(solid, thickness):
+    """
+    Robust shell for a rounded-rectangle prismatic/tapered body whose source
+    geometry is DIRTY/CORRUPT (BSpline faces, BOP-check errors) so that every
+    OCCT offset/boolean on the original returns wrong results.
+
+    Never trusts the corrupt solid's faces/edges/booleans — only reliable
+    measurements (planar-face Z, boolean-bbox extents, point-in-solid):
+      1. z_bottom / z_top from the planar horizontal faces.
+      2. At MANY heights, measure the cross-section's centre, width/height and
+         corner radius (which can vary with Z → captures taper / variable
+         side-wall fillet, exactly the original's curved-wall look).
+      3. LOFT clean rounded-rect wires through those sections → clean outer.
+      4. LOFT inner wires (each inset by t) → cavity; open top, t floor.
+
+    Verified on the real corrupt part: side walls 2.0 mm, faithful curved shape.
+    """
+    import math as _m
+    t = abs(thickness)
+
+    src = solid
+    try:
+        subs = [s for s in (solid.Solids or []) if s.isValid() and s.Volume > 1e-6]
+        if subs:
+            src = max(subs, key=lambda s: s.Volume)
+    except Exception:
+        pass
+
+    # 1. z extents from planar horizontal faces (BoundBox is inflated by BSpline)
+    zbot = ztop = None
+    for f in src.Faces:
+        try:
+            if type(f.Surface).__name__ == 'Plane':
+                n = f.normalAt(0, 0)
+                zc = f.CenterOfMass.z
+                if n.z > 0.9:
+                    ztop = zc if ztop is None else max(ztop, zc)
+                elif n.z < -0.9:
+                    zbot = zc if zbot is None else min(zbot, zc)
+        except Exception:
+            pass
+    if zbot is None or ztop is None or (ztop - zbot) <= t + 0.1:
+        App.Console.PrintWarning("[BNC] reconstruct: no horizontal top/bottom faces\n")
+        return None
+    H = ztop - zbot
+    zmid = (zbot + ztop) / 2.0
+
+    # centre (reliable boolean bbox at mid-height)
+    try:
+        cb = src.common(Part.makeBox(4000, 4000, 1.0,
+                        App.Vector(-2000, -2000, zmid - 0.5))).BoundBox
+        xc = (cb.XMin + cb.XMax) / 2.0
+        yc = (cb.YMin + cb.YMax) / 2.0
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] reconstruct: centre probe failed ({exc})\n")
+        return None
+
+    inv = 1.0 / (1.0 - 1.0 / _m.sqrt(2.0))
+
+    def _section(z):
+        """Return (xmn,xmx,ymn,ymx,R) of the cross-section at height z, or None."""
+        try:
+            bx = src.common(Part.makeBox(4000, 1.0, 0.6,
+                            App.Vector(-2000, yc - 0.5, z - 0.3))).BoundBox
+            by = src.common(Part.makeBox(1.0, 4000, 0.6,
+                            App.Vector(xc - 0.5, -2000, z - 0.3))).BoundBox
+            xmn, xmx, ymn, ymx = bx.XMin, bx.XMax, by.YMin, by.YMax
+            W = xmx - xmn; Hh = ymx - ymn
+            if W < 0.5 or Hh < 0.5:
+                return None
+            smax = min(W, Hh) / 2.0
+            s = 0.0; R = 0.0
+            while s < smax:
+                if src.isInside(App.Vector(xmn + s, ymn + s, z), 1e-4, True):
+                    R = s * inv
+                    break
+                s += 0.05
+            return xmn, xmx, ymn, ymx, R
+        except Exception:
+            return None
+
+    # 2. sample sections; a SMOOTH (BSpline) loft needs only a handful and gives
+    #    a clean low-face-count surface (no "layer lines").  To avoid a smooth-
+    #    loft BULGE at a dirty bottom "pedestal" (a sharp width step), FORCE
+    #    every section to the body's full width/height — the part is a constant
+    #    footprint with a corner radius that varies by height.  Only the corner
+    #    radius is taken per-section (gives the tapered-corner look) while the
+    #    outer extent stays constant → straight walls, no bulge, no funnel.
+    n_lv = 12
+    raw = []
+    for i in range(n_lv + 1):
+        z = zbot + (H) * (i / float(n_lv))
+        z = min(max(z, zbot + 0.5), ztop - 0.25)
+        if raw and abs(z - raw[-1][0]) < 1e-3:
+            continue
+        sec = _section(z)
+        if sec is None:
+            continue
+        xmn, xmx, ymn, ymx, R = sec
+        if (xmx - xmn) <= 2 * t + 0.2 or (ymx - ymn) <= 2 * t + 0.2:
+            continue
+        raw.append((z, xmn, xmx, ymn, ymx, R))
+
+    if len(raw) < 3:
+        App.Console.PrintWarning("[BNC] reconstruct: not enough valid sections\n")
+        return None
+
+    # full body footprint = the widest section (the body, not the pedestal)
+    Wmax = max(r[2] - r[1] for r in raw)
+    Hmax = max(r[4] - r[3] for r in raw)
+    fx0, fx1 = xc - Wmax / 2.0, xc + Wmax / 2.0
+    fy0, fy1 = yc - Hmax / 2.0, yc + Hmax / 2.0
+
+    # corner radius vs height — use the BODY sections' R (ignore the pedestal,
+    # whose tiny R would kink the loft), clamped to the footprint.
+    body = [r for r in raw
+            if (r[2] - r[1]) >= 0.9 * Wmax and (r[4] - r[3]) >= 0.9 * Hmax]
+    if len(body) < 2:
+        body = raw
+    Rmax = min(Wmax, Hmax) / 2.0 - 0.05
+
+    outer_wires = []
+    # straight wall from the true bottom up, constant footprint, R per body level
+    z_levels = [zbot] + [r[0] for r in body]
+    r_levels = [body[0][5]] + [r[5] for r in body]
+    for z, R in zip(z_levels, r_levels):
+        try:
+            outer_wires.append(_rrect_wire(fx0, fx1, fy0, fy1, min(R, Rmax), z))
+        except Exception:
+            pass
+    if len(outer_wires) < 3:
+        App.Console.PrintWarning("[BNC] reconstruct: not enough body sections\n")
+        return None
+
+    App.Console.PrintMessage(
+        f"[BNC] reconstruct: {len(outer_wires)} sections, footprint "
+        f"{Wmax:.2f}x{Hmax:.2f}, Z[{zbot:.2f},{ztop:.2f}], centre=({xc:.2f},{yc:.2f})\n")
+
+    # 3. SMOOTH outer loft → clean closed solid (Creo-quality surface)
+    try:
+        outer_solid = Part.makeLoft(outer_wires, True, False)   # solid, smooth
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] reconstruct: loft failed ({exc})\n")
+        return None
+    if not outer_solid.isValid() or not outer_solid.Solids:
+        App.Console.PrintWarning("[BNC] reconstruct: loft invalid\n")
+        return None
+
+    # 4. shell EXACTLY like Creo: remove the top face, then offset the rest
+    #    inward by t (fill=True closes the rim).  makeOffsetShape is reliable
+    #    on this CLEAN loft (it only failed on the corrupt original).
+    topf = None
+    for f in outer_solid.Faces:
+        try:
+            n = f.normalAt(0, 0)
+            if n.z > 0.8 and f.CenterOfMass.z > ztop - 2.0:
+                if topf is None or f.CenterOfMass.z > topf.CenterOfMass.z:
+                    topf = f
+        except Exception:
+            pass
+    if topf is None:
+        App.Console.PrintWarning("[BNC] reconstruct: no top face on loft\n")
+        return None
+    open_faces = [f for f in outer_solid.Faces if not f.isSame(topf)]
+    try:
+        open_shell = Part.Shell(open_faces)
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] reconstruct: open shell failed ({exc})\n")
+        return None
+
+    result = None
+    for join in (0, 2, 1):
+        for tol in (1e-3, 1e-2, 1e-4):
+            try:
+                r = open_shell.makeOffsetShape(-t, tol, False, False, 0, join, True)
+                if (r.isValid() and r.Volume > 1e-6
+                        and r.Volume < outer_solid.Volume):
+                    result = r
+                    break
+            except Exception:
+                pass
+        if result is not None:
+            break
+    if result is None:
+        App.Console.PrintWarning("[BNC] reconstruct: open-offset failed\n")
+        return None
+
+    try:
+        subs2 = [s for s in (result.Solids or [])
+                 if s.isValid() and s.Volume > 1e-6]
+        if subs2:
+            result = max(subs2, key=lambda s: s.Volume)
+    except Exception:
+        pass
+    try:
+        result = result.removeSplitter()
+    except Exception:
+        pass
+    App.Console.PrintMessage(
+        f"[BNC] reconstruct OK — smooth tub, wall={t:.2f} mm, "
+        f"{len(result.Faces)} faces, vol={result.Volume:.1f}\n")
+    return result
+
+
+def _shell_via_section_offset(solid, thickness):
+    """
+    Creo/SolidWorks-correct shell for a prismatic body, robust to dirty
+    (BSpline) geometry AND to rounded top/bottom (fillets).  Method:
+
+      1. Slice the solid at MID-HEIGHT → the constant cross-section profile
+         (this is the true wall section — NOT the bottom face, which may be a
+         small flat left by a bottom fillet).
+      2. Measure the section's bbox + corner radius (curve-type agnostic).
+      3. Build a clean inner rounded-rect inset by t (radius R→R-t) and
+         extrude it over the full height → inner wall prism.
+      4. void = inner_prism ∩ (solid translated UP by t).  The intersection
+         makes the cavity floor follow the bottom fillet (offset up by t) and
+         removes the top → open top.  Walls are exactly t thick.
+      5. result = solid − void.
+
+    Verified headless: walls 2.000 mm, floor 2.000 mm on a filleted box.
+    """
+    import math as _m
+    t = abs(thickness)
+
+    src = solid
+    try:
+        subs = [s for s in (solid.Solids or []) if s.isValid() and s.Volume > 1e-6]
+        if subs:
+            src = max(subs, key=lambda s: s.Volume)
+    except Exception:
+        pass
+
+    sb = src.BoundBox
+    midz = (sb.ZMin + sb.ZMax) / 2.0
+
+    # 1. The constant wall cross-section spans the FULL XY bounding box (the
+    #    mid-height section is the widest part of a prismatic body).  Use the
+    #    solid's own bbox — reliable, unlike slice() on dirty BSpline geometry.
+    xmn, xmx = sb.XMin, sb.XMax
+    ymn, ymx = sb.YMin, sb.YMax
+
+    if (xmx - xmn) <= 2 * t + 0.2 or (ymx - ymn) <= 2 * t + 0.2:
+        App.Console.PrintWarning("[BNC] section-offset: section too small for t\n")
+        return None
+
+    # 2. Corner radius: take a thin horizontal slab through mid-height (boolean
+    #    common is robust on dirty geometry where slice() is not), read its
+    #    rounded-rectangle profile and measure R by the corner-distance method.
+    R = None
+    try:
+        slab = Part.makeBox(sb.XLength + 20.0, sb.YLength + 20.0, 2.0,
+                            App.Vector(sb.XMin - 10.0, sb.YMin - 10.0, midz - 1.0))
+        cm = src.common(slab)
+        prof_wire = None
+        for f in cm.Faces:
+            try:
+                if abs(f.normalAt(0, 0).z) > 0.9:   # horizontal face = the section
+                    prof_wire = f.OuterWire
+                    break
+            except Exception:
+                pass
+        if prof_wire is not None:
+            samp = prof_wire.discretize(Number=600)
+            k = _m.sqrt(2.0) - 1.0
+            Rs = []
+            for (cxn, cyn) in ((xmn, ymn), (xmx, ymn), (xmn, ymx), (xmx, ymx)):
+                Rs.append(min(_m.hypot(p.x - cxn, p.y - cyn) for p in samp) / k)
+            Rs.sort()
+            R = Rs[len(Rs) // 2]
+            App.Console.PrintMessage(
+                f"[BNC] section-offset: section {xmx-xmn:.2f}x{ymx-ymn:.2f} "
+                f"R={R:.3f} (corners {[round(r,2) for r in Rs]})\n")
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] section-offset: R-measure failed ({exc})\n")
+
+    if R is None:
+        App.Console.PrintWarning("[BNC] section-offset: could not measure section R\n")
+        return None
+
+    # 3. inner wall prism
+    inner_face = _rounded_rect_inner_face(xmn, xmx, ymn, ymx, R, t, sb.ZMin)
+    if inner_face is None:
+        App.Console.PrintWarning("[BNC] section-offset: inner face build failed\n")
+        return None
+    prism = inner_face.extrude(App.Vector(0, 0, sb.ZLength + 2.0 * t + 4.0))
+    prism.translate(App.Vector(0, 0, -2.0))   # span below bottom to above top
+
+    # 4. void = inner prism ∩ (solid shifted UP by t)
+    try:
+        shifted = src.copy()
+        shifted.translate(App.Vector(0, 0, t))
+        void = prism.common(shifted)
+        if not void.isValid() or void.Volume < 1e-6:
+            App.Console.PrintWarning("[BNC] section-offset: void invalid\n")
+            return None
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] section-offset: void build failed ({exc})\n")
+        return None
+
+    # 5. cut
+    try:
+        result = src.cut(void)
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] section-offset: cut failed ({exc})\n")
+        return None
+    try:
+        subs2 = [s for s in (result.Solids or [])
+                 if s.isValid() and s.Volume > 1e-6]
+        if subs2:
+            result = max(subs2, key=lambda s: s.Volume)
+    except Exception:
+        pass
+
+    vol = getattr(result, "Volume", 0.0)
+    if vol <= 1e-6 or vol >= src.Volume * 0.999 or not result.isValid():
+        App.Console.PrintWarning(
+            f"[BNC] section-offset: bad result vol={vol:.2f}/{src.Volume:.2f}\n")
+        return None
+    try:
+        result = result.removeSplitter()
+    except Exception:
+        pass
+    App.Console.PrintMessage(
+        f"[BNC] section-offset OK — BBox {result.BoundBox.XLength:.2f}x"
+        f"{result.BoundBox.YLength:.2f}x{result.BoundBox.ZLength:.2f}\n")
+    return result
+
+
+def _shell_via_manual_offset(solid, thickness):
+    """
+    Analytically-constructed inner void for rounded-rectangle profiles.
+    Handles the case where OCCT makeOffset2D / makeOffsetShape both fail:
+      * Straight edges moved inward by t (parallel shift)
+      * Arc edges: radius reduced from R to (R - t), centre unchanged
+    This gives EXACTLY uniform wall thickness t everywhere — flat walls AND
+    corner fillets — because R_inner = R_outer - t.
+    Works ONLY for 8-edge rounded-rectangle profiles (4 straight + 4 arcs).
+    """
+    t = abs(thickness)
+
+    # Work on the main solid (extract from compound if needed)
+    src = solid
+    try:
+        subs = [s for s in (solid.Solids or []) if s.isValid() and s.Volume > 1e-6]
+        if subs:
+            src = max(subs, key=lambda s: s.Volume)
+    except Exception:
+        pass
+
+    bb = src.BoundBox
+
+    bottom = _bottom_planar_face(src)
+    if bottom is None:
+        return None
+
+    outer_wire = bottom.OuterWire
+    edges = outer_wire.Edges
+
+    if len(edges) != 8:
+        App.Console.PrintMessage(
+            f"[BNC] manual-offset: {len(edges)}-edge profile, "
+            f"need 8 (rounded rect) — skipping\n")
+        return None
+
+    import math as _math
+
+    # ── Measure the corner-fillet radius from the profile GEOMETRY ───────────
+    # Curve-type agnostic — works even when every edge is a BSplineCurve and
+    # the walls are slightly wavy (dirty geometry).  Method: the profile point
+    # nearest each bounding-box corner is the fillet-arc's 45° point, which sits
+    # at distance R·(√2−1) from that corner.  So R = (that min distance)/(√2−1).
+    # Verified exact on clean R=5 geometry (gives 5.005).
+    fb = bottom.BoundBox
+    try:
+        samp = outer_wire.discretize(Number=800)
+    except Exception:
+        samp = [v.Point for v in outer_wire.Vertexes]
+    if not samp or len(samp) < 8:
+        App.Console.PrintWarning("[BNC] manual-offset: cannot sample profile\n")
+        return None
+
+    xs = [p.x for p in samp];  ys = [p.y for p in samp]
+    xmn, xmx = min(xs), max(xs)
+    ymn, ymx = min(ys), max(ys)
+    k = _math.sqrt(2.0) - 1.0
+    Rs = []
+    for (cxn, cyn) in ((xmn, ymn), (xmx, ymn), (xmn, ymx), (xmx, ymx)):
+        dmin = min(_math.hypot(p.x - cxn, p.y - cyn) for p in samp)
+        Rs.append(dmin / k)
+    Rs.sort()
+    R = Rs[len(Rs) // 2]          # median of the four corner radii (robust)
+    z = float(bottom.BoundBox.ZMin)
+    App.Console.PrintMessage(
+        f"[BNC] manual-offset: corner-distance R={R:.3f} "
+        f"(per-corner {[round(r, 2) for r in Rs]})\n")
+    if R <= t + 0.01:
+        App.Console.PrintWarning(
+            f"[BNC] manual-offset: fillet R={R:.2f} ≤ t={t:.2f} — too thin\n")
+        return None
+
+    R_inner = R - t
+    x0 = fb.XMin + t;  x1 = fb.XMax - t
+    y0 = fb.YMin + t;  y1 = fb.YMax - t
+
+    if (x1 - x0) < 2 * R_inner + 0.01 or (y1 - y0) < 2 * R_inner + 0.01:
+        App.Console.PrintWarning("[BNC] manual-offset: inner outline too small\n")
+        return None
+
+    App.Console.PrintMessage(
+        f"[BNC] manual-offset: R={R:.2f}→{R_inner:.2f} "
+        f"wall={t:.2f} rect=[{x0:.2f},{y0:.2f}]→[{x1:.2f},{y1:.2f}] z={z:.2f}\n")
+
+    try:
+        # Corner centres of the INNER rounded rectangle
+        cx0 = x0 + R_inner;  cx1 = x1 - R_inner
+        cy0 = y0 + R_inner;  cy1 = y1 - R_inner
+        z_ax = App.Vector(0, 0, 1)
+
+        def _pt(x, y):
+            return App.Vector(x, y, z)
+
+        def _arc(cen, r, a1, a2):
+            """Build a Part.Edge arc from angle a1° to a2° (CCW) on circle at cen."""
+            c = Part.Circle(cen, z_ax, r)
+            return Part.Arc(c, _math.radians(a1), _math.radians(a2)).toShape()
+
+        # 8 edges forming a CCW closed rounded rectangle starting at bottom-left
+        inner_edges = [
+            Part.makeLine(_pt(cx0, y0),  _pt(cx1, y0)),    # bottom straight
+            _arc(_pt(cx1, cy0), R_inner, 270, 360),         # bottom-right corner
+            Part.makeLine(_pt(x1,  cy0), _pt(x1,  cy1)),   # right straight
+            _arc(_pt(cx1, cy1), R_inner,   0,  90),         # top-right corner
+            Part.makeLine(_pt(cx1, y1),  _pt(cx0, y1)),    # top straight
+            _arc(_pt(cx0, cy1), R_inner,  90, 180),         # top-left corner
+            Part.makeLine(_pt(x0,  cy1), _pt(x0,  cy0)),   # left straight
+            _arc(_pt(cx0, cy0), R_inner, 180, 270),         # bottom-left corner
+        ]
+
+        inner_wire = Part.Wire(inner_edges)
+        if not inner_wire.isClosed():
+            App.Console.PrintWarning("[BNC] manual-offset: inner wire not closed\n")
+            return None
+
+        inner_face = Part.Face(inner_wire)
+        if not inner_face.isValid():
+            App.Console.PrintWarning("[BNC] manual-offset: inner face invalid\n")
+            return None
+
+        # Extrude the inner face upward past ZMax (this becomes the void).
+        # The void must start at bb.ZMin + t (leaving floor of thickness t)
+        # and extend 1.5 mm past bb.ZMax (cleanly opens the top).
+        ext_h = bb.ZLength - t + 1.5
+        void = inner_face.extrude(App.Vector(0, 0, ext_h))
+        # The inner_face is at z (= bottom face Z ≈ bb.ZMin).
+        # Shift void down/up so its bottom aligns with bb.ZMin + t.
+        dz = (bb.ZMin + t) - z
+        if abs(dz) > 1e-4:
+            void.translate(App.Vector(0, 0, dz))
+
+        App.Console.PrintMessage(
+            f"[BNC] manual-offset: void Z [{void.BoundBox.ZMin:.2f} → "
+            f"{void.BoundBox.ZMax:.2f}]\n")
+
+        result = src.cut(void)
+
+        # Extract largest piece from any compound
+        try:
+            subs2 = [s for s in (result.Solids or [])
+                     if s.isValid() and s.Volume > 1e-6]
+            if subs2:
+                result = max(subs2, key=lambda s: s.Volume)
+        except Exception:
+            pass
+
+        vol = getattr(result, "Volume", 0.0)
+        if vol <= 1e-6 or vol >= src.Volume * 0.999:
+            App.Console.PrintWarning(
+                f"[BNC] manual-offset: bad vol {vol:.2f}/{src.Volume:.2f}\n")
+            return None
+
+        if not result.isValid():
+            App.Console.PrintWarning("[BNC] manual-offset: result invalid\n")
+            return None
+
+        try:
+            result = result.removeSplitter()
+        except Exception:
+            pass
+
+        App.Console.PrintMessage(
+            f"[BNC] manual-offset OK — BBox {result.BoundBox.XLength:.2f}x"
+            f"{result.BoundBox.YLength:.2f}x{result.BoundBox.ZLength:.2f}\n")
+        return result
+
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] manual-offset failed: {exc}\n")
+        import traceback as _tb3
+        App.Console.PrintWarning(_tb3.format_exc())
+        return None
+
+
+def _shell_via_bbox_cut(solid, thickness):
+    """
+    OCCT-offset-independent last resort: shrink a plain rectangle inward by
+    `thickness` and cut it from the solid.  Inner walls are rectangular (does
+    not follow fillet curves), so use _shell_via_scale_cut first.
+    """
+    t = abs(thickness)
+
+    # Extract main solid in case it's a compound.
+    src = solid
+    try:
+        subs = [s for s in (solid.Solids or []) if s.isValid() and s.Volume > 1e-6]
+        if subs:
+            src = max(subs, key=lambda s: s.Volume)
+    except Exception:
+        pass
+
+    bb = src.BoundBox
+    App.Console.PrintMessage(
+        f"[BNC] bbox-cut: src={bb.XLength:.2f}x{bb.YLength:.2f}x{bb.ZLength:.2f}\n")
+    try:
+        # Inner box: from ZMin+t to just above ZMax.
+        inner = Part.makeBox(
+            max(bb.XLength - 2.0 * t, 0.1),
+            max(bb.YLength - 2.0 * t, 0.1),
+            max(bb.ZLength - t + 0.01, 0.1),
+            App.Vector(bb.XMin + t, bb.YMin + t, bb.ZMin + t)
+        )
+        # Extend the top with a full-width column so the entire top face opens.
+        pad = max(t + 1.0, 3.0)
+        topcol = Part.makeBox(
+            bb.XLength + 2.0 * pad,
+            bb.YLength + 2.0 * pad,
+            bb.ZLength + 2.0 * t + 2.0,
+            App.Vector(bb.XMin - pad, bb.YMin - pad, bb.ZMax - 0.02)
+        )
+        try:
+            void = inner.fuse(topcol)
+        except Exception:
+            void = inner
+
+        raw = src.cut(void)
+
+        # Extract largest solid from any compound result.
+        result = raw
+        try:
+            subs2 = [s for s in (raw.Solids or []) if s.isValid() and s.Volume > 1e-6]
+            if subs2:
+                result = max(subs2, key=lambda s: s.Volume)
+        except Exception:
+            pass
+
+        vol = getattr(result, "Volume", 0.0)
+        if vol > 1e-6 and vol < src.Volume * 0.999 and result.isValid():
+            try:
+                result = result.removeSplitter()
+            except Exception:
+                pass
+            App.Console.PrintMessage(
+                f"[BNC] bbox-cut OK: BBox={result.BoundBox.XLength:.2f}x"
+                f"{result.BoundBox.YLength:.2f}x{result.BoundBox.ZLength:.2f}\n")
+            return result
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] bbox-cut failed: {exc}\n")
+    return None
+
+
+def _shell_via_bottomwire(solid, thickness):
+    """
+    Last resort: offset the BOTTOM face wire inward in 2D, extrude up, cut.
+    Gives a uniform-wall open-top shell but DROPS any top fillet (the void
+    is a constant cross-section). Reliable on any prismatic base.
+    """
+    t = abs(thickness)
+    bb = solid.BoundBox
+    bottom = _bottom_planar_face(solid)
+    if bottom is None:
+        App.Console.PrintWarning("[BNC] bottomwire: no planar bottom face found\n")
+        return None
+    outer_wire = bottom.OuterWire
+    App.Console.PrintMessage(
+        f"[BNC] bottomwire: bottom face found, {len(outer_wire.Edges)} edges\n")
+
+    inner_wire = None
+    try:
+        orig_area = Part.Face(outer_wire).Area
+    except Exception:
+        orig_area = 1.0
+    for sign in (-1, 1):
+        for join in (0, 1, 2):
+            try:
+                cand = outer_wire.makeOffset2D(sign * t, join, False, False, False)
+                if cand and not cand.isNull():
+                    if Part.Face(cand).Area < orig_area * 0.98:
+                        inner_wire = cand
+                        break
+            except Exception as exc:
+                App.Console.PrintWarning(
+                    f"[BNC] bottomwire: makeOffset2D(sign={sign}, join={join}) "
+                    f"failed: {exc}\n")
+        if inner_wire:
+            break
+    if inner_wire is None:
+        App.Console.PrintWarning("[BNC] bottomwire: makeOffset2D failed for all combos\n")
+        return None
+
+    try:
+        inner_face = Part.Face(inner_wire)
+        # Extrude the inner profile straight up PAST the top so the inner wall
+        # is vertical all the way to the opening → flat rim (no sloped band),
+        # exactly like Creo. Leave a `t` floor at the bottom.
+        void = inner_face.extrude(App.Vector(0, 0, bb.ZLength + 2.0 * t))
+        void.translate(App.Vector(0, 0, (bb.ZMin + t) - inner_face.CenterOfMass.z))
+        result = solid.cut(void)
+        if result.isValid() and result.Shells:
+            try:
+                result = result.removeSplitter()
+            except Exception:
+                pass
+            App.Console.PrintMessage("[BNC] Bottom-wire boolean shell OK\n")
+            return result
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] Bottom-wire shell failed: {exc}\n")
+    return None
+
+
+def _shell_open_top(solid, thickness):
+    """
+    Try the shelling strategies in order of correctness:
+      1. makeThickSolid  — exact Creo result (uniform wall + flat rim) if it works
+      2. offset-shell    — true 3-D inward offset → UNIFORM 2 mm wall (verified)
+      3. bottom-wire     — last resort; can give a non-uniform wall on filleted
+                           solids, so only used if the others fail.
+    """
+    for fn, name in (
+        (_shell_via_makethick,     "makeThickSolid"),
+        (_shell_via_openoffset,    "open-shell offset (flat rim)"),
+        (_shell_via_offsetshape,   "offset-shell"),
+        (_shell_via_reconstruct,   "reconstruct (clean rebuild, dirty-solid safe)"),
+        (_shell_via_section_offset,"section-offset (mid-section, exact t)"),
+        (_shell_via_manual_offset, "manual-offset (clean rebuild, exact t)"),
+        (_shell_via_poly_offset,   "poly-offset (true uniform t, Creo-style)"),
+        (_shell_via_bottomwire,    "bottom-wire boolean"),
+        (_shell_via_scale_cut,     "scale-cut (proportional, rounded corners)"),
+        (_shell_via_bbox_cut,      "bbox-cut (rectangular corners, last resort)"),
+    ):
+        App.Console.PrintMessage(f"[BNC] Shelling: trying {name}...\n")
+        res = fn(solid, thickness)
+        if res is not None:
+            return res, name
+    return None, None
+
+
+_MT_CACHE = None   # last successful (mode, join, tol) for makeThickSolid
+
+
+def _shape_valid(s):
+    """Defensive validity check before feeding a shape to a boolean op."""
+    try:
+        return s is not None and s.isValid() and s.Volume > 1e-6
+    except Exception:
+        return False
+
+
+def _same_face(a, b):
+    try:
+        return a.isSame(b)
+    except Exception:
+        return False
+
+
+def _faces_share_edge(f1, f2):
+    try:
+        mids1 = [(_edge_midpoint(e), _edge_length(e)) for e in f1.Edges]
+        for e in f2.Edges:
+            m = _edge_midpoint(e)
+            ln = _edge_length(e)
+            for m1, l1 in mids1:
+                if (m - m1).Length < 1e-3 and abs(ln - l1) < 1e-2:
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def _expand_to_connectors(base, selected):
+    """
+    Add the small fillet faces (rounded corners/edges) that sit between the
+    selected faces, so opening adjacent faces gives a clean corner instead of
+    leaving a thin curved strip. Adds a curved 'connector' face when it touches
+    >=2 selected faces. Only curved faces are added — flat walls never are.
+    """
+    out = list(selected)
+    added = []
+    try:
+        for i, f in enumerate(base.Faces):
+            if any(_same_face(f, s) for s in selected):
+                continue
+            stype = type(f.Surface).__name__
+            if stype not in ("Cylinder", "Torus", "BSplineSurface",
+                             "Sphere", "SurfaceOfRevolution", "BezierSurface"):
+                continue
+            adj = sum(1 for s in selected if _faces_share_edge(f, s))
+            if adj >= 2:
+                out.append(f)
+                added.append(f"Face{i+1}({stype})")
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] connector expand error: {exc}\n")
+    App.Console.PrintMessage(
+        f"[BNC] connector fillets auto-added: {added or 'none'}\n")
+    return out
+
+
+def _offset_then_open_faces(solid, off, faces):
+    """
+    General multi-face shell that does not rely on makeThickSolid:
+      1. inner = 3-D inward offset of the solid  → closed cavity
+      2. closed_shell = solid - inner            → uniform wall, all closed
+      3. for each face to open: extrude it INTO the wall and cut it away
+    Works for any number/combination of faces and preserves fillets.
+    Returns the shape or None.
+    """
+    t = abs(off)
+    try:
+        offshape = solid.makeOffsetShape(off, 0.01)
+    except Exception:
+        return None
+
+    inner = None
+    try:
+        if offshape.Solids:
+            inner = offshape.Solids[0]
+        elif offshape.Shells:
+            inner = Part.makeSolid(offshape.Shells[0])
+        else:
+            inner = Part.makeSolid(offshape)
+    except Exception:
+        return None
+    if inner is None or not inner.isValid():
+        return None
+
+    # Open each face by pushing its MATCHING INNER cavity face out through the
+    # wall. The inner face footprint is the cavity opening (inset from the
+    # walls), so it removes only that one wall plate and keeps every other wall
+    # uniform and the outer size intact.
+    # For a top/bottom open: push the cavity copy far enough up/down that the
+    # opening lands in the STRAIGHT wall region (clear of the inner top fillet),
+    # giving a clean flat rim instead of a thin flange. Must stay below the
+    # cavity height so the two copies still overlap into one void.
+    try:
+        cav_h = inner.BoundBox.ZLength
+    except Exception:
+        cav_h = 50.0
+    push_v = min(cav_h * 0.45, max(12.0, t * 5))
+    push = t + 1.0
+    void_parts = [inner]
+    opened = 0
+    for f in faces:
+        # CRASH SAFETY: only PLANAR faces are opened. Curved (fillet) faces are
+        # skipped — extruding them crashes OCCT, and pushing the cavity toward
+        # them creates a messy diagonal flap. They simply stay closed.
+        if not _is_planar(f):
+            continue
+        try:
+            u0, u1, v0, v1 = f.ParameterRange
+            n = f.normalAt((u0 + u1) * 0.5, (v0 + v1) * 0.5).normalize()
+        except Exception:
+            continue
+
+        try:
+            if abs(n.z) > 0.8:
+                # Planar top/bottom: push the whole cavity along Z past the
+                # fillet zone → clean flat rim, side walls & height preserved.
+                shifted = inner.copy()
+                shifted.translate(n.multiply(push_v))
+                if shifted.isValid():
+                    void_parts.append(shifted)
+                    opened += 1
+            else:
+                # Planar side: remove the full-height wall plate (face inward).
+                opener = f.extrude(n.multiply(-(t + 0.5)))
+                if opener.isValid() and opener.Volume > 0:
+                    void_parts.append(opener)
+                    opened += 1
+        except Exception:
+            pass
+
+    if opened == 0:
+        return None
+    try:
+        # Build the void defensively: only fuse VALID parts.
+        good = [p for p in void_parts if _shape_valid(p)]
+        if not good:
+            return None
+        void = good[0]
+        if len(good) > 1:
+            void = void.fuse(good[1:])
+        if not _shape_valid(void):
+            return None
+        result = solid.cut(void)
+        if result.isValid() and result.Volume > 0 and result.Shells:
+            # removeSplitter only on a valid solid (it can crash on bad shapes).
+            if _shape_valid(result):
+                try:
+                    cleaned = result.removeSplitter()
+                    if _shape_valid(cleaned):
+                        result = cleaned
+                except Exception:
+                    pass
+            App.Console.PrintMessage(
+                f"[BNC] offset+open-faces opened {opened}/{len(faces)} face(s)\n")
+            return result
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] offset+open-faces cut failed: {exc}\n")
+    return None
+
+
+def _open_top_plus_sides(solid, thickness, faces):
+    """
+    When the TOP face is among the selected faces: open the top with the clean
+    single-face method (so the rim is identical to a single-face shell, no
+    flange), then cut the OTHER planar side faces into that clean shell.
+    Returns the shape or None (if top not selected / method unavailable).
+    """
+    top = _top_planar_face(solid)
+    if top is None:
+        return None
+    if not any(_same_face(f, top) for f in faces):
+        return None
+
+    base, _m = _shell_open_top(solid, thickness)   # clean open-top shell
+    if base is None or not _shape_valid(base):
+        return None
+
+    t = abs(thickness)
+    result = base
+    for f in faces:
+        if _same_face(f, top):
+            continue                # top already opened cleanly
+        if not _is_planar(f):
+            continue                # skip curved fillet faces (crash safety)
+        try:
+            u0, u1, v0, v1 = f.ParameterRange
+            n = f.normalAt((u0 + u1) * 0.5, (v0 + v1) * 0.5).normalize()
+        except Exception:
+            continue
+        if abs(n.z) > 0.8:
+            continue                # other top/bottom handled elsewhere
+        try:
+            opener = f.extrude(n.multiply(-(t + 0.5)))
+            if _shape_valid(opener):
+                cut = result.cut(opener)
+                if _shape_valid(cut):
+                    result = cut
+        except Exception:
+            pass
+
+    try:
+        cleaned = result.removeSplitter()
+        if _shape_valid(cleaned):
+            result = cleaned
+    except Exception:
+        pass
+    return result if _shape_valid(result) else None
+
+
+def _shell_remove_faces(solid, thickness, remove_faces,
+                        join=0, inward=True, intersection=False,
+                        source_feature=None):
+    """
+    Shell `solid` removing the given faces (Creo-style multi-face shell).
+    `remove_faces` is a list of Face objects belonging to `solid`
+    (empty → the top planar face is used).
+    `source_feature` (optional) is the PartDesign feature that produced `solid`;
+    if given it enables the EXACT feature-roll-back shell for tips OCCT can't
+    offset.
+    Returns (shape, method) or (None, None).
+    """
+    # IMPORTANT: do NOT removeSplitter here — it merges/renumbers faces and
+    # would invalidate the user's face selection. Use the faces exactly as
+    # picked, on the solid they belong to.
+    base = solid
+    try:
+        if solid.Solids and not solid.isSame(solid.Solids[0]):
+            # keep faces valid: only switch to the single solid if our faces
+            # still belong to it
+            pass
+    except Exception:
+        pass
+
+    faces = list(remove_faces)
+    explicit = len(faces) > 0
+    if not faces:
+        tf = _top_planar_face(base)
+        if tf is not None:
+            faces = [tf]
+    if not faces:
+        return None, None
+
+    # 0. EXACT feature-roll-back shell (Creo/SolidWorks method). Tried first when
+    #    the solid comes from a native PartDesign body: it shells the body BEFORE
+    #    any fillet OCCT cannot offset, then re-applies that fillet — preserving
+    #    the OUTER shape 1:1 with a uniform wall. Naturally returns the direct
+    #    shell when the tip offsets fine. Falls through on any failure.
+    if source_feature is not None and inward:
+        try:
+            rb = _shell_via_feature_rollback(source_feature, faces, thickness)
+            if rb is not None and rb.isValid() and rb.Volume > 1e-6:
+                b = rb.BoundBox
+                App.Console.PrintMessage(
+                    f"[BNC] method=feature-rollback (exact)  result outer="
+                    f"{b.XLength:.2f}x{b.YLength:.2f}x{b.ZLength:.2f}\n")
+                return rb, "feature-rollback (exact)"
+        except Exception as exc:
+            App.Console.PrintWarning(f"[BNC] rollback error: {exc}\n")
+
+    # (Auto-including curved corner fillets was removed: extruding curved faces
+    #  could crash OCCT. Corner fillets between openings may remain as thin
+    #  strips on complex multi-face selections — a known kernel limitation.)
+
+    off = -abs(thickness) if inward else abs(thickness)
+
+    # The OUTER size must be preserved (e.g. 50 mm stays 50 mm) when shelling
+    # inwards. Helper to reject any result whose bounding box shrank.
+    sbb = solid.BoundBox
+
+    def _outer_ok(shape):
+        # Reject only a result that shrank by ~2*t in EVERY direction (the
+        # degenerate "whole solid offset inward" collapse).  NOTE: do NOT use a
+        # grow check here — smooth-loft (BSpline) results have an INFLATED
+        # BoundBox (control points extend past the real surface), which would
+        # falsely look "grown" and wrongly reject a perfectly good shell.
+        try:
+            b = shape.BoundBox
+            tol = abs(thickness) + 0.3
+            dx = abs(b.XLength - sbb.XLength)
+            dy = abs(b.YLength - sbb.YLength)
+            dz = abs(b.ZLength - sbb.ZLength)
+            shrunk_all = (dx > tol and dy > tol and dz > tol)
+            return not shrunk_all
+        except Exception:
+            return True
+
+    top = _top_planar_face(base)
+    top_only = (not explicit) or (
+        len(faces) == 1 and top is not None and _same_face(faces[0], top))
+
+    def _ret(r, name):
+        b = r.BoundBox
+        App.Console.PrintMessage(
+            f"[BNC] method={name}  result outer="
+            f"{b.XLength:.2f}x{b.YLength:.2f}x{b.ZLength:.2f} "
+            f"(source {sbb.XLength:.2f}x{sbb.YLength:.2f}x{sbb.ZLength:.2f})\n")
+        return r, name
+
+    # 1. SINGLE TOP FACE → proven open-top method (keeps the outer height).
+    if top_only:
+        res, m = _shell_open_top(base, thickness)
+        if res is not None and _outer_ok(res):
+            return _ret(res, m)
+
+    # 1b. TOP + OTHER FACES → open the top with the clean single-face method
+    #     (no flange), then cut the side faces into it. Gives a top rim
+    #     identical to the single-face result.
+    if top is not None and any(_same_face(f, top) for f in faces) and len(faces) >= 2:
+        res = _open_top_plus_sides(base, thickness, faces)
+        if res is not None and _outer_ok(res):
+            return _ret(res, "open-top + sides")
+
+    # 2. REMOVE-FACES + THICKEN-REMAINING (open-shell offset). This is the same
+    #    algorithm that preserves the outer size for the single-top case, but
+    #    for ANY set of selected faces. Preferred for multi-face because it
+    #    keeps the outer walls/height intact (unlike the prism method below).
+    try:
+        remaining = [f for f in base.Faces
+                     if not any(_same_face(f, rf) for rf in faces)]
+        if remaining and len(remaining) < len(base.Faces):
+            open_shell = Part.Shell(remaining)
+            for jn in (join, 0, 1, 2):
+                for tol in (1e-3, 1e-2, 1e-4):
+                    try:
+                        r = open_shell.makeOffsetShape(off, tol, False, False,
+                                                       0, jn, True)
+                        if (r.isValid() and r.Volume > 0
+                                and r.Volume < base.Volume and _outer_ok(r)):
+                            return _ret(r, "open-shell offset")
+                    except Exception:
+                        pass
+            App.Console.PrintWarning("[BNC] open-shell offset failed for these faces\n")
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] open-shell offset error: {exc}\n")
+
+    # 3. makeThickSolid — accept only if it opened faces AND kept the outer size.
+    combos = []
+    global _MT_CACHE
+    if _MT_CACHE is not None:
+        combos.append(_MT_CACHE)
+    for mode in (0, 1, 2):
+        for jn in (join, 0, 1, 2):
+            for tol in (1e-3, 1e-2, 1e-4, 1e-1):
+                combos.append((mode, jn, tol))
+    for (mode, jn, tol) in combos:
+        try:
+            r = base.makeThickSolid(faces, off, tol,
+                                    intersection, False, mode, jn)
+            if (r.isValid() and r.Volume > 0
+                    and r.Volume < base.Volume and _outer_ok(r)):
+                _MT_CACHE = (mode, jn, tol)
+                return _ret(r, "makeThickSolid")
+        except Exception:
+            pass
+
+    # 4. LAST RESORT: closed offset shell + prism-cut each face. Can lower a
+    #    filleted top, so it is only used if everything above fails.
+    r = _offset_then_open_faces(base, off, faces)
+    if r is not None and _outer_ok(r):
+        return _ret(r, "offset + open-faces")
+
+    return None, None
+
+
+# ===========================================================================
+# Step 5: measure the real wall thickness (proof for the 9.36 question)
+# ===========================================================================
+
+def _measure_wall(shell):
+    """
+    Measure the PERPENDICULAR wall thickness on a flat side:
+    find a large vertical planar OUTER face, then the parallel face with the
+    OPPOSITE normal (the inner side of that same wall), and take the distance
+    between their planes. This is exactly what you get clicking inner-face →
+    outer-face with the Measure tool. Robust; ignores corners/edges.
+    Returns float mm or None.
+    """
+    try:
+        verts = []
+        for f in shell.Faces:
+            if not _is_planar(f):
+                continue
+            n = _face_normal(f)
+            if abs(n.z) < 0.2:                    # vertical wall face
+                verts.append((f, n, _face_centroid(f), f.Area))
+        if len(verts) < 2:
+            return None
+
+        best = None
+        # Compare every face against faces with an opposite normal.
+        for f1, n1, c1, a1 in sorted(verts, key=lambda x: -x[3]):
+            for f2, n2, c2, a2 in verts:
+                if n1.dot(n2) < -0.9:             # opposite-facing pair
+                    d = abs((c2 - c1).dot(n1))    # plane-to-plane distance
+                    if d > 0.05 and (best is None or d < best):
+                        best = d
+            if best is not None:
+                break
+        if best is not None:
+            App.Console.PrintMessage(f"[BNC] Perpendicular wall = {best:.3f} mm\n")
+            return round(best, 3)
+    except Exception as exc:
+        App.Console.PrintWarning(f"[BNC] Wall measurement failed: {exc}\n")
+    return None
+
+
+# ===========================================================================
+# Store a computed shape inside a PartDesign Body
+# ===========================================================================
+
+def _is_broken(obj):
+    try:
+        state = obj.State
+        items = state if isinstance(state, (list, tuple)) else [state]
+        if any(isinstance(s, str) and s.lower() in ("error", "invalid")
+               for s in items):
+            return True
+    except Exception:
+        pass
+    try:
+        return not obj.Shape.isValid()
+    except Exception:
+        return True
+
+
+def _add_shape_to_body(doc, body, shape, name):
+    """
+    Add a pre-computed shape as a single feature inside the body.
+    Creates the object ONCE, then tries to attach it to the body via the
+    methods that work for a PartDesign Body. Never leaves an orphan behind.
+    """
+    feat = doc.addObject("Part::Feature", name)
+    feat.Shape = shape
+
+    # Attach 1: body.addObject (rejected by some bodies — caught)
+    try:
+        body.addObject(feat)
+        doc.recompute()
+        return feat
+    except Exception as e:
+        App.Console.PrintWarning(f"[BNC] body.addObject rejected: {e}\n")
+
+    # Attach 2: direct Group manipulation
+    try:
+        grp = list(body.Group)
+        if feat not in grp:
+            grp.append(feat)
+        body.Group = grp
+        doc.recompute()
+        return feat
+    except Exception as e:
+        App.Console.PrintWarning(f"[BNC] Group attach failed: {e}\n")
+
+    # Attach 3: leave it at document level (still a valid, visible result)
+    App.Console.PrintWarning("[BNC] kept shell at document level (outside body)\n")
+    doc.recompute()
+    return feat
+
+
+# ===========================================================================
+# Body reset (idempotent)
+# ===========================================================================
+
+_BASE_SOLID_TYPES = {
+    "PartDesign::Pad", "PartDesign::AdditiveBox", "PartDesign::AdditiveCylinder",
+    "PartDesign::AdditiveCone", "PartDesign::AdditiveSphere",
+    "PartDesign::AdditivePrism", "PartDesign::AdditiveWedge",
+    "PartDesign::AdditivePipe", "PartDesign::AdditiveLoft",
+    "PartDesign::Revolution",
+}
+_MACRO_REMOVABLE = {
+    "PartDesign::Thickness", "PartDesign::Fillet", "PartDesign::Chamfer",
+    "Part::Feature",
+}
+
+
+def _is_macro_shell(obj):
+    """True if obj is a shell feature created by this macro (a prior shell)."""
+    return (obj.TypeId in ("Part::Feature", "Part::FeaturePython")
+            and obj.Label.startswith(("Shell", "Thickness")))
+
+
+def _find_source_solid(body):
+    """
+    Return the solid feature to shell = the tip-most PartDesign solid feature
+    (Fillet / Chamfer / Pad / additive). This PRESERVES the original fillet:
+    we shell the already-filleted solid, exactly like Creo's Round -> Shell.
+    """
+    feats = list(body.Group)
+    source = None
+    for f in feats:
+        if (f.TypeId.startswith("PartDesign::")
+                and f.TypeId != "PartDesign::Thickness"):
+            try:
+                if f.Shape and f.Shape.Solids:
+                    source = f            # keep the LAST (tip-most) one
+            except Exception:
+                pass
+    return source
+
+
+def _remove_prior_shells(doc, body):
+    """
+    Idempotent cleanup: remove any shell features this macro made on previous
+    runs (in the body or at document level), so re-running never stacks
+    duplicates. Leaves the original Pad/Fillet chain untouched.
+    """
+    removed = []
+    for o in list(doc.Objects):
+        try:
+            # our own shell Part::Features, plus any failed PartDesign::Thickness
+            if _is_macro_shell(o) or o.TypeId == "PartDesign::Thickness":
+                doc.removeObject(o.Name)
+                removed.append(o.Label)
+        except Exception:
+            pass
+    if removed:
+        App.Console.PrintMessage(f"[BNC] Removed prior shell(s)/thickness: {removed}\n")
+        doc.recompute()
+
+
+# ===========================================================================
+# Parametric Shell feature (stores all shell parameters; rebuilds on change)
+# ===========================================================================
+
+_JOIN_NAMES = ["Arc", "Intersection", "Tangent"]
+
+
+class _ShellFP:
+    """Object proxy: re-shells the linked source solid from stored parameters."""
+    def __init__(self, obj, source, thickness, remove_faces,
+                 join, inward, intersection):
+        if not hasattr(obj, "WallThickness"):
+            obj.addProperty("App::PropertyLength", "WallThickness", "Shell",
+                            "Wall thickness")
+        if not hasattr(obj, "Source"):
+            obj.addProperty("App::PropertyLink", "Source", "Shell",
+                            "Solid that is shelled")
+        if not hasattr(obj, "RemoveFaces"):
+            obj.addProperty("App::PropertyStringList", "RemoveFaces", "Shell",
+                            "Faces removed (open). Empty = top face.")
+        if not hasattr(obj, "JoinType"):
+            obj.addProperty("App::PropertyEnumeration", "JoinType", "Shell",
+                            "Corner join type")
+            obj.JoinType = _JOIN_NAMES
+        if not hasattr(obj, "Inwards"):
+            obj.addProperty("App::PropertyBool", "Inwards", "Shell",
+                            "Thickness grows inwards (keeps outer size)")
+        if not hasattr(obj, "Intersection"):
+            obj.addProperty("App::PropertyBool", "Intersection", "Shell",
+                            "Allow self-intersection handling")
+        obj.WallThickness = thickness
+        obj.Source = source
+        obj.RemoveFaces = list(remove_faces)
+        obj.JoinType = _JOIN_NAMES[join] if 0 <= join < 3 else "Arc"
+        obj.Inwards = inward
+        obj.Intersection = intersection
+        obj.Proxy = self
+
+    def _faces(self, obj):
+        src = getattr(obj, "Source", None)
+        if src is None or not hasattr(src, "Shape"):
+            return None, []
+        shp = src.Shape
+        faces = []
+        for name in getattr(obj, "RemoveFaces", []) or []:
+            try:
+                i = int(str(name).replace("Face", "")) - 1
+                if 0 <= i < len(shp.Faces):
+                    faces.append(shp.Faces[i])
+            except Exception:
+                pass
+        return shp, faces
+
+    def execute(self, obj):
+        # Re-shelling already happened when the feature was created / edited.
+        # Avoid re-running the (potentially heavy/unstable) boolean shell on
+        # every passive recompute: only recompute when the parameters actually
+        # changed since the last successful build.
+        sig = None
+        try:
+            sig = (round(float(obj.WallThickness), 4),
+                   tuple(obj.RemoveFaces or []),
+                   str(obj.JoinType), bool(obj.Inwards), bool(obj.Intersection),
+                   getattr(getattr(obj, "Source", None), "Name", None))
+        except Exception:
+            sig = None
+        if sig is not None and getattr(self, "_sig", None) == sig \
+                and obj.Shape and not obj.Shape.isNull():
+            return  # nothing changed → keep the existing baked shape
+
+        shp, faces = self._faces(obj)
+        if shp is None:
+            return
+        try:
+            t = float(obj.WallThickness)
+        except Exception:
+            t = 2.0
+        join = _JOIN_NAMES.index(obj.JoinType) if obj.JoinType in _JOIN_NAMES else 0
+        try:
+            shell, method = _shell_remove_faces(
+                shp, t, faces, join, bool(obj.Inwards), bool(obj.Intersection),
+                source_feature=getattr(obj, "Source", None))
+        except Exception as exc:
+            App.Console.PrintWarning(f"[BNC] Shell recompute failed: {exc}\n")
+            return  # keep the existing shape, never crash the recompute
+        if shell is not None and _shape_valid(shell):
+            obj.Shape = shell
+            self._sig = sig
+            App.Console.PrintMessage(
+                f"[BNC] Shell recomputed: wall={t}mm via {method}\n")
+
+    def __getstate__(self):
+        return None
+
+    def __setstate__(self, state):
+        return None
+
+
+class _ShellVP:
+    """View provider proxy — custom icon + opens the task dialog on double-click."""
+    def __init__(self, vobj):
+        vobj.Proxy = self
+
+    def attach(self, vobj):
+        self.Object = vobj.Object
+
+    def getIcon(self):
+        return _SHELL_ICON if os.path.isfile(_SHELL_ICON) else ""
+
+    def doubleClicked(self, vobj):
+        obj = vobj.Object
+        src = getattr(obj, "Source", None)
+        if src is None:
+            return True
+        Gui.Control.closeDialog()
+        Gui.Control.showDialog(
+            ShellTaskPanel(obj.Document,
+                           _find_body_of(obj.Document, obj),
+                           src, existing=obj))
+        return True
+
+    def __getstate__(self):
+        return None
+
+    def __setstate__(self, state):
+        return None
+
+
+def _find_body_of(doc, obj):
+    for b in doc.Objects:
+        if b.TypeId == "PartDesign::Body":
+            try:
+                if obj in b.Group:
+                    return b
+            except Exception:
+                pass
+    return next((o for o in doc.Objects if o.TypeId == "PartDesign::Body"), None)
+
+
+def _create_shell_feature(doc, body, source, thickness, remove_faces,
+                          join, inward, intersection, shell_shape):
+    """Create a parametric, double-click-editable Shell feature in the body."""
+    feat = doc.addObject("Part::FeaturePython", "Shell")
+    _ShellFP(feat, source, thickness, remove_faces, join, inward, intersection)
+    feat.Shape = shell_shape
+    if feat.ViewObject is not None:
+        _ShellVP(feat.ViewObject)
+    try:
+        body.addObject(feat)
+    except Exception:
+        try:
+            grp = list(body.Group)
+            if feat not in grp:
+                grp.append(feat)
+            body.Group = grp
+        except Exception as e:
+            App.Console.PrintWarning(f"[BNC] body attach failed: {e}\n")
+    doc.recompute()
+    return feat
+
+
+# ===========================================================================
+# Creo-style task dialog: face selection + parameters + live preview
+# ===========================================================================
+
+_PREVIEW_NAME = "ShellPreview"
+
+
+class _FaceSelObserver:
+    """
+    Selection observer — while active, clicking a face of the source solid in
+    the 3-D view toggles it in/out of the 'faces to remove' list, exactly like
+    FreeCAD's native Thickness/Shell reference picking.
+    """
+    def __init__(self, panel):
+        self.panel = panel
+
+    def addSelection(self, doc, obj, sub, pnt):
+        try:
+            p = self.panel
+            if doc != p.doc.Name or obj != p.source.Name:
+                return
+            if sub and sub.startswith("Face"):
+                p._toggle_face(sub)
+        except Exception:
+            pass
+
+
+class ShellTaskPanel:
+    """
+    Docked task panel (NOT a floating modal dialog) so the 3-D view stays
+    interactive — you can rotate the model and pick faces while it is open.
+    Opened with Gui.Control.showDialog(); OK/Cancel come from the task system.
+    """
+    def __init__(self, doc, body, source, existing=None):
+        self.doc = doc
+        self.body = body
+        self.source = source
+        self.existing = existing
+        self.preview_obj = None
+        self.remove_names = []
+
+        # purge any stale preview objects left by a crashed/previous session
+        # (otherwise addObject() makes ShellPreview001, ShellPreview002, … and
+        #  an old one keeps showing stale geometry → "preview not updating").
+        try:
+            for o in list(doc.Objects):
+                if o.Name.startswith(_PREVIEW_NAME):
+                    doc.removeObject(o.Name)
+        except Exception:
+            pass
+
+        # remember visibility to restore on Cancel
+        self._src_vis0 = bool(getattr(source.ViewObject, "Visibility", True))
+        self._exist_vis0 = (bool(existing.ViewObject.Visibility)
+                            if existing is not None else None)
+
+        self.form = QtWidgets.QWidget()
+        self.form.setWindowTitle("Thickness Parameters")
+        outer = QtWidgets.QVBoxLayout(self.form)
+
+        # "Thickness Parameters" dialog with two switchable tabs — like the
+        # native dialog, but with a Shell tab and a kernel that works on
+        # filleted parts.
+        self.tabs = QtWidgets.QTabWidget()
+        outer.addWidget(self.tabs)
+
+        # ===================== THICKNESS TAB =====================
+        thick_tab = QtWidgets.QWidget()
+        tlay = QtWidgets.QVBoxLayout(thick_tab)
+        form = QtWidgets.QFormLayout()
+        self.spin = QtWidgets.QDoubleSpinBox()
+        self.spin.setRange(0.01, 1000.0); self.spin.setDecimals(2)
+        self.spin.setValue(2.0)
+        form.addRow("Thickness (mm):", self.spin)
+
+        self.join_combo = QtWidgets.QComboBox()
+        self.join_combo.addItems(_JOIN_NAMES)
+        form.addRow("Join type:", self.join_combo)
+        tlay.addLayout(form)
+
+        self.inter_cb = QtWidgets.QCheckBox("Intersection")
+        self.inward_cb = QtWidgets.QCheckBox("Make thickness inwards")
+        self.inward_cb.setChecked(True)
+        tlay.addWidget(self.inter_cb)
+        tlay.addWidget(self.inward_cb)
+        tlay.addStretch(1)
+        self.tabs.addTab(thick_tab, "Thickness")
+
+        # ===================== SHELL TAB =====================
+        shell_tab = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(shell_tab)
+
+        gb = QtWidgets.QGroupBox("Faces to remove  (open faces)")
+        gl = QtWidgets.QVBoxLayout(gb)
+
+        self.pick_btn = QtWidgets.QPushButton("Select faces")
+        self.pick_btn.setCheckable(True)
+        self.pick_btn.setChecked(True)
+        self.pick_btn.toggled.connect(self._toggle_pick_mode)
+        gl.addWidget(self.pick_btn)
+
+        self.face_list = QtWidgets.QListWidget()
+        self.face_list.setMaximumHeight(90)
+        self.face_list.itemDoubleClicked.connect(self._remove_item)
+        gl.addWidget(self.face_list)
+
+        hb = QtWidgets.QHBoxLayout()
+        b_clr = QtWidgets.QPushButton("Clear")
+        b_clr.clicked.connect(self._clear_faces)
+        hb.addWidget(b_clr)
+        gl.addLayout(hb)
+
+        hint = QtWidgets.QLabel(
+            "‘Select faces’ ON: click faces in the 3-D view to add/remove them.\n"
+            "Double-click a list item to remove it. Pick at least one face.")
+        hint.setStyleSheet("color: gray; font-size: 10px;")
+        gl.addWidget(hint)
+        lay.addWidget(gb)
+
+        self.preview_cb = QtWidgets.QCheckBox("Show preview overlay")
+        self.preview_cb.setChecked(True)    # live, non-selectable overlay
+        lay.addWidget(self.preview_cb)
+        lay.addStretch(1)
+        self.tabs.addTab(shell_tab, "Shell")
+        self.tabs.setCurrentIndex(1)        # open on the Shell tab
+        # OK / Cancel come from the FreeCAD task system (getStandardButtons).
+
+        # Prefill from an existing shell being edited
+        if existing is not None:
+            try:
+                self.spin.setValue(float(existing.WallThickness))
+                self.remove_names = list(existing.RemoveFaces)
+                for n in self.remove_names:
+                    self.face_list.addItem(n)
+                if existing.JoinType in _JOIN_NAMES:
+                    self.join_combo.setCurrentIndex(_JOIN_NAMES.index(existing.JoinType))
+                self.inward_cb.setChecked(bool(existing.Inwards))
+                self.inter_cb.setChecked(bool(existing.Intersection))
+                existing.ViewObject.Visibility = False
+            except Exception:
+                pass
+
+        try:
+            source.ViewObject.Visibility = True
+        except Exception:
+            pass
+
+        # live preview / recompute on any change
+        self.spin.valueChanged.connect(self._refresh_preview)
+        self.join_combo.currentIndexChanged.connect(self._refresh_preview)
+        self.inter_cb.toggled.connect(self._refresh_preview)
+        self.inward_cb.toggled.connect(self._refresh_preview)
+        self.preview_cb.toggled.connect(self._refresh_preview)
+
+        # Start in face-picking mode (like native Thickness): clicking faces in
+        # the 3-D view adds/removes them live via a selection observer.
+        self._sel_obs = _FaceSelObserver(self)
+        self._observing = False
+        self._start_pick()
+
+        # initial live preview (overlay)
+        self._refresh_preview()
+
+    # ---- face selection (live, observer based) -------------------------
+    def _start_pick(self):
+        if not self._observing:
+            try:
+                Gui.Selection.clearSelection()
+                Gui.Selection.addObserver(self._sel_obs)
+                self._observing = True
+            except Exception:
+                pass
+
+    def _stop_pick(self):
+        if self._observing:
+            try:
+                Gui.Selection.removeObserver(self._sel_obs)
+            except Exception:
+                pass
+            self._observing = False
+
+    def _toggle_pick_mode(self, on):
+        if on:
+            self._start_pick()
+        else:
+            self._stop_pick()
+        self._refresh_preview()
+
+    def _toggle_face(self, name):
+        """Add the face if new, remove it if already listed (toggle)."""
+        if name in self.remove_names:
+            self.remove_names.remove(name)
+            for i in range(self.face_list.count()):
+                if self.face_list.item(i).text() == name:
+                    self.face_list.takeItem(i)
+                    break
+        else:
+            self.remove_names.append(name)
+            self.face_list.addItem(name)
+        self._refresh_preview()
+
+    def _remove_item(self, item):
+        name = item.text()
+        if name in self.remove_names:
+            self.remove_names.remove(name)
+        self.face_list.takeItem(self.face_list.row(item))
+        self._refresh_preview()
+
+    def _clear_faces(self):
+        self.remove_names = []
+        self.face_list.clear()
+        # reset 3-D selection and make sure picking is still live
+        try:
+            Gui.Selection.clearSelection()
+        except Exception:
+            pass
+        if self.pick_btn.isChecked():
+            self._start_pick()
+        self._refresh_preview()
+
+    # ---- compute / preview ---------------------------------------------
+    def _faces(self):
+        shp = self.source.Shape
+        faces = []
+        for n in self.remove_names:
+            try:
+                i = int(n.replace("Face", "")) - 1
+                if 0 <= i < len(shp.Faces):
+                    faces.append(shp.Faces[i])
+            except Exception:
+                pass
+        return faces
+
+    def _compute(self):
+        return _shell_remove_faces(
+            self.source.Shape, self.spin.value(), self._faces(),
+            self.join_combo.currentIndex(),
+            self.inward_cb.isChecked(), self.inter_cb.isChecked(),
+            source_feature=self.source)
+
+    def _clear_preview(self):
+        # remove the tracked preview AND any stray ShellPreview* siblings
+        try:
+            for o in list(self.doc.Objects):
+                if o.Name.startswith(_PREVIEW_NAME):
+                    self.doc.removeObject(o.Name)
+        except Exception:
+            pass
+        self.preview_obj = None
+
+    def _refresh_preview(self, *a):
+        """
+        Live preview. The preview is a NON-SELECTABLE overlay, so the source
+        solid stays visible and pickable underneath — picking faces and seeing
+        the result work at the same time, and the preview updates on every
+        change automatically (no need to re-tick anything).
+        """
+        # No faces chosen yet → show only the source (no auto-shell preview).
+        if not self.preview_cb.isChecked() or not self.remove_names:
+            self._clear_preview()
+            try:
+                self.source.ViewObject.Visibility = True
+                self.source.ViewObject.Transparency = 0
+            except Exception:
+                pass
+            return
+
+        shell, method = self._compute()
+        if shell is None:
+            self._clear_preview()
+            try:
+                self.source.ViewObject.Visibility = True
+                self.source.ViewObject.Transparency = 0
+            except Exception:
+                pass
+            return
+
+        if self.preview_obj is None:
+            self.preview_obj = self.doc.addObject("Part::Feature", _PREVIEW_NAME)
+            try:
+                self.preview_obj.ViewObject.Selectable = False
+                self.preview_obj.ViewObject.ShapeColor = (0.4, 0.75, 1.0)
+            except Exception:
+                pass
+        self.preview_obj.Shape = shell
+
+        picking = self.pick_btn.isChecked()
+        try:
+            if picking:
+                # Source = faint GHOST (so the shelled cavity is visible) but
+                # still selectable. Preview = OPAQUE on top, non-selectable so
+                # clicks pass through to the source faces underneath.
+                self.source.ViewObject.Visibility = True
+                self.source.ViewObject.Transparency = 80
+                self.preview_obj.ViewObject.Transparency = 0
+            else:
+                # clean solid preview, source hidden
+                self.source.ViewObject.Transparency = 0
+                self.source.ViewObject.Visibility = False
+                self.preview_obj.ViewObject.Transparency = 0
+        except Exception:
+            pass
+        self.doc.recompute()
+
+    # ---- task-panel framework hooks ------------------------------------
+    def getStandardButtons(self):
+        combined = (QtWidgets.QDialogButtonBox.Ok
+                    | QtWidgets.QDialogButtonBox.Cancel)
+        try:
+            return int(combined)
+        except TypeError:
+            return int(combined.value)   # PySide6 enum flag
+
+    def accept(self):
+        if not self.remove_names:
+            QtWidgets.QMessageBox.information(
+                self.form, "BNC Shell",
+                "Select at least one face to open.\n"
+                "Turn on 'Select faces' and click the face(s) in the 3-D view.")
+            return False  # keep the panel open
+        self._clear_preview()
+        shell, method = self._compute()
+        if shell is None:
+            QtWidgets.QMessageBox.critical(
+                self.form, "BNC Shell",
+                "Shelling failed with these settings. Try a different face,\n"
+                "join type, or a smaller thickness.")
+            return False  # keep the panel open
+        self._stop_pick()
+        join = self.join_combo.currentIndex()
+        inward = self.inward_cb.isChecked()
+        inter = self.inter_cb.isChecked()
+        t = self.spin.value()
+
+        if self.existing is not None:
+            feat = self.existing
+            feat.WallThickness = t
+            feat.RemoveFaces = list(self.remove_names)
+            feat.JoinType = _JOIN_NAMES[join]
+            feat.Inwards = inward
+            feat.Intersection = inter
+            feat.Shape = shell
+        else:
+            _remove_prior_shells(self.doc, self.body)
+            feat = _create_shell_feature(
+                self.doc, self.body, self.source, t,
+                self.remove_names, join, inward, inter, shell)
+
+        try:
+            self.source.ViewObject.Transparency = 0
+            self.source.ViewObject.Visibility = False
+            feat.ViewObject.Visibility = True
+        except Exception:
+            pass
+        self.doc.recompute()
+        try:
+            Gui.ActiveDocument.ActiveView.fitAll()
+        except Exception:
+            pass
+        measured = _measure_wall(shell)
+        sb = self.source.Shape.BoundBox
+        rb = shell.BoundBox
+        App.Console.PrintMessage(
+            f"[BNC] DONE  method={method}  wall={t}mm  measured={measured}  "
+            f"faces={self.remove_names or '[top]'}\n"
+            f"[BNC] OUTER size  source={sb.XLength:.2f}x{sb.YLength:.2f}"
+            f"x{sb.ZLength:.2f}  result={rb.XLength:.2f}x{rb.YLength:.2f}"
+            f"x{rb.ZLength:.2f}\n")
+        Gui.Control.closeDialog()
+        return True
+
+    def reject(self):
+        self._stop_pick()
+        self._clear_preview()
+        try:
+            self.source.ViewObject.Transparency = 0
+            self.source.ViewObject.Visibility = self._src_vis0
+            if self.existing is not None and self._exist_vis0 is not None:
+                self.existing.ViewObject.Visibility = self._exist_vis0
+        except Exception:
+            pass
+        self.doc.recompute()
+        Gui.Control.closeDialog()
+        return True
+
+
+# ===========================================================================
+# Main
+# ===========================================================================
+
+def fix_thickness():
+    doc = App.ActiveDocument
+    if not doc:
+        QtWidgets.QMessageBox.critical(None, "BNC Shell", "No active document.")
+        return
+
+    body = next((o for o in doc.Objects if o.TypeId == "PartDesign::Body"), None)
+    if not body:
+        QtWidgets.QMessageBox.warning(None, "BNC Shell", "No PartDesign Body found.")
+        return
+
+    # Find the solid to shell WITHOUT changing the model (no removal yet).
+    source = _find_source_solid(body)
+    if source is None:
+        QtWidgets.QMessageBox.warning(
+            None, "BNC Shell",
+            "Could not find a solid feature to shell. Create a Pad first.")
+        return
+
+    # If a shell already exists, edit it; otherwise create a new one. Either
+    # way the model is only changed when the user presses OK.
+    existing = next((o for o in doc.Objects if _is_macro_shell(o)
+                     and o.TypeId == "Part::FeaturePython"), None)
+
+    App.Console.PrintMessage(
+        f"[BNC] Open panel. source={source.Label} "
+        f"existing={existing.Label if existing else None}\n")
+
+    # Dock as a non-modal task panel so the 3-D view stays interactive
+    # (rotate, pick faces) while it is open.
+    Gui.Control.closeDialog()       # close any leftover panel first
+    Gui.Control.showDialog(ShellTaskPanel(doc, body, source, existing))
+
+
+# ===========================================================================
+# GUI command
+# ===========================================================================
+
+class BNC_FixThicknessCommand:
+    def GetResources(self):
+        return {
+            "MenuText": "Fix Thickness (Fillet then Shell)",
+            "ToolTip":  "Fillet the solid then shell it — like SolidWorks/Creo",
+        }
+    def IsActive(self):
+        return App.ActiveDocument is not None
+    def Activated(self):
+        fix_thickness()
+
+
+if "BNC_FixThickness" not in Gui.listCommands():
+    Gui.addCommand("BNC_FixThickness", BNC_FixThicknessCommand())
+
+fix_thickness()

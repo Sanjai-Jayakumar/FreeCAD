@@ -1,0 +1,101 @@
+# -*- coding: utf-8 -*-
+# CleanBrokenLinks.FCMacro — BNC CAD
+# Removes App::Link objects whose external .FCStd file is missing,
+# and deletes Assembly joints that reference broken geometry.
+# Safe to run: shows a preview list and asks for confirmation first.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+from PySide import QtWidgets
+
+
+def _is_broken_link(obj):
+    """Return True if obj is an App::Link with an unresolvable external file."""
+    if obj.TypeId != 'App::Link':
+        return False
+    try:
+        resolved = obj.getLinkedObject(True)   # True = recurse into sub-links
+        if resolved is obj:                     # couldn't resolve → broken
+            return True
+        if resolved is None:
+            return True
+        return False
+    except Exception:
+        return True
+
+
+def _is_broken_joint(obj):
+    """Return True if this is an Assembly joint with a ? sub-element reference."""
+    if 'Assembly' not in obj.TypeId:
+        return False
+    for attr in ('Reference1', 'Reference2'):
+        ref = getattr(obj, attr, None)
+        if ref is None:
+            continue
+        try:
+            if len(ref) == 2 and len(ref[1]) > 0 and '?' in ref[1][0]:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def main():
+    doc = App.ActiveDocument
+    if not doc:
+        QtWidgets.QMessageBox.warning(None, 'Error', 'No active document.')
+        return
+
+    broken_links  = [o for o in doc.Objects if _is_broken_link(o)]
+    broken_joints = [o for o in doc.Objects if _is_broken_joint(o)]
+
+    total = len(broken_links) + len(broken_joints)
+    if total == 0:
+        QtWidgets.QMessageBox.information(
+            None, 'Clean Broken Links',
+            'No broken links or joints found.\nDocument is clean.')
+        return
+
+    lines = []
+    if broken_links:
+        lines.append('Broken external links (missing .FCStd files):')
+        for o in broken_links:
+            lines.append('  • ' + o.Label)
+    if broken_joints:
+        lines.append('')
+        lines.append('Assembly joints with broken geometry references:')
+        for o in broken_joints:
+            lines.append('  • ' + o.Label)
+    lines.append('')
+    lines.append('Delete all {} items?'.format(total))
+
+    reply = QtWidgets.QMessageBox.question(
+        None, 'Clean Broken Links — BNC CAD',
+        '\n'.join(lines),
+        QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+        QtWidgets.QMessageBox.No)
+
+    if reply != QtWidgets.QMessageBox.Yes:
+        return
+
+    removed = 0
+    for obj in broken_joints + broken_links:
+        try:
+            doc.removeObject(obj.Name)
+            removed += 1
+        except Exception as e:
+            App.Console.PrintWarning('CleanBrokenLinks: could not remove {}: {}\n'.format(
+                obj.Label, str(e)))
+
+    try:
+        doc.recompute([])   # empty list = mark clean without full recompute
+    except Exception:
+        pass
+
+    QtWidgets.QMessageBox.information(
+        None, 'Done',
+        'Removed {} broken items.\n'
+        'Save the assembly to make permanent.'.format(removed))
+
+
+main()

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Branding version="1.0">
+  <SplashScreen>anvilcadsplash</SplashScreen>
+  <SplashInfoColor>#EFEFEF</SplashInfoColor>
+  <SplashWarningColor>#EFEFEF</SplashWarningColor>
+  <SplashInfoPosition>5,362</SplashInfoPosition>
+</Branding>

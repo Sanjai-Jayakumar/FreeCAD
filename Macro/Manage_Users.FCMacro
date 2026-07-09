@@ -1,7 +1,7 @@
 """
-BNC CAD – Manage Users (Admin Macro)
+ANVIL CAD – Manage Users (Admin Macro)
 =====================================
-Run this macro from inside BNC CAD (Tools > Macros) to add, remove,
+Run this macro from inside ANVIL CAD (Tools > Macros) to add, remove,
 or change passwords for application users.
 
 Only users with the 'admin' role can perform these operations.
@@ -106,7 +106,7 @@ class ManageUsersDialog(QtGui.QDialog):
         self._refresh_table()
 
     def _build_ui(self):
-        self.setWindowTitle("BNC CAD – User Management")
+        self.setWindowTitle("ANVIL CAD – User Management")
         self.setMinimumSize(550, 420)
         self.setStyleSheet(_STYLE)
 
@@ -314,7 +314,7 @@ if not current_user:
     QtGui.QMessageBox.critical(
         FreeCADGui.getMainWindow(),
         "Access Denied",
-        "No active BNC CAD session found.\nPlease restart the application."
+        "No active ANVIL CAD session found.\nPlease restart the application."
     )
 else:
     role = UserDatabase().get_role(current_user)

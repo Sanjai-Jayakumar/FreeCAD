@@ -63,6 +63,12 @@ class PartDesignWorkbench(Workbench):
 
         FreeCADGui.addCommand("PartDesign_Sprocket", CommandSprocket())
 
+    def Activated(self):
+        pass
+
+    def Deactivated(self):
+        pass
+
     def GetClassName(self):
         return "PartDesignGui::Workbench"
 

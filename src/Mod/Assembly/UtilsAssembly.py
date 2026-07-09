@@ -1208,6 +1208,8 @@ def findPlacement(ref, ignoreVertex=False):
 
 
 def get_element(shape, name):
+    if name and '?' in str(name):
+        return None   # invalid/renamed topology element — skip silently
     element = shape.getElement(name)
     if element is None:
         App.Console.PrintWarning(f"Unable to find element {name}.")

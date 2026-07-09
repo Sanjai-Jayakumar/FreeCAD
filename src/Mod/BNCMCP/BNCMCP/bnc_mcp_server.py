@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-BNC CAD MCP Server
+ANVIL CAD MCP Server
 ==================
 External MCP server that bridges Claude Desktop / AI clients
-to BNC CAD via XML-RPC. Based on freecad-mcp by neka-nat.
+to ANVIL CAD via XML-RPC. Based on freecad-mcp by neka-nat.
 
 Usage:
     python bnc_mcp_server.py
@@ -102,27 +102,27 @@ else:
 @asynccontextmanager
 async def server_lifespan(server):
     try:
-        logger.info("BNC CAD MCP server starting up")
+        logger.info("ANVIL CAD MCP server starting up")
         try:
             _ = get_bnccad_connection()
-            logger.info("Successfully connected to BNC CAD on startup")
+            logger.info("Successfully connected to ANVIL CAD on startup")
         except Exception as e:
-            logger.warning("Could not connect to BNC CAD on startup: {}".format(str(e)))
+            logger.warning("Could not connect to ANVIL CAD on startup: {}".format(str(e)))
             logger.warning(
-                "Make sure BNC CAD is running with the MCP addon enabled before using tools"
+                "Make sure ANVIL CAD is running with the MCP addon enabled before using tools"
             )
         yield {}
     finally:
         global _bnccad_connection
         if _bnccad_connection:
-            logger.info("Disconnecting from BNC CAD on shutdown")
+            logger.info("Disconnecting from ANVIL CAD on shutdown")
             _bnccad_connection = None
-        logger.info("BNC CAD MCP server shut down")
+        logger.info("ANVIL CAD MCP server shut down")
 
 
 mcp = FastMCP(
     "BNCMCP",
-    instructions="BNC CAD integration through the Model Context Protocol",
+    instructions="ANVIL CAD integration through the Model Context Protocol",
     lifespan=server_lifespan,
 )
 
@@ -131,15 +131,15 @@ _bnccad_connection = None
 
 
 def get_bnccad_connection():
-    """Get or create a persistent BNC CAD connection"""
+    """Get or create a persistent ANVIL CAD connection"""
     global _bnccad_connection
     if _bnccad_connection is None:
         _bnccad_connection = BNCCADConnection(host="localhost", port=9875)
         if not _bnccad_connection.ping():
-            logger.error("Failed to ping BNC CAD")
+            logger.error("Failed to ping ANVIL CAD")
             _bnccad_connection = None
             raise Exception(
-                "Failed to connect to BNC CAD. Make sure BNC CAD is running with the MCP Server started."
+                "Failed to connect to ANVIL CAD. Make sure ANVIL CAD is running with the MCP Server started."
             )
     return _bnccad_connection
 
@@ -159,7 +159,7 @@ def add_screenshot_if_available(response, screenshot):
 
 @mcp.tool()
 def create_document(ctx: Context, name: str):
-    """Create a new document in BNC CAD.
+    """Create a new document in ANVIL CAD.
 
     Args:
         name: The name of the document to create.
@@ -179,7 +179,7 @@ def create_document(ctx: Context, name: str):
 @mcp.tool()
 def create_object(ctx: Context, doc_name: str, obj_type: str, obj_name: str,
                   analysis_name: str = None, obj_properties: dict = None):
-    """Create a new object in BNC CAD.
+    """Create a new object in ANVIL CAD.
     Object type starts with "Part::" or "Draft::" or "PartDesign::" or "Fem::".
 
     Args:
@@ -207,7 +207,7 @@ def create_object(ctx: Context, doc_name: str, obj_type: str, obj_name: str,
 
 @mcp.tool()
 def edit_object(ctx: Context, doc_name: str, obj_name: str, obj_properties: dict):
-    """Edit an object in BNC CAD.
+    """Edit an object in ANVIL CAD.
 
     Args:
         doc_name: The name of the document.
@@ -231,7 +231,7 @@ def edit_object(ctx: Context, doc_name: str, obj_name: str, obj_properties: dict
 
 @mcp.tool()
 def delete_object(ctx: Context, doc_name: str, obj_name: str):
-    """Delete an object in BNC CAD.
+    """Delete an object in ANVIL CAD.
 
     Args:
         doc_name: The name of the document.
@@ -254,7 +254,7 @@ def delete_object(ctx: Context, doc_name: str, obj_name: str):
 
 @mcp.tool()
 def execute_code(ctx: Context, code: str):
-    """Execute arbitrary Python code in BNC CAD.
+    """Execute arbitrary Python code in ANVIL CAD.
 
     Args:
         code: The Python code to execute.
@@ -362,7 +362,7 @@ def get_parts_list(ctx: Context):
 
 @mcp.tool()
 def list_documents(ctx: Context):
-    """Get the list of open documents in BNC CAD."""
+    """Get the list of open documents in ANVIL CAD."""
     freecad = get_bnccad_connection()
     docs = freecad.list_documents()
     return [TextContent(type="text", text=json.dumps(docs))]
@@ -371,9 +371,9 @@ def list_documents(ctx: Context):
 @mcp.prompt()
 def asset_creation_strategy():
     return """
-Asset Creation Strategy for BNC CAD MCP
+Asset Creation Strategy for ANVIL CAD MCP
 
-When creating content in BNC CAD, always follow these steps:
+When creating content in ANVIL CAD, always follow these steps:
 
 0. Before starting any task, always use get_objects() to confirm the current state of the document.
 
@@ -401,10 +401,10 @@ Only revert to basic creation methods when:
 
 
 def main():
-    """Run the BNC CAD MCP server"""
+    """Run the ANVIL CAD MCP server"""
     global _only_text_feedback
     import argparse
-    parser = argparse.ArgumentParser(description="BNC CAD MCP Server")
+    parser = argparse.ArgumentParser(description="ANVIL CAD MCP Server")
     parser.add_argument("--only-text-feedback", action="store_true", help="Only return text feedback (no screenshots)")
     args = parser.parse_args()
     _only_text_feedback = args.only_text_feedback

@@ -667,7 +667,7 @@ class TaskAssemblyCreateBom(QtCore.QObject):
         # -- Assemble tab widget --
         self._bom_tab = QtWidgets.QTabWidget()
         self._bom_tab.addTab(fc_bom_page, "Custom BOM")
-        self._bom_tab.addTab(xl_page, "BNC CAD BOM")
+        self._bom_tab.addTab(xl_page, "ANVIL CAD BOM")
         self._bom_tab.currentChanged.connect(self._excel_on_tab_changed)
 
         # Replace self.form with a wrapper containing the tab widget.
@@ -922,7 +922,7 @@ class TaskAssemblyCreateBom(QtCore.QObject):
                 break
         if sheet is None:
             sheet = doc.addObject('Spreadsheet::Sheet', 'BNC_BOM')
-            sheet.Label = 'BNC CAD BOM'
+            sheet.Label = 'ANVIL CAD BOM'
 
         # Clear previous content
         try:
@@ -1015,7 +1015,7 @@ class TaskAssemblyCreateBom(QtCore.QObject):
                 pass
 
         self._xl_status.setText(
-            "Spreadsheet ready. Edit in 'BNC CAD BOM' tab, "
+            "Spreadsheet ready. Edit in 'ANVIL CAD BOM' tab, "
             "then click 'Export Spreadsheet' to save as Excel.")
 
     # ── End Excel Export tab ─────────────────────────────────────────────

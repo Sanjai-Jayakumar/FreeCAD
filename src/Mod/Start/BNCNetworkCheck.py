@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""BNC CAD: Network connectivity checker — non-blocking.
+"""ANVIL CAD: Network connectivity checker — non-blocking.
 
 Checks internet on startup and every 5 minutes.
 If offline, logs a warning to the console only (does NOT block the UI).
@@ -36,14 +36,14 @@ def _has_internet():
 def check_startup():
     """Called once at startup — non-blocking.
     Logs a warning if offline but does NOT show a blocking dialog."""
-    FreeCAD.Console.PrintLog("BNC CAD: Checking internet connection...\n")
+    FreeCAD.Console.PrintLog("ANVIL CAD: Checking internet connection...\n")
     if _has_internet():
-        FreeCAD.Console.PrintLog("BNC CAD: Internet connection OK\n")
+        FreeCAD.Console.PrintLog("ANVIL CAD: Internet connection OK\n")
         return True
     FreeCAD.Console.PrintWarning(
-        "BNC CAD: No internet connection detected. "
+        "ANVIL CAD: No internet connection detected. "
         "Some online features may be unavailable.\n")
-    return False   # non-blocking — BNC CAD continues normally
+    return False   # non-blocking — ANVIL CAD continues normally
 
 
 def _periodic_check():
@@ -51,7 +51,7 @@ def _periodic_check():
     if _has_internet():
         return
     FreeCAD.Console.PrintWarning(
-        "BNC CAD: Internet connection lost. "
+        "ANVIL CAD: Internet connection lost. "
         "Some online features may be unavailable.\n")
 
 
@@ -69,4 +69,4 @@ def start_periodic_check():
     _timer = QtCore.QTimer()
     _timer.timeout.connect(_periodic_check)
     _timer.start(_CHECK_INTERVAL_MS)
-    FreeCAD.Console.PrintLog("BNC CAD: Network check timer started (every 5 min)\n")
+    FreeCAD.Console.PrintLog("ANVIL CAD: Network check timer started (every 5 min)\n")

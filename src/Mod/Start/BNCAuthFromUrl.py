@@ -47,12 +47,12 @@ def _apply():
         with open(token_file, "w", encoding="utf-8") as f:
             json.dump(session, f, indent=2)
 
-        FreeCAD.Console.PrintLog(f"BNC CAD: web auth saved for {email}\n")
+        FreeCAD.Console.PrintLog(f"ANVIL CAD: web auth saved for {email}\n")
 
     except Exception as exc:
         try:
             import FreeCAD
-            FreeCAD.Console.PrintWarning(f"BNC CAD: BNCAuthFromUrl error: {exc}\n")
+            FreeCAD.Console.PrintWarning(f"ANVIL CAD: BNCAuthFromUrl error: {exc}\n")
         except Exception:
             pass
 

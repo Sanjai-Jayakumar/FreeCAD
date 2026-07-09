@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 =============================================================================
-BNC CAD - Automatic TechDraw Drawing Generator
+ANVIL CAD - Automatic TechDraw Drawing Generator
 Version: 1.0.1
 FreeCAD Version: 1.0.2
 =============================================================================
@@ -15,7 +15,7 @@ from 3D CAD models. Features include:
 - Support for FCStd, STEP/STP files
 - Multiple paper sizes (A0, A1, A2, A3, A4)
 
-Author: BNC CAD Team
+Author: ANVIL CAD Team
 Date: March 2026
 =============================================================================
 """
@@ -1138,7 +1138,7 @@ class DrawingGeneratorDialog(QtGui.QDialog):
     
     def __init__(self, parent=None):
         super(DrawingGeneratorDialog, self).__init__(parent)
-        self.setWindowTitle("BNC CAD - Generate Drawing")
+        self.setWindowTitle("ANVIL CAD - Generate Drawing")
         self.setMinimumWidth(500)
         self.setMinimumHeight(400)
         

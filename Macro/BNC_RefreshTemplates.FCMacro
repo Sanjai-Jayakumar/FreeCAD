@@ -1,0 +1,56 @@
+"""BNC_RefreshTemplates — replace embedded TechDraw templates in the active document.
+
+Run this if you have a saved .FCStd file where the title block shows text floating
+in the drawing area. FreeCAD embeds the template SVG at page-creation time, so
+changing the SVG on disk does not update existing documents. This macro re-reads
+the current SVG files and updates every TechDraw page in the document.
+"""
+
+import FreeCAD
+import TechDraw
+import os
+
+
+def refresh_templates():
+    doc = FreeCAD.ActiveDocument
+    if not doc:
+        FreeCAD.Console.PrintError("BNC: No active document.\n")
+        return
+
+    tmpl_dir = os.path.join(FreeCAD.getResourceDir(), "Mod", "TechDraw", "Templates")
+    if not os.path.isdir(tmpl_dir):
+        FreeCAD.Console.PrintError(f"BNC: Template dir not found: {tmpl_dir}\n")
+        return
+
+    updated = 0
+    for obj in doc.Objects:
+        if not obj.isDerivedFrom("TechDraw::DrawPage"):
+            continue
+        current = getattr(obj, "Template", None)
+        if not current:
+            continue
+        tmpl_path = current.Template
+        if not tmpl_path:
+            continue
+        fname = os.path.basename(tmpl_path)
+        new_path = os.path.join(tmpl_dir, fname)
+        if not os.path.isfile(new_path):
+            FreeCAD.Console.PrintWarning(f"BNC: Template not found: {new_path}\n")
+            continue
+        # Replace the template
+        new_tmpl = doc.addObject("TechDraw::DrawSVGTemplate", "TmpTemplate")
+        new_tmpl.Template = new_path
+        obj.Template = new_tmpl
+        # Remove the old template object (the page now holds the new one)
+        doc.removeObject(current.Name)
+        FreeCAD.Console.PrintMessage(f"BNC: Refreshed {obj.Label} -> {fname}\n")
+        updated += 1
+
+    if updated:
+        doc.recompute()
+        FreeCAD.Console.PrintMessage(f"BNC: Done — {updated} page(s) updated.\n")
+    else:
+        FreeCAD.Console.PrintMessage("BNC: No TechDraw pages found to update.\n")
+
+
+refresh_templates()

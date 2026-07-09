@@ -1,0 +1,22 @@
+
+7-Zip 26.00 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-02-12
+
+Scanning the drive for archives:
+1 file, 764220776 bytes (729 MiB)
+
+Testing archive: BNC-CAD-Output.7z
+--
+Path = BNC-CAD-Output.7z
+Type = 7z
+Physical Size = 764220776
+Headers Size = 443589
+Method = Delta ARM64 LZMA2:25 BCJ
+Solid = -
+Blocks = 29475
+
+Everything is Ok
+
+Folders: 3169
+Files: 29873
+Size:       3255705207
+Compressed: 764220776

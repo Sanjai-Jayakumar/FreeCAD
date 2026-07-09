@@ -13,7 +13,7 @@ if _pkg_dir not in sys.path:
 
 class BNCMCPAddonWorkbench(Workbench):
     MenuText = "BNC MCP"
-    ToolTip = "BNC CAD MCP Server - AI Integration via Model Context Protocol"
+    ToolTip = "ANVIL CAD MCP Server - AI Integration via Model Context Protocol"
 
     def Initialize(self):
         try:

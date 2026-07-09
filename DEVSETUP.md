@@ -1,14 +1,14 @@
-# BNC CAD — Developer Setup & Claude AI Onboarding
+# ANVIL CAD — Developer Setup & Claude AI Onboarding
 
-> This document is for a new developer taking over the BNC CAD project.
+> This document is for a new developer taking over the ANVIL CAD project.
 > It covers the dev environment, key architecture, all active workbench features,
 > and how to configure Claude Code to continue the work effectively.
 
 ---
 
-## 1. What Is BNC CAD
+## 1. What Is ANVIL CAD
 
-BNC CAD is a **rebranded, extended build of FreeCAD 1.1** shipped by BNC Motors Pvt Ltd.
+ANVIL CAD is a **rebranded, extended build of FreeCAD 1.1** shipped by BNC Motors Pvt Ltd.
 All customisations are Python files, SVGs, and macros — **no C++ compilation is ever needed**.
 
 Key additions on top of stock FreeCAD 1.1:
@@ -218,7 +218,7 @@ When you start a new session, Claude automatically loads `MEMORY.md` and can rea
 ### Recommended first message to Claude in a new session
 
 ```
-I'm continuing the BNC CAD project (d:\BNC-FreeCAD).
+I'm continuing the ANVIL CAD project (d:\BNC-FreeCAD).
 Please read the memory files to get context, then I'll describe what I need.
 ```
 
@@ -262,7 +262,7 @@ Please read the memory files to get context, then I'll describe what I need.
 # Check which Python packages are in FreeCAD's environment
 C:\BNC-CAD-Output\bin\python.exe -c "import pkg_resources; print([p.project_name for p in pkg_resources.working_set])"
 
-# Open BNC CAD directly
+# Open ANVIL CAD directly
 Start-Process "C:\BNC-CAD-Output\bin\FreeCAD.exe"
 
 # Build release installer (admin required)

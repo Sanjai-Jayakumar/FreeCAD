@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""BNC CAD - Export TechDraw page as PDF without Acrobat errors.
+"""ANVIL CAD - Export TechDraw page as PDF without Acrobat errors.
 
 Strategy (tried in order):
   1. Export page SVG via FreeCAD, convert with Microsoft Edge headless

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # ***************************************************************************
-# *   Copyright (c) 2024 BNC CAD                                            *
+# *   Copyright (c) 2024 ANVIL CAD                                            *
 # *                                                                         *
-# *   This file is part of BNC CAD.                                         *
+# *   This file is part of ANVIL CAD.                                         *
 # *                                                                         *
 # ***************************************************************************
 
@@ -813,7 +813,7 @@ def _add_setwd_to_file_toolbar():
         file_toolbar = _find_file_toolbar(mw)
 
         if file_toolbar is None:
-            FreeCAD.Console.PrintWarning("BNC CAD: File toolbar not found — will retry after next workbench switch\n")
+            FreeCAD.Console.PrintWarning("ANVIL CAD: File toolbar not found — will retry after next workbench switch\n")
             return
 
         # Don't add twice
@@ -843,7 +843,7 @@ def _add_setwd_to_file_toolbar():
             file_toolbar.insertAction(actions[1], action_setwd)
         else:
             file_toolbar.addAction(action_setwd)
-        FreeCAD.Console.PrintLog("BNC CAD: Set Working Directory added to File toolbar\n")
+        FreeCAD.Console.PrintLog("ANVIL CAD: Set Working Directory added to File toolbar\n")
 
         # --- Save As button ---
         # Don't add twice
@@ -872,9 +872,9 @@ def _add_setwd_to_file_toolbar():
             file_toolbar.addAction(action_saveas)
         else:
             file_toolbar.addAction(action_saveas)
-        FreeCAD.Console.PrintLog("BNC CAD: Save As added to File toolbar next to Save\n")
+        FreeCAD.Console.PrintLog("ANVIL CAD: Save As added to File toolbar next to Save\n")
     except Exception as e:
-        FreeCAD.Console.PrintError(f"BNC CAD: Failed to add SetWD to File toolbar: {e}\n")
+        FreeCAD.Console.PrintError(f"ANVIL CAD: Failed to add SetWD to File toolbar: {e}\n")
 
 
 def _connect_setwd_on_workbench():
@@ -887,9 +887,9 @@ def _connect_setwd_on_workbench():
         mw.workbenchActivated.connect(
             lambda: QtCore.QTimer.singleShot(400, _add_setwd_to_file_toolbar)
         )
-        FreeCAD.Console.PrintLog("BNC CAD: SetWD workbench hook installed\n")
+        FreeCAD.Console.PrintLog("ANVIL CAD: SetWD workbench hook installed\n")
     except Exception as e:
-        FreeCAD.Console.PrintError(f"BNC CAD: _connect_setwd_on_workbench error: {e}\n")
+        FreeCAD.Console.PrintError(f"ANVIL CAD: _connect_setwd_on_workbench error: {e}\n")
 
 
 class _TaskPanelRenamer(QtCore.QObject):
@@ -948,12 +948,12 @@ def _fix_std_part_name():
                         "<i>Std_Part</i>"
                     )
                     fixed = True
-                    FreeCAD.Console.PrintLog("BNC CAD: Fixed Std_Part name and tooltip\n")
+                    FreeCAD.Console.PrintLog("ANVIL CAD: Fixed Std_Part name and tooltip\n")
         if not fixed:
             # Retry once more after a short delay if toolbars not ready yet
             QtCore.QTimer.singleShot(1000, _fix_std_part_name)
     except Exception as e:
-        FreeCAD.Console.PrintError(f"BNC CAD: _fix_std_part_name error: {e}\n")
+        FreeCAD.Console.PrintError(f"ANVIL CAD: _fix_std_part_name error: {e}\n")
 
 
 def _install_task_panel_renamer():
@@ -972,7 +972,7 @@ def _install_task_panel_renamer():
         # Also watch the main window itself as fallback
         mw.installEventFilter(_task_panel_renamer)
     except Exception as e:
-        FreeCAD.Console.PrintError(f"BNC CAD: Task panel renamer error: {e}\n")
+        FreeCAD.Console.PrintError(f"ANVIL CAD: Task panel renamer error: {e}\n")
 
 
 def _apply_partdesign_icons():
@@ -1030,9 +1030,9 @@ def _apply_partdesign_icons():
                         menu_action.setIcon(QtGui.QIcon(icon_map[mname]))
                         replaced += 1
 
-        FreeCAD.Console.PrintLog(f"BNC CAD: Force-replaced {replaced} PartDesign icons\n")
+        FreeCAD.Console.PrintLog(f"ANVIL CAD: Force-replaced {replaced} PartDesign icons\n")
     except Exception as e:
-        FreeCAD.Console.PrintError(f"BNC CAD: _apply_partdesign_icons error: {e}\n")
+        FreeCAD.Console.PrintError(f"ANVIL CAD: _apply_partdesign_icons error: {e}\n")
 
 
 def _apply_partdesign_icons_on_wb():
@@ -1062,7 +1062,7 @@ def _remap_file_menu_saveas():
                 break
 
         if file_menu is None:
-            FreeCAD.Console.PrintWarning("BNC CAD: File menu not found\n")
+            FreeCAD.Console.PrintWarning("ANVIL CAD: File menu not found\n")
             return
 
         # Find the Save As action by object name or text
@@ -1075,7 +1075,7 @@ def _remap_file_menu_saveas():
                 break
 
         if saveas_action is None:
-            FreeCAD.Console.PrintWarning("BNC CAD: Save As menu action not found\n")
+            FreeCAD.Console.PrintWarning("ANVIL CAD: Save As menu action not found\n")
             return
 
         # Disconnect original trigger and connect to BNC version save-as
@@ -1084,9 +1084,9 @@ def _remap_file_menu_saveas():
         except Exception:
             pass
         saveas_action.triggered.connect(lambda: FreeCADGui.runCommand('Std_VersionSaveAs'))
-        FreeCAD.Console.PrintLog("BNC CAD: File > Save As... remapped to Std_VersionSaveAs\n")
+        FreeCAD.Console.PrintLog("ANVIL CAD: File > Save As... remapped to Std_VersionSaveAs\n")
     except Exception as e:
-        FreeCAD.Console.PrintError(f"BNC CAD: _remap_file_menu_saveas error: {e}\n")
+        FreeCAD.Console.PrintError(f"ANVIL CAD: _remap_file_menu_saveas error: {e}\n")
 
 
 # Create toolbar with delay to ensure GUI is ready

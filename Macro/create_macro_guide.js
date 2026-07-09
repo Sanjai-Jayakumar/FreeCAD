@@ -85,7 +85,7 @@ const doc = new Document({
         spacing: { before: 2880, after: 480 },
         children: [
           new TextRun({
-            text: "BNC CAD Macro System",
+            text: "ANVIL CAD Macro System",
             bold: true,
             size: 40,
             font: "Arial"
@@ -126,7 +126,7 @@ const doc = new Document({
       new Paragraph({
         spacing: { after: 240 },
         children: [
-          new TextRun("The BNC CAD Macro System provides a professional version control workflow for CAD design files. This integrated 5-macro system automatically manages file versioning, preventing data loss and maintaining a complete history of design changes. Unlike manual file naming or scattered backups, this system ensures every modification is tracked with intelligent change detection, preserving assembly links and maintaining clean file organization.")
+          new TextRun("The ANVIL CAD Macro System provides a professional version control workflow for CAD design files. This integrated 5-macro system automatically manages file versioning, preventing data loss and maintaining a complete history of design changes. Unlike manual file naming or scattered backups, this system ensures every modification is tracked with intelligent change detection, preserving assembly links and maintaining clean file organization.")
         ]
       }),
       new Paragraph({
@@ -309,7 +309,7 @@ const doc = new Document({
       }),
       new Paragraph({
         numbering: { reference: "numbers", level: 0 },
-        children: [new TextRun("Design your part in BNC CAD using the appropriate workbench")]
+        children: [new TextRun("Design your part in ANVIL CAD using the appropriate workbench")]
       }),
       new Paragraph({
         numbering: { reference: "numbers", level: 0 },
@@ -645,7 +645,7 @@ const doc = new Document({
       }),
       new Paragraph({
         spacing: { after: 180 },
-        children: [new TextRun({ text: "Solution: ", bold: true }), new TextRun("Restart BNC CAD. Keyboard shortcuts are automatically configured on application startup.")]
+        children: [new TextRun({ text: "Solution: ", bold: true }), new TextRun("Restart ANVIL CAD. Keyboard shortcuts are automatically configured on application startup.")]
       }),
 
       new Paragraph({
@@ -697,7 +697,7 @@ const doc = new Document({
         spacing: { before: 480, after: 120 },
         alignment: AlignmentType.CENTER,
         children: [
-          new TextRun({ text: "For additional support, contact the BNC CAD team.", italics: true })
+          new TextRun({ text: "For additional support, contact the ANVIL CAD team.", italics: true })
         ]
       }),
 

@@ -83,12 +83,13 @@ function Invoke-Sync {
     }
 
     # New BNC modules (full directories)
-    foreach ($mod in @("BNC_Init", "BNCCustomTools", "BNCGlobal", "BNCMCP", "BNCMoldTools")) {
+    foreach ($mod in @("BNC_Init", "BNCCustomTools", "BNCGlobal", "BNCMCP", "BNCMoldTools", "BNCGSD")) {
         Sync-Dir (Join-Path $repoRoot "src\Mod\$mod") (Join-Path $Target "Mod\$mod")
     }
 
     # Repo-root Mod directories
-    Sync-Dir (Join-Path $repoRoot "Mod\BNCTechDraw") (Join-Path $Target "Mod\BNCTechDraw")
+    Sync-Dir (Join-Path $repoRoot "Mod\BNCTechDraw")   (Join-Path $Target "Mod\BNCTechDraw")
+    Sync-Dir (Join-Path $repoRoot "Mod\BNCPartDesign") (Join-Path $Target "Mod\BNCPartDesign")
 
     # BNC_MacroSetup.py
     $macroSetup = Join-Path $repoRoot "src\Mod\BNC_MacroSetup.py"
@@ -103,6 +104,7 @@ function Invoke-Sync {
         "Mod\Assembly\CommandCreateAssembly.py",
         "Mod\Assembly\Assembly\__init__.py",
         "Mod\TechDraw\InitGui.py",
+        "Mod\PartDesign\InitGui.py",
         "Mod\Tux\InitGui.py"
     )) {
         Sync-File (Join-Path $repoRoot "src\$rel") (Join-Path $Target $rel)
@@ -121,22 +123,67 @@ function Invoke-Sync {
         }
     }
 
-    # Macros
+    # Macros — copy to BNC-CAD-Output AND FreeCAD user macro dir
     $macroSrc = Join-Path $repoRoot "Macro"
     $macroDst = Join-Path $Target "Macro"
+    $userMacroDir = Join-Path $env:APPDATA "FreeCAD\v1-1\Macro"
     if (Test-Path $macroSrc) {
         $macros = Get-ChildItem $macroSrc -Filter "*.FCMacro" -File -EA SilentlyContinue
         if ($macros.Count -gt 0) {
             New-Item -ItemType Directory -Path $macroDst -Force | Out-Null
             foreach ($f in $macros) { Copy-Item $f.FullName $macroDst -Force }
-            Write-Ok ("Macro\*.FCMacro  (" + $macros.Count + " files)")
+            # BNC macros live ONLY in the app macro dir. Toolbar buttons and the
+            # keyboard shortcuts run them from here, so they no longer need to be
+            # in the user macro dir — keeping them out leaves the user's
+            # Execute-Macro list clean (only macros the USER creates appear).
+            # Remove any BNC macros a previous sync copied into the user dir.
+            if (Test-Path $userMacroDir) {
+                foreach ($f in $macros) {
+                    $u = Join-Path $userMacroDir $f.Name
+                    if (Test-Path $u) { Remove-Item $u -Force -EA SilentlyContinue }
+                }
+            }
+            Write-Ok ("Macro\*.FCMacro  (" + $macros.Count + " files, app-dir only)")
         }
+    }
+
+    # App icons — copied to {homePath}/icons/ so BitmapFactory overrides compiled resources
+    $iconsDir = Join-Path $Target "icons"
+    New-Item -ItemType Directory -Force $iconsDir | Out-Null
+    foreach ($sz in @(16, 32, 48, 64)) {
+        $iconSrc = Join-Path $repoRoot "src\Gui\Icons\freecad-icon-$sz.png"
+        if (Test-Path $iconSrc) { Copy-Item $iconSrc (Join-Path $iconsDir "freecad-icon-$sz.png") -Force }
+    }
+    Write-Ok "freecad-icon-16/32/48/64.png (app icon override)"
+
+    # branding.xml — controls splash text color/position (hides FreeCAD-drawn title+version)
+    $brandingXml = Join-Path $repoRoot "branding\branding.xml"
+    if (Test-Path $brandingXml) {
+        Sync-File $brandingXml (Join-Path $Target "bin\branding.xml")
+    }
+
+    # Splash image override — placed in user AppData so it wins over compiled resources
+    $splashSrc = Join-Path $repoRoot "src\Gui\Icons\freecadsplash2.png"
+    $splashDst = Join-Path $env:APPDATA "FreeCAD\v1-1\Gui\images\splash_image.png"
+    if (Test-Path $splashSrc) {
+        New-Item -ItemType Directory -Force (Split-Path $splashDst) | Out-Null
+        Copy-Item $splashSrc $splashDst -Force
+        Write-Ok "splash_image.png (user override)"
     }
 
     # Branding
     $sysCfg = Join-Path $repoRoot "branding\system.cfg"
     if (Test-Path $sysCfg) {
         Sync-File $sysCfg (Join-Path $Target "system.cfg")
+    }
+
+    # BNC TechDraw templates
+    $tmplSrc = Join-Path $repoRoot "src\data\Mod\TechDraw\Templates"
+    $tmplDst = Join-Path $Target "data\Mod\TechDraw\Templates"
+    if (Test-Path $tmplSrc) {
+        New-Item -ItemType Directory -Path $tmplDst -Force | Out-Null
+        Copy-Item "$tmplSrc\*.svg" $tmplDst -Force
+        Write-Ok "TechDraw Templates (BNC)"
     }
 
     # BNC theme stylesheets (YAML params + QSS aliases)

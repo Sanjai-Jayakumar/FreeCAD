@@ -17,7 +17,7 @@ Modified `BNC_CAD.nsi` to include `7z.dll` in the installer package:
 ```
 
 ## Rebuilt Installer Details
-**File:** `BNC CAD.exe`
+**File:** `ANVIL CAD.exe`
 **Size:** 842.23 MB
 **SHA256:** `C95F2DA8A367BF2AC77AB4932194EC9724D523007CBAFAF943F65E174467DE97`
 **Build Date:** 18-04-2026 04:02:34 PM
@@ -44,12 +44,12 @@ Running this app might put your PC at risk.
 After clicking "Run anyway":
 
 1. **Extraction:** Files will be extracted to TEMP folder first
-2. **Progress:** Installation progress bar will show copying to `C:\BNC CAD`
+2. **Progress:** Installation progress bar will show copying to `C:\ANVIL CAD`
 3. **Shortcuts:** Desktop and Start Menu shortcuts will be created
 4. **Completion:** Installation complete message will appear
 
 ### Step 3: Verify Installation
-1. Launch BNC CAD from Desktop shortcut
+1. Launch ANVIL CAD from Desktop shortcut
 2. Wait 5 seconds - Auto-update banner should appear (mock mode shows v1.2.0 available)
 3. Check BNC Tools toolbar (11 buttons should be visible)
 4. Test Datum Point Display button (11th button)
@@ -59,7 +59,7 @@ After clicking "Run anyway":
 - [ ] Verify SHA256 hash
 - [ ] Bypass SmartScreen warning
 - [ ] Complete installation (no extraction errors)
-- [ ] Launch BNC CAD successfully
+- [ ] Launch ANVIL CAD successfully
 - [ ] Auto-update banner displays after 5 seconds
 - [ ] BNC Tools toolbar shows all 11 buttons
 - [ ] Datum Point Display toggle works
@@ -72,7 +72,7 @@ After clicking "Run anyway":
 
 **Extraction Method:**
 1. Extract to `%TEMP%\BNC_CAD_Setup\`
-2. Copy files to `C:\BNC CAD\`
+2. Copy files to `C:\ANVIL CAD\`
 3. Clean up TEMP folder
 4. Create shortcuts
 5. Register uninstaller

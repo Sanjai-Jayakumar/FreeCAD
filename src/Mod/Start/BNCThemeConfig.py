@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # ***************************************************************************
-# *   Copyright (c) 2024 BNC CAD                                            *
+# *   Copyright (c) 2024 ANVIL CAD                                            *
 # *                                                                         *
-# *   This file is part of BNC CAD.                                         *
+# *   This file is part of ANVIL CAD.                                         *
 # *                                                                         *
 # ***************************************************************************
 
-"""BNC CAD Default Theme Configuration - Light Gray Theme"""
+"""ANVIL CAD Default Theme Configuration - Light Gray Theme"""
 
 import FreeCAD
 import FreeCADGui
@@ -23,7 +23,9 @@ def set_workbench_selector_default():
         # Correct path: User parameter:BaseApp/Preferences/Workbenches
         # WorkbenchSelectorType: 0 = ComboBox (FreeCAD default), 1 = TabBar
         wb_prefs = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Workbenches")
-        if not wb_prefs.HasParameter("WorkbenchSelectorType"):
+        # ParameterGrp has no HasParameter(); read with a sentinel default and
+        # only set our default when the user hasn't configured it.
+        if wb_prefs.GetInt("WorkbenchSelectorType", -1) == -1:
             wb_prefs.SetInt("WorkbenchSelectorType", 1)
             FreeCAD.Console.PrintLog("BNC: Workbench selector type defaulted to TabBar\n")
     except Exception as e:
@@ -33,7 +35,7 @@ def set_workbench_selector_default():
 set_workbench_selector_default()
 
 def set_bnc_default_theme():
-    """Set BNC CAD solid gray background - ALWAYS apply"""
+    """Set ANVIL CAD solid gray background - ALWAYS apply"""
     try:
         # Wait for GUI to be ready
         mw = FreeCADGui.getMainWindow()
@@ -154,4 +156,4 @@ try:
 except Exception as e:
     FreeCAD.Console.PrintWarning(f"Could not register BNC document observer: {e}\n")
 
-FreeCAD.Console.PrintLog("BNC CAD: Theme configuration module loaded\n")
+FreeCAD.Console.PrintLog("ANVIL CAD: Theme configuration module loaded\n")

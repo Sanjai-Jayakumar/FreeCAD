@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────
-# BNC CAD — Release Workflow
+# ANVIL CAD — Release Workflow
 # Triggered when a tag matching bnc-v* is pushed.
 # Creates a GitHub Release draft with auto-generated notes.
 # The installer binary must be uploaded manually (built locally).
@@ -54,7 +54,7 @@ jobs:
 
           # Write to file for the release body
           {
-            echo "## BNC CAD ${{ steps.version.outputs.version }}"
+            echo "## ANVIL CAD ${{ steps.version.outputs.version }}"
             echo ""
             echo "### Changes"
             echo ""
@@ -63,7 +63,7 @@ jobs:
             done
             echo ""
             echo "### Installation"
-            echo "1. Download \`BNC CAD.exe\` from the Assets below"
+            echo "1. Download \`ANVIL CAD.exe\` from the Assets below"
             echo "2. Run the installer as Administrator"
             echo "3. Follow the installation wizard"
             echo "4. Launch from Desktop shortcut or Start Menu"
@@ -83,7 +83,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: "BNC CAD v${{ steps.version.outputs.version }}"
+          name: "ANVIL CAD v${{ steps.version.outputs.version }}"
           body_path: release_notes.md
           draft: true
           prerelease: ${{ steps.version.outputs.prerelease == 'true' }}

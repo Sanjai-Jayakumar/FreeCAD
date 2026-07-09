@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    Upgrade BNC CAD to a new FreeCAD version by rebasing the BNC overlay
+    Upgrade ANVIL CAD to a new FreeCAD version by rebasing the BNC overlay
     branch onto the new release tag.
 
 .DESCRIPTION
-    Automates the Git workflow for upgrading BNC CAD to a new FreeCAD version:
+    Automates the Git workflow for upgrading ANVIL CAD to a new FreeCAD version:
     1. Fetches the new FreeCAD tag from upstream
     2. Creates a new bnc-X.X branch from that tag
     3. Cherry-picks (or rebases) all BNC commits from the current branch
@@ -45,7 +45,7 @@ $newBranch = "bnc-$NewVersion"
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
-Write-Host "  BNC CAD — Upgrade to FreeCAD $NewVersion" -ForegroundColor Green
+Write-Host "  ANVIL CAD — Upgrade to FreeCAD $NewVersion" -ForegroundColor Green
 Write-Host "  From: $CurrentBranch" -ForegroundColor DarkGray
 Write-Host "  To:   $newBranch" -ForegroundColor DarkGray
 Write-Host "========================================" -ForegroundColor Green

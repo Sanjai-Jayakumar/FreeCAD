@@ -254,7 +254,9 @@ def _initialise_theme():
     try:
         _rename_legacy_opentheme_files()
     except Exception:
-        FreeCAD.Console.PrintWarning(
+        # Benign: legacy OpenTheme files just aren't renamed. Log (not warn) so
+        # it doesn't surface as an error in the Report view on every launch.
+        FreeCAD.Console.PrintLog(
             "Theme migration helper missing; proceeding without renaming legacy OpenTheme files.\n"
         )
 
@@ -276,7 +278,7 @@ def _initialise_theme():
     )
 
     if stylesheet not in bnc_stylesheets:
-        # BNC CAD: Default to light theme instead of dark
+        # ANVIL CAD: Default to light theme instead of dark
         try:
             _apply_theme_mode("light")
         except NameError:
@@ -313,7 +315,7 @@ else:
 
 
 # Persistent toolbars
-# BNC CAD CUSTOMIZATION: Forcibly disable PersistentToolbars to prevent toolbar grouping
+# ANVIL CAD CUSTOMIZATION: Forcibly disable PersistentToolbars to prevent toolbar grouping
 p.GetGroup("PersistentToolbars").SetBool("Enabled", False)
 
 # Clear any existing cached toolbar positions
@@ -324,7 +326,7 @@ try:
         pUser.RemGroup(group)
     for group in pSystem.GetGroups():
         pSystem.RemGroup(group)
-    App.Console.PrintMessage("BNC CAD: PersistentToolbars disabled to prevent grouping\n")
+    App.Console.PrintMessage("ANVIL CAD: PersistentToolbars disabled to prevent grouping\n")
 except:
     pass
 

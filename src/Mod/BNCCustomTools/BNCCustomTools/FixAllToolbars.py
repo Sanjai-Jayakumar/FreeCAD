@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Fix ALL Toolbars - Prevent Grouping Globally
-This module ensures ALL toolbars in BNC CAD appear ungrouped
+This module ensures ALL toolbars in ANVIL CAD appear ungrouped
 """
 
 import FreeCAD

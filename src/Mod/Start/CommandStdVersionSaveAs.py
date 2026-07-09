@@ -1,21 +1,21 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # ***************************************************************************
-# *   Copyright (c) 2024 BNC CAD                                            *
+# *   Copyright (c) 2024 ANVIL CAD                                            *
 # *                                                                         *
-# *   This file is part of BNC CAD.                                         *
+# *   This file is part of ANVIL CAD.                                         *
 # *                                                                         *
 # ***************************************************************************
 
-"""Version Save As command for BNC CAD - Save As with automatic version numbering"""
+"""Version Save As command for ANVIL CAD - Save As with automatic version numbering"""
 
 import FreeCAD
 import FreeCADGui
 from PySide import QtGui, QtCore
 import os
 
-__title__ = "BNC CAD - Version Save As Command"
-__author__ = "BNC CAD"
+__title__ = "ANVIL CAD - Version Save As Command"
+__author__ = "ANVIL CAD"
 __url__ = ""
 
 
@@ -72,7 +72,7 @@ class Std_VersionSaveAs:
             FreeCADGui.getMainWindow(),
             "Save As (Version Controlled)",
             working_dir,
-            "BNC CAD Files (*.FCStd)"
+            "ANVIL CAD Files (*.FCStd)"
         )
 
         dialog.setAcceptMode(QtGui.QFileDialog.AcceptSave)

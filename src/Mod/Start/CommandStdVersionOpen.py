@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # ***************************************************************************
-# *   Copyright (c) 2024 BNC CAD                                            *
+# *   Copyright (c) 2024 ANVIL CAD                                            *
 # *                                                                         *
 # *   This file is part of FreeCAD.                                         *
 # *                                                                         *
 # ***************************************************************************
 
-"""Version Open command for BNC CAD - Open version-controlled documents"""
+"""Version Open command for ANVIL CAD - Open version-controlled documents"""
 
 import FreeCAD as App
 import FreeCADGui as Gui

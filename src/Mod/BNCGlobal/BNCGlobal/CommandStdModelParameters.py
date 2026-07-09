@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# BNC CAD - Model Parameters Command
+# ANVIL CAD - Model Parameters Command
 # Edits industrial PDM attributes (MP_*) on the active document / selected object.
 
 import FreeCAD as App

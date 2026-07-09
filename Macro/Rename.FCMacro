@@ -1,4 +1,4 @@
-﻿import FreeCAD as App
+import FreeCAD as App
 import FreeCADGui as Gui
 from PySide import QtGui
 import os
@@ -22,6 +22,28 @@ def _write_rename_entry(old_name, new_name):
     data[old_name] = new_name
     with open(_RENAME_MAP_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2)
+
+
+def _parse_versioned_name(filename):
+    """Parse a versioned FCStd filename tolerantly.
+
+    Returns (base_name, version, logical_ext, conforming).
+    Accepts, in order of preference:
+        BaseName.NNN.ext.FCStd   -> conforming (ext in prt|asm|drg)
+        BaseName.NNN.FCStd       -> ext defaults to 'prt'  (non-conforming)
+        BaseName.FCStd           -> version '001', ext 'prt' (non-conforming)
+    Returns (None, None, None, False) if it is not an .FCStd file at all.
+    """
+    m = re.match(r"^(.*)\.(\d{3})\.(prt|asm|drg)\.FCStd$", filename, re.IGNORECASE)
+    if m:
+        return m.group(1), m.group(2), m.group(3).lower(), True
+    m = re.match(r"^(.*)\.(\d{3})\.FCStd$", filename, re.IGNORECASE)
+    if m:
+        return m.group(1), m.group(2), "prt", False
+    m = re.match(r"^(.*)\.FCStd$", filename, re.IGNORECASE)
+    if m:
+        return m.group(1), "001", "prt", False
+    return None, None, None, False
 
 
 def _is_root_assembly(obj):
@@ -127,21 +149,19 @@ def main():
             file_path = str(target_doc.FileName)
             directory = os.path.dirname(file_path)
             filename = os.path.basename(file_path)
+            orig_filename = filename
 
-            pattern = r"^(.*)\.(\d{3})\.(prt|asm|drg)\.FCStd$"
-            match = re.match(pattern, filename)
-            if not match:
+            base_name, _ver, logical_ext, _conforming = _parse_versioned_name(filename)
+            if base_name is None:
                 QtGui.QMessageBox.warning(
                     None, "Invalid Format",
-                    "File name must follow format:\nBaseName.001.prt.FCStd"
+                    "File must be a FreeCAD file (.FCStd)."
                 )
                 return
-
-            base_name = match.group(1)
-            logical_ext = match.group(3)
         else:
             base_name = target_doc.Name if target_doc.Name else "Untitled"
             logical_ext = "prt"
+            orig_filename = None
 
         current_desc = ""
         if hasattr(target_doc, "Description"):
@@ -154,21 +174,19 @@ def main():
             file_path = str(doc.FileName)
             directory = os.path.dirname(file_path)
             filename = os.path.basename(file_path)
+            orig_filename = filename
 
-            pattern = r"^(.*)\.(\d{3})\.(prt|asm|drg)\.FCStd$"
-            match = re.match(pattern, filename)
-            if not match:
+            base_name, _ver, logical_ext, _conforming = _parse_versioned_name(filename)
+            if base_name is None:
                 QtGui.QMessageBox.warning(
                     None, "Invalid Format",
-                    "File name must follow format:\nBaseName.001.prt.FCStd"
+                    "File must be a FreeCAD file (.FCStd)."
                 )
                 return
-
-            base_name = match.group(1)
-            logical_ext = match.group(3)
         else:
             base_name = doc.Name if doc.Name else "Untitled"
             logical_ext = "prt"
+            orig_filename = None
 
         current_desc = ""
         if hasattr(doc, "Description"):
@@ -237,13 +255,6 @@ def main():
     edit_layout.addRow("New Name:", name_edit)
     edit_layout.addRow("New Description:", desc_edit)
 
-    # File type selector -- only when saving an unsaved document
-    type_combo = QtGui.QComboBox()
-    type_combo.addItems(["prt", "asm", "drg"])
-    if rename_mode == "document" and not file_saved:
-        type_combo.setCurrentIndex(type_combo.findText(logical_ext))
-        edit_layout.addRow("File Type:", type_combo)
-
     edit_group.setLayout(edit_layout)
     main_layout.addWidget(edit_group)
 
@@ -263,7 +274,6 @@ def main():
 
     new_name = name_edit.text().strip()
     new_desc = desc_edit.text().strip()
-    new_type = type_combo.currentText()
 
     # ============================================================
     # VALIDATION
@@ -340,7 +350,7 @@ def main():
         if not directory:
             return
 
-        new_filename = f"{new_name}.001.{new_type}.FCStd"
+        new_filename = f"{new_name}.001.FCStd"
         new_full_path = os.path.join(directory, new_filename)
 
         if os.path.exists(new_full_path):
@@ -389,11 +399,20 @@ def main():
     version_files = []
 
     for f in files:
-        m = re.match(rf"^{re.escape(base_name)}\.(\d{{3}})\.{re.escape(logical_ext)}\.FCStd$", f)
+        m = re.match(rf"^{re.escape(base_name)}\.(\d{{3}})(?:\.(?:prt|asm|drg))?\.FCStd$", f, re.IGNORECASE)
         if m:
             ver_num = int(m.group(1))
             old_full = os.path.join(directory, f)
             version_files.append((ver_num, old_full))
+
+    # Fallback: the original file did not follow the BaseName.NNN.ext.FCStd
+    # convention (e.g. "Flange.005.FCStd" or "Flange.FCStd"), so the strict
+    # scan above found nothing. Rename the actual on-disk file directly; it
+    # gets normalised to NewName.001.<ext>.FCStd below.
+    if not version_files and orig_filename:
+        cur_full = os.path.join(directory, orig_filename)
+        if os.path.exists(cur_full):
+            version_files.append((1, cur_full))
 
     if not version_files:
         QtGui.QMessageBox.warning(None, "Error", "No version files found.")
@@ -403,7 +422,7 @@ def main():
     version_files.sort(key=lambda x: x[0])
     _latest_ver_num, latest_old_path = version_files[-1]
 
-    new_filename_001 = f"{new_name}.001.{logical_ext}.FCStd"
+    new_filename_001 = f"{new_name}.001.FCStd"
     new_full_001 = os.path.join(directory, new_filename_001)
     rename_list = [(latest_old_path, new_full_001, "001")]
 
@@ -605,7 +624,7 @@ def main():
         Does NOT open any files — only checks Document.xml in the zip."""
         found = []
         seen = set()
-        asm_pattern = re.compile(r"^.+\.\d{3}\.asm\.FCStd$", re.IGNORECASE)
+        asm_pattern = re.compile(r"^.+\.\d{3}(?:\.(?:prt|asm|drg))?\.FCStd$", re.IGNORECASE)
         norm_target = os.path.normcase(os.path.abspath(str(target_doc.FileName)))
 
         # Build a set of old filenames (all versions) for fast check

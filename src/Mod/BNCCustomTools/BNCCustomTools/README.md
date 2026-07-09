@@ -1,12 +1,12 @@
-# BNC CAD Custom Tools Integration
+# ANVIL CAD Custom Tools Integration
 
 ## Overview
 
-This module integrates custom file operations and tools into BNC CAD (FreeCAD) without creating a separate workbench. The tools appear as a persistent toolbar across all workbenches.
+This module integrates custom file operations and tools into ANVIL CAD (FreeCAD) without creating a separate workbench. The tools appear as a persistent toolbar across all workbenches.
 
 ## Features
 
-The following custom tools are added to BNC CAD:
+The following custom tools are added to ANVIL CAD:
 
 ### 1. **New File** (NEW_FILE.svg)
 - Creates a new document with options for:
@@ -76,7 +76,7 @@ BNCCustomTools/
 
 ## How It Works
 
-1. **Automatic Loading**: When BNC CAD (FreeCAD) starts, it automatically loads all modules in the `Mod` directory.
+1. **Automatic Loading**: When ANVIL CAD (FreeCAD) starts, it automatically loads all modules in the `Mod` directory.
 
 2. **Command Registration**: The `InitGui.py` file registers all commands globally using `FreeCADGui.addCommand()`.
 
@@ -141,4 +141,4 @@ Potential additions:
 
 ---
 
-**Note**: This is a custom module for BNC CAD. It extends FreeCAD's functionality without modifying core files.
+**Note**: This is a custom module for ANVIL CAD. It extends FreeCAD's functionality without modifying core files.

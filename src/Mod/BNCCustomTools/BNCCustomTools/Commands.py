@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# BNC CAD Custom Commands
+# ANVIL CAD Custom Commands
 
 import FreeCAD
 import FreeCADGui

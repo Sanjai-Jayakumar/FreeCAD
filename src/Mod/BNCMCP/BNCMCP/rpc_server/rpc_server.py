@@ -121,7 +121,7 @@ def set_object_property(
 
 
 class FreeCADRPC:
-    """RPC server for BNC CAD MCP integration"""
+    """RPC server for ANVIL CAD MCP integration"""
 
     def ping(self):
         return True

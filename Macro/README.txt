@@ -1,5 +1,5 @@
 ==================================================================
-BNC CAD - Global Macro System
+ANVIL CAD - Global Macro System
 ==================================================================
 
 These 5 macros provide a professional version-controlled workflow:
@@ -74,5 +74,5 @@ Files are automatically versioned:
 - Clean file organization in working directory
 
 ==================================================================
-For support: contact BNC CAD team
+For support: contact ANVIL CAD team
 ==================================================================

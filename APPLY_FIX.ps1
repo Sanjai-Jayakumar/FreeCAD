@@ -62,6 +62,6 @@ Write-Host "File: $($info.FullName)"
 Write-Host "Size: $($info.Length) bytes"
 Write-Host "Modified: $($info.LastWriteTime)"
 Write-Host ""
-Write-Host "Now launch BNC CAD and test the BNC TechDraw toolbar!" -ForegroundColor Cyan
+Write-Host "Now launch ANVIL CAD and test the BNC TechDraw toolbar!" -ForegroundColor Cyan
 Write-Host ""
 Read-Host "Press Enter to exit"

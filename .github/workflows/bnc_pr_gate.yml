@@ -1,8 +1,8 @@
-# BNC CAD — Pull Request Quality Gate
+# ANVIL CAD — Pull Request Quality Gate
 # This workflow runs on PRs to bnc-* branches and enforces strict quality rules.
 # ALL checks must pass before a PR can be merged.
 
-name: BNC CAD PR Gate
+name: ANVIL CAD PR Gate
 
 on:
   pull_request:

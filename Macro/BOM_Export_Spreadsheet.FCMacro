@@ -1,9 +1,9 @@
 """
 BOM_Export_Spreadsheet.FCMacro
 ──────────────────────────────
-Exports the 'BNC CAD BOM' FreeCAD Spreadsheet to an Excel (.xlsx) file.
+Exports the 'ANVIL CAD BOM' FreeCAD Spreadsheet to an Excel (.xlsx) file.
 
-Run this macro after editing the BNC CAD BOM spreadsheet inside FreeCAD.
+Run this macro after editing the ANVIL CAD BOM spreadsheet inside FreeCAD.
 The file is saved to the same directory as the active assembly document.
 
 Usage:
@@ -21,7 +21,7 @@ except ImportError:
     from PySide2 import QtWidgets
 
 
-# ── Column definitions (must match BNC CAD BOM tool) ─────────────────────────
+# ── Column definitions (must match ANVIL CAD BOM tool) ─────────────────────────
 _COLUMNS = [
     ('S.NO', 8), ('LEVEL', 8), ('PART NUMBER', 28), ('DESCRIPTION', 45),
     ('QTY', 6), ('EBOM', 7), ('MBOM', 7), ('S-BOM', 7),
@@ -69,7 +69,7 @@ def _find_bom_sheet(doc):
     """Find the BNC_BOM Spreadsheet object in the document."""
     for obj in doc.Objects:
         if getattr(obj, 'TypeId', '') == 'Spreadsheet::Sheet':
-            if obj.Name == 'BNC_BOM' or obj.Label == 'BNC CAD BOM':
+            if obj.Name == 'BNC_BOM' or obj.Label == 'ANVIL CAD BOM':
                 return obj
     return None
 
@@ -140,7 +140,7 @@ def _write_excel(results, doc, save_path):
 
     wb = Workbook()
     ws = wb.active
-    ws.title = 'BNC CAD BOM'
+    ws.title = 'ANVIL CAD BOM'
 
     col_names  = [c[0] for c in _COLUMNS]
     col_widths = [c[1] for c in _COLUMNS]
@@ -209,7 +209,7 @@ def _write_excel(results, doc, save_path):
 
     # ── Title sheet ──────────────────────────────────────────────────────
     ts = wb.create_sheet('Info')
-    ts['A1'] = 'BNC CAD BOM'
+    ts['A1'] = 'ANVIL CAD BOM'
     ts['A2'] = 'Assembly'
     ts['B2'] = _clean_doc_name(doc)
     ts['A3'] = 'Date'
@@ -243,7 +243,7 @@ def run():
     if sheet is None:
         QtWidgets.QMessageBox.warning(
             None, "BOM Export",
-            "No BNC CAD BOM spreadsheet found in the active document.\n\n"
+            "No ANVIL CAD BOM spreadsheet found in the active document.\n\n"
             "Open the BOM tool (Assembly workbench) and click "
             "'Open in Spreadsheet' first.")
         return
@@ -251,7 +251,7 @@ def run():
     num_rows = _count_data_rows(sheet)
     if num_rows == 0:
         QtWidgets.QMessageBox.warning(None, "BOM Export",
-                                      "The BNC CAD BOM spreadsheet appears to be empty.")
+                                      "The ANVIL CAD BOM spreadsheet appears to be empty.")
         return
 
     results = _read_results(sheet, num_rows)

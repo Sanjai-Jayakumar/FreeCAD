@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Build BNC CAD from FreeCAD source using CMake + Visual Studio 2022.
+    Build ANVIL CAD from FreeCAD source using CMake + Visual Studio 2022.
 
 .DESCRIPTION
     Configures and compiles FreeCAD with BNC branding, then applies the
@@ -20,7 +20,7 @@
     Default: $FreeCADSource\build
 
 .PARAMETER OutputDir
-    Where the compiled BNC CAD application is installed.
+    Where the compiled ANVIL CAD application is installed.
     Default: C:\BNC-CAD-Output
 
 .PARAMETER Config
@@ -55,7 +55,7 @@ $applyScript = Join-Path $scriptDir "apply_bnc.ps1"
 # ── Preflight checks ─────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
-Write-Host "  BNC CAD — Build from Source" -ForegroundColor Green
+Write-Host "  ANVIL CAD — Build from Source" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 
 foreach ($check in @(
@@ -89,7 +89,7 @@ $cmakeArgs = @(
     "-DFREECAD_LIBPACK_DIR=$LibPackDir",
     "-DBUILD_WITH_CONDA=OFF",
     "-DCMAKE_INSTALL_PREFIX=$OutputDir",
-    "-DFREECAD_PROGRAM_NAME=BNC CAD",
+    "-DFREECAD_PROGRAM_NAME=ANVIL CAD",
     "-DFREECAD_VERSION_SUFFIX=-BNC"
 )
 
@@ -118,7 +118,7 @@ if ($LASTEXITCODE -ne 0) { Write-Error "CMake install failed (exit $LASTEXITCODE
 
 # ── Apply BNC overlay ─────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "  [4/4] Applying BNC CAD overlay..." -ForegroundColor Yellow
+Write-Host "  [4/4] Applying ANVIL CAD overlay..." -ForegroundColor Yellow
 
 & $applyScript -FreeCADTarget $OutputDir
 if ($LASTEXITCODE -ne 0) { Write-Error "apply_bnc.ps1 failed (exit $LASTEXITCODE)"; exit 1 }

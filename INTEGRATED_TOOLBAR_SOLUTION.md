@@ -1,8 +1,8 @@
-# BNC CAD - Built-in Drawing Generation Toolbar
+# ANVIL CAD - Built-in Drawing Generation Toolbar
 
 ## ✅ WHAT CHANGED
 
-I rebuilt BNC CAD with the **"Generate Drawing" button integrated directly into TechDraw toolbar** - no separate extension needed!
+I rebuilt ANVIL CAD with the **"Generate Drawing" button integrated directly into TechDraw toolbar** - no separate extension needed!
 
 ---
 
@@ -78,15 +78,15 @@ TechDraw Workbench - Main Toolbar:
 ## 🚀 Installation
 
 1. **Locate** the new installer:
-   - Path: `D:\BNC-FreeCAD\installer\BNC CAD.exe`
+   - Path: `D:\BNC-FreeCAD\installer\ANVIL CAD.exe`
    - Currently building...
 
 2. **Install**:
    - Run the installer
-   - Will update your existing BNC CAD installation
+   - Will update your existing ANVIL CAD installation
 
 3. **Use**:
-   - Start BNC CAD
+   - Start ANVIL CAD
    - Switch to TechDraw workbench
    - Look for [📐] button in TechDraw toolbar
    - Click to generate drawings!
@@ -175,7 +175,7 @@ The separator (│) keeps it visually separated from other TechDraw tools while 
 - NSIS installer: Will build after 7z completes
 
 **Output:**
-- Location: `D:\BNC-FreeCAD\installer\BNC CAD.exe`
+- Location: `D:\BNC-FreeCAD\installer\ANVIL CAD.exe`
 - Status: Building...
 
 **To check if build is complete:**

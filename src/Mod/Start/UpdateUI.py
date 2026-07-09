@@ -46,7 +46,7 @@ class _UpdateBanner(_QWidget):
 
         self._lbl = _QLabel(
             f"<span style='color:white;font-size:13px;font-weight:bold;'>"
-            f"  {message or 'A new version of BNC CAD is available.'}</span>"
+            f"  {message or 'A new version of ANVIL CAD is available.'}</span>"
         )
         self._lbl.setWordWrap(False)
         layout.addWidget(self._lbl, 1)
@@ -270,7 +270,7 @@ class _UpdateBanner(_QWidget):
                     # HKCU = per-user install. HKLM = legacy system install fallback.
                     for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
                         try:
-                            key = winreg.OpenKey(hive, r"Software\BNC CAD")
+                            key = winreg.OpenKey(hive, r"Software\ANVIL CAD")
                             install_dir = winreg.QueryValueEx(key, "InstallLocation")[0]
                             winreg.CloseKey(key)
                             candidate = os.path.join(install_dir, "bin", "FreeCAD.exe")
@@ -299,9 +299,9 @@ class _UpdateBanner(_QWidget):
                     f'echo %DATE% %TIME%: installed >> "{log_path}"\r\n'
                     "timeout /t 1 /nobreak > nul\r\n"
                     "set INSTDIR=\r\n"
-                    'for /f "tokens=2*" %%a in (\'reg query "HKCU\\Software\\BNC CAD" /v InstallLocation 2^>nul\') do set INSTDIR=%%b\r\n'
+                    'for /f "tokens=2*" %%a in (\'reg query "HKCU\\Software\\ANVIL CAD" /v InstallLocation 2^>nul\') do set INSTDIR=%%b\r\n'
                     "if not defined INSTDIR (\r\n"
-                    '  for /f "tokens=2*" %%a in (\'reg query "HKLM\\Software\\BNC CAD" /v InstallLocation 2^>nul\') do set INSTDIR=%%b\r\n'
+                    '  for /f "tokens=2*" %%a in (\'reg query "HKLM\\Software\\ANVIL CAD" /v InstallLocation 2^>nul\') do set INSTDIR=%%b\r\n'
                     ")\r\n"
                     f'if not defined INSTDIR set INSTDIR={os.path.join(local_appdata, "BNC_CAD")}\r\n'
                     f'echo %DATE% %TIME%: launching %INSTDIR% >> "{log_path}"\r\n'
@@ -333,7 +333,7 @@ class _UpdateBanner(_QWidget):
                     shell=False,
                     creationflags=subprocess.CREATE_NO_WINDOW
                 )
-                FreeCAD.Console.PrintMessage("BNC: Update agent launched — closing BNC CAD\n")
+                FreeCAD.Console.PrintMessage("BNC: Update agent launched — closing ANVIL CAD\n")
 
             except Exception as exc:
                 FreeCAD.Console.PrintError(f"BNC: Launch installer failed: {exc}\n")

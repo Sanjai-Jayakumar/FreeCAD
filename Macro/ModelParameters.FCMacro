@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Model Parameters Macro for BNC CAD
+# Model Parameters Macro for ANVIL CAD
 # Opens a dialog to view and edit model parameters for parts/assemblies
 
 import FreeCAD as App

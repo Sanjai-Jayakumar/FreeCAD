@@ -17,7 +17,7 @@ class CheckForUpdatesCommand:
         return {
             "Pixmap":   icon_path,
             "MenuText": "Check for Updates...",
-            "ToolTip":  "Check if a new version of BNC CAD is available",
+            "ToolTip":  "Check if a new version of ANVIL CAD is available",
             "Accel":    "Ctrl+U",
         }
 
@@ -27,7 +27,7 @@ class CheckForUpdatesCommand:
 
         # Show checking status
         if mw:
-            mw.statusBar().showMessage("BNC CAD: Checking for updates…", 10000)
+            mw.statusBar().showMessage("ANVIL CAD: Checking for updates…", 10000)
 
         # Shared result holder between background thread and main thread
         _holder = [None]
@@ -84,8 +84,8 @@ class CheckForUpdatesCommand:
 
             if result.get("update_available"):
                 ver = result.get("latest_version", "")
-                msg = (f"BNC CAD {ver} is available — please update."
-                       if ver else "A new version of BNC CAD is available.")
+                msg = (f"ANVIL CAD {ver} is available — please update."
+                       if ver else "A new version of ANVIL CAD is available.")
                 url = result.get("download_url", "")
                 FreeCAD.Console.PrintMessage(f"BNC: {msg}\n")
                 try:
@@ -98,7 +98,7 @@ class CheckForUpdatesCommand:
                 try:
                     QtWidgets.QMessageBox.information(
                         mw, "Check for Updates",
-                        "BNC CAD is up to date.\nYou have the latest version installed."
+                        "ANVIL CAD is up to date.\nYou have the latest version installed."
                     )
                 except Exception:
                     pass

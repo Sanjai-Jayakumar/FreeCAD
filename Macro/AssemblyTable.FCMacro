@@ -1,0 +1,437 @@
+# -*- coding: utf-8 -*-
+# AssemblyTable.FCMacro — BNC CAD Assembly BOM in TechDraw
+# Scans assembly, inserts S.No | Part Name | DESCRIPTION | Qty table.
+# Auto-sizes to page width.  Re-run to update.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import re as _re
+from PySide import QtWidgets
+
+VIEW_NAME = 'BNC_AssemblyTableView'
+
+# ---- table geometry (mm) ----
+ROWS_PER_TABLE = 20   # max rows per sub-table before splitting side-by-side
+TABLE_GAP      = 5.0  # mm gap between side-by-side sub-tables
+ROW_H  = 6.5          # data row height (mm)
+HDR_H  = 8.0          # header height (mm)
+FS     = 2.5          # data font size (mm)
+FSH    = 2.8          # header font size (mm)
+PAD    = 1.5          # horizontal cell padding (mm)
+AVG_CH = FS * 0.58    # average mm per character at FS
+
+# ============================================================
+# SKIP / CONTAINER SETS
+# ============================================================
+
+_SKIP = frozenset({
+    'TechDraw::DrawPage','TechDraw::DrawTemplate',
+    'TechDraw::DrawViewPart','TechDraw::DrawViewSection',
+    'TechDraw::DrawViewDetail','TechDraw::DrawProjGroup',
+    'TechDraw::DrawProjGroupItem','TechDraw::DrawViewDimension',
+    'TechDraw::DrawViewAnnotation','TechDraw::DrawViewSymbol',
+    'TechDraw::DrawViewSpreadsheet','TechDraw::DrawHatch',
+    'TechDraw::DrawGeomHatch','Spreadsheet::Sheet',
+    'App::Origin','App::Line','App::Plane',
+    'PartDesign::CoordinateSystem','PartDesign::Point',
+    'PartDesign::Line','PartDesign::Plane',
+    'Sketcher::SketchObject',
+})
+_CONTAINERS = frozenset({'Assembly::AssemblyObject','App::Part','App::DocumentObjectGroup'})
+_PARTS      = frozenset({'PartDesign::Body','Part::Feature','Part::FeaturePython','Part::Compound'})
+_SKIP_LBL   = frozenset({'Origin','X_Axis','Y_Axis','Z_Axis',
+                          'XY_Plane','XZ_Plane','YZ_Plane','LCS_Origin'})
+_GENERIC    = _re.compile(r'^Body\d*$|^Part\d*$|^Sketch\d*$', _re.IGNORECASE)
+
+# ============================================================
+# LABEL HELPERS
+# ============================================================
+
+def _clean(label):
+    s = str(label or '').strip()
+    s = _re.sub(r'\.(prt|asm|stp|step|iges|igs|FCStd)$', '', s, flags=_re.IGNORECASE)
+    s = _re.sub(r'\.\d{3}$', '', s)
+    return s.strip() or str(label).strip()
+
+def _desc(obj):
+    """Return Label2 (FreeCAD Description field) if set."""
+    return str(getattr(obj, 'Label2', '') or '').strip()
+
+def _add(lst, pn, desc=''):
+    if not pn or pn in _SKIP_LBL or _GENERIC.match(pn):
+        return
+    for r in lst:
+        if r[0] == pn:
+            r[2] += 1
+            return
+    lst.append([pn, desc, 1])   # [part_name, description, qty]
+
+def _merge(rows):
+    merged = []
+    for pn, desc, qty in rows:
+        m = _re.match(r'^(.+?)(\d{3})$', pn)
+        if m:
+            base = m.group(1)
+            for ex in merged:
+                if ex[0] == base:
+                    ex[2] += qty
+                    break
+            else:
+                merged.append([pn, desc, qty])
+        else:
+            merged.append([pn, desc, qty])
+    return merged
+
+# ============================================================
+# ASSEMBLY SCANNING
+# ============================================================
+
+def _walk(objects, rows, depth=0):
+    if depth > 12:
+        return
+    for obj in objects:
+        if obj is None: continue
+        tid = obj.TypeId
+        if tid in _SKIP or 'TechDraw' in tid: continue
+        if obj.Label in _SKIP_LBL: continue
+        if tid == 'App::Link':
+            linked = getattr(obj, 'LinkedObject', None)
+            if linked and linked.TypeId in _CONTAINERS:
+                _walk(getattr(linked, 'Group', []), rows, depth + 1)
+            else:
+                _add(rows, _clean(obj.Label), _desc(obj))
+        elif tid in _CONTAINERS:
+            _walk(getattr(obj, 'Group', []), rows, depth + 1)
+        elif tid in _PARTS:
+            _add(rows, _clean(obj.Label), _desc(obj))
+        else:
+            grp = getattr(obj, 'Group', None)
+            if grp:
+                _walk(grp, rows, depth + 1)
+
+def get_rows(doc):
+    rows = []
+
+    # 1 — Assembly workbench
+    for obj in doc.Objects:
+        if obj.TypeId == 'Assembly::AssemblyObject':
+            _walk(getattr(obj, 'Group', []), rows)
+            break
+
+    # 2 — App::Part containers
+    if not rows:
+        for obj in doc.Objects:
+            if obj.TypeId == 'App::Part':
+                ch = [o for o in getattr(obj, 'Group', [])
+                      if o.TypeId not in _SKIP and 'TechDraw' not in o.TypeId]
+                if ch:
+                    _walk(ch, rows)
+
+    # 3 — Flat doc root (STEP imports)
+    if not rows:
+        for obj in doc.Objects:
+            if obj.TypeId in _SKIP or 'TechDraw' in obj.TypeId: continue
+            if obj.Label in _SKIP_LBL: continue
+            parent_tids = {p.TypeId for p in getattr(obj, 'InList', [])}
+            if parent_tids & (_PARTS | _CONTAINERS): continue
+            if obj.TypeId in _PARTS:
+                _add(rows, _clean(obj.Label), _desc(obj))
+            elif obj.TypeId == 'App::Link':
+                linked = getattr(obj, 'LinkedObject', None)
+                if linked and linked.TypeId in _CONTAINERS:
+                    _walk(getattr(linked, 'Group', []), rows)
+                else:
+                    _add(rows, _clean(obj.Label), _desc(obj))
+
+    # 4 — Other open documents
+    if not rows:
+        for d in App.listDocuments().values():
+            if d is doc: continue
+            for obj in d.Objects:
+                if obj.TypeId not in _PARTS: continue
+                parent_tids = {p.TypeId for p in getattr(obj, 'InList', [])}
+                if not (parent_tids & _PARTS):
+                    _add(rows, _clean(obj.Label), _desc(obj))
+
+    return _merge(rows)
+
+# ============================================================
+# SVG GENERATOR
+# ============================================================
+
+def _esc(s):
+    return (str(s)
+            .replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+
+def _trunc(s, col_w_mm):
+    max_ch = max(1, int((col_w_mm - PAD * 2) / AVG_CH))
+    s = str(s)
+    return s if len(s) <= max_ch else s[:max_ch - 1] + u'…'
+
+def _auto_col_widths(rows):
+    """Fit each column to its actual content + padding."""
+    def w(text, fs=FS):
+        return len(str(text)) * (fs * 0.58) + PAD * 2
+
+    # Start from header widths
+    cw = [w('S.No', FSH), w('Part Name', FSH), w('DESCRIPTION', FSH), w('Qty', FSH)]
+
+    has_desc = any(r[1] for r in rows)
+    for pn, desc, qty in rows:
+        cw[1] = max(cw[1], w(pn))
+        if desc:
+            cw[2] = max(cw[2], w(desc))
+        cw[3] = max(cw[3], w(qty))
+
+    # Clamp to reasonable ranges
+    cw[0] = max(10.0, min(18.0,  cw[0]))   # S.No
+    cw[1] = max(25.0, min(90.0,  cw[1]))   # Part Name
+    # Description: collapse to header-only width if empty, otherwise expand
+    cw[2] = max(18.0 if not has_desc else 30.0, min(130.0, cw[2]))
+    cw[3] = max(10.0, min(18.0,  cw[3]))   # Qty
+
+    return [round(c, 1) for c in cw]
+
+def _draw_subtable(o, chunk, cw, x_off, sno_start):
+    """Draw one sub-table at horizontal offset x_off into SVG output list o."""
+    tw = float(sum(cw))
+    n  = len(chunk)
+
+    cx = []
+    x  = x_off
+    for w in cw:
+        cx.append(x); x += float(w)
+
+    th = HDR_H + ROW_H * n   # height of this sub-table
+
+    # header bg
+    o.append('<rect x="{:.3f}" y="0" width="{:.3f}" height="{:.3f}"'
+             ' fill="#F0F0F0" stroke="none"/>'.format(x_off, tw, HDR_H))
+    # data bg
+    o.append('<rect x="{:.3f}" y="{:.3f}" width="{:.3f}" height="{:.3f}"'
+             ' fill="#FFFFFF" stroke="none"/>'.format(x_off, HDR_H, tw, ROW_H * n))
+
+    # thin row dividers
+    for ri in range(1, n):
+        y = HDR_H + ri * ROW_H
+        o.append('<line x1="{x:.3f}" y1="{y:.3f}" x2="{x2:.3f}" y2="{y:.3f}"'
+                 ' stroke="#888888" stroke-width="0.12"/>'.format(
+                     x=x_off, y=y, x2=x_off + tw))
+
+    # header/body divider
+    o.append('<line x1="{x:.3f}" y1="{h:.3f}" x2="{x2:.3f}" y2="{h:.3f}"'
+             ' stroke="#000000" stroke-width="0.4"/>'.format(
+                 x=x_off, h=HDR_H, x2=x_off + tw))
+
+    # column dividers
+    for xi in cx[1:]:
+        o.append('<line x1="{x:.3f}" y1="0" x2="{x:.3f}" y2="{h:.3f}"'
+                 ' stroke="#000000" stroke-width="0.2"/>'.format(x=xi, h=th))
+
+    # outer border
+    o.append('<rect x="{:.3f}" y="0" width="{:.3f}" height="{:.3f}"'
+             ' fill="none" stroke="#000000" stroke-width="0.5"/>'.format(
+                 x_off, tw, th))
+
+    def txt(x, y, content, fs=FS, bold=False, anchor='start'):
+        fw = 'bold' if bold else 'normal'
+        o.append(
+            '<text x="{x:.3f}" y="{y:.3f}"'
+            ' font-family="osifont" font-size="{fs:.3f}"'
+            ' font-weight="{fw}" fill="#000000"'
+            ' text-anchor="{a}" dominant-baseline="middle">'
+            '{v}</text>'.format(x=x, y=y, fs=fs, fw=fw, a=anchor, v=_esc(content)))
+
+    # header
+    hy = HDR_H / 2.0
+    txt(cx[0] + cw[0] / 2.0, hy, 'S.No',        FSH, bold=True, anchor='middle')
+    txt(cx[1] + PAD,          hy, 'Part Name',   FSH, bold=True)
+    txt(cx[2] + PAD,          hy, 'DESCRIPTION', FSH, bold=True)
+    txt(cx[3] + cw[3] / 2.0, hy, 'Qty',         FSH, bold=True, anchor='middle')
+
+    # data rows
+    for ri, (pn, desc, qty) in enumerate(chunk):
+        ry       = HDR_H + ri * ROW_H + ROW_H / 2.0
+        sno      = sno_start + ri
+        txt(cx[0] + cw[0] / 2.0, ry, str(sno),        anchor='middle')
+        txt(cx[1] + PAD,          ry, _trunc(pn,   cw[1]))
+        txt(cx[2] + PAD,          ry, _trunc(desc, cw[2]))
+        txt(cx[3] + cw[3] / 2.0, ry, str(qty),         anchor='middle')
+
+
+def make_svg(rows):
+    cw = _auto_col_widths(rows)
+    tw = float(sum(cw))
+
+    # Split rows into side-by-side sub-tables
+    chunks = []
+    for i in range(0, max(len(rows), 1), ROWS_PER_TABLE):
+        chunks.append(rows[i:i + ROWS_PER_TABLE])
+
+    n_tables = len(chunks)
+    total_w  = tw * n_tables + TABLE_GAP * (n_tables - 1)
+    total_h  = HDR_H + ROW_H * ROWS_PER_TABLE   # fixed height = tallest possible
+
+    o = []
+    o.append('<svg xmlns="http://www.w3.org/2000/svg" version="1.1"'
+             ' width="{w:.3f}mm" height="{h:.3f}mm"'
+             ' viewBox="0 0 {w:.3f} {h:.3f}">'.format(w=total_w, h=total_h))
+
+    for ci, chunk in enumerate(chunks):
+        x_off     = ci * (tw + TABLE_GAP)
+        sno_start = ci * ROWS_PER_TABLE + 1
+        _draw_subtable(o, chunk, cw, x_off, sno_start)
+
+    o.append('</svg>')
+    return '\n'.join(o)
+
+# ============================================================
+# TECHDRAW HELPERS
+# ============================================================
+
+def get_all_pages(doc):
+    return [o for o in doc.Objects if o.TypeId == 'TechDraw::DrawPage']
+
+def get_active_page(doc):
+    for obj in Gui.Selection.getSelection():
+        if obj.TypeId == 'TechDraw::DrawPage':
+            return obj
+        for p in getattr(obj, 'InList', []):
+            if p.TypeId == 'TechDraw::DrawPage':
+                return p
+    try:
+        av = Gui.ActiveDocument.ActiveView
+        if av and hasattr(av, 'getPage'):
+            p = av.getPage()
+            if p: return p
+    except Exception:
+        pass
+    try:
+        mdi = Gui.getMainWindow().centralWidget().activeSubWindow()
+        if mdi:
+            v = mdi.widget()
+            if hasattr(v, 'getPage'):
+                p = v.getPage()
+                if p: return p
+    except Exception:
+        pass
+    pages = get_all_pages(doc)
+    return pages[0] if pages else None
+
+def _auto_scale(page, rows):
+    """Scale so the full table layout fits within ~85% of page width."""
+    try:
+        cw = _auto_col_widths(rows)
+        tw = float(sum(cw))
+        n  = max(1, -(-len(rows) // ROWS_PER_TABLE))   # ceiling division
+        total_w = tw * n + TABLE_GAP * (n - 1)
+        target  = float(page.PageWidth) * 0.85
+        s = target / total_w
+        return max(0.3, min(4.0, round(s * 4) / 4))    # snap to 0.25 steps
+    except Exception:
+        return 1.0
+
+# ============================================================
+# INSERT
+# ============================================================
+
+def insert_table(page, rows):
+    import tempfile as _tmp, os as _os
+    doc = page.Document
+
+    for name in (VIEW_NAME, 'BNC_AssemblyTable'):
+        old = doc.getObject(name)
+        if old:
+            doc.removeObject(name)
+
+    svg = make_svg(rows)
+
+    tf = _tmp.NamedTemporaryFile(suffix='.svg', delete=False, mode='w', encoding='utf-8')
+    tf.write(svg)
+    tf.close()
+    with open(tf.name, 'r', encoding='utf-8') as f:
+        svg_content = f.read()
+    _os.unlink(tf.name)
+
+    scale = _auto_scale(page, rows)
+
+    view        = doc.addObject('TechDraw::DrawViewSymbol', VIEW_NAME)
+    view.Label  = ''
+    view.Symbol = svg_content
+    view.Scale  = scale
+
+    try:
+        view.X = float(page.PageWidth)  / 2.0
+        view.Y = float(page.PageHeight) / 2.0
+    except Exception:
+        view.X = 150.0
+        view.Y = 105.0
+
+    page.addView(view)
+    # Recompute only the new view + page — avoids cascading into unrelated
+    # assembly objects (broken joints, missing external links).
+    try:
+        doc.recompute([view, page])
+    except Exception:
+        doc.recompute()
+
+    # Auto-select the view so Scale appears in the Data properties panel
+    try:
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(doc.Name, VIEW_NAME)
+        # Bring the Properties dock to front so the user sees Scale immediately
+        from PySide import QtWidgets as _QW
+        mw = Gui.getMainWindow()
+        for dock in mw.findChildren(_QW.QDockWidget):
+            if 'propert' in dock.windowTitle().lower():
+                dock.setVisible(True)
+                dock.raise_()
+                break
+    except Exception:
+        pass
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+    if not App.ActiveDocument:
+        QtWidgets.QMessageBox.warning(None, 'Error', 'No active document.')
+        return
+
+    doc  = App.ActiveDocument
+    page = get_active_page(doc)
+
+    if not page:
+        pages = get_all_pages(doc)
+        if not pages:
+            QtWidgets.QMessageBox.warning(
+                None, 'No TechDraw Page',
+                'No TechDraw pages found. Create a page first.')
+            return
+        page = pages[0]
+
+    rows = get_rows(doc)
+    if not rows:
+        QtWidgets.QMessageBox.warning(
+            None, 'No Parts Found',
+            'No assembly components found.\n'
+            'Make sure the assembly document is open.')
+        return
+
+    insert_table(page, rows)
+
+    QtWidgets.QMessageBox.information(
+        None, 'Done',
+        'Table inserted on "{}":  {} parts.\n\n'
+        'TO RESIZE:\n'
+        '  1. Click the table on the sheet\n'
+        '  2. Look at the left panel → "Data" tab\n'
+        '  3. Change the "Scale" value\n'
+        '     0.5 = half size   1.0 = full   2.0 = double\n\n'
+        'The table is now selected — check the Data panel now.'.format(
+            page.Label, len(rows)))
+
+
+if __name__ == '__main__':
+    main()

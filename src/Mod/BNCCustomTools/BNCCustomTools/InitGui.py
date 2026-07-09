@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# BNC CAD Custom Tools - GUI Initialization
+# ANVIL CAD Custom Tools - GUI Initialization
 # This file is loaded when FreeCAD GUI starts
 
 import FreeCAD

@@ -1,4 +1,4 @@
-# How to Install BNC CAD (Bypass Windows SmartScreen)
+# How to Install ANVIL CAD (Bypass Windows SmartScreen)
 
 ## IMPORTANT: This warning is NORMAL for unsigned software!
 
@@ -48,7 +48,7 @@
 
 If SmartScreen blocks completely:
 
-1. **Right-click** on `BNC CAD.exe`
+1. **Right-click** on `ANVIL CAD.exe`
 2. Select **"Properties"**
 3. Check **"Unblock"** at the bottom
 4. Click **"Apply"** and **"OK"**
@@ -76,7 +76,7 @@ C718FB00F2C2E627CBBA2BEAC8F98ABE7C1DC03C2F8FA6515A6A4270750F9887
 
 To verify:
 ```powershell
-Get-FileHash -Path "BNC CAD.exe" -Algorithm SHA256
+Get-FileHash -Path "ANVIL CAD.exe" -Algorithm SHA256
 ```
 
 If the hash **matches**, the file is safe and unmodified.

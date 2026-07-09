@@ -1,0 +1,664 @@
+# -*- coding: utf-8 -*-
+# BalloonAssembly.FCMacro — BNC CAD  v4
+#
+# HOW TO USE:
+#   1. Run AssemblyTable macro first (establishes S.No order)
+#   2. On the TechDraw sheet, click one or more 3D views
+#      (hold Ctrl to select multiple views)
+#   3. Run this macro
+#
+#   SPREAD assembly (exploded view): bubbles are placed outward from each
+#   part's projected 3D centre — arrow tip lands on the part.
+#
+#   TIGHT assembly (all parts close together): bubbles are laid out in a
+#   numbered column beside the view. Drag each bubble onto its part.
+#
+#   Re-run to regenerate.  Drag bubbles to fine-tune positions.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import re as _re
+import math
+from FreeCAD import Units as _U
+from PySide import QtWidgets
+
+BALLOON_PREFIX = 'BNCBalloon_'
+
+# Perimeter ring: bubbles sit on a ring this far beyond the furthest part
+PERIM_MARGIN     = 25.0   # mm added beyond the furthest projected part
+PERIM_RADIUS_MIN = 45.0   # mm minimum ring radius from view centre
+
+# Minimum spacing between bubble centres (repulsion)
+MIN_BUBBLE_SEP = 11.0
+
+# If parts barely spread at all (single part / degenerate), fall back to
+# a numbered column beside the view.
+SPREAD_THRESHOLD = 3.0
+
+def _mm(v):
+    """Return a FreeCAD Length Quantity from a plain mm float."""
+    return _U.Quantity(float(v), _U.Length)
+
+# ============================================================
+# SKIP / CONTAINER SETS  (identical to AssemblyTable)
+# ============================================================
+_SKIP = frozenset({
+    'TechDraw::DrawPage','TechDraw::DrawTemplate',
+    'TechDraw::DrawViewPart','TechDraw::DrawViewSection',
+    'TechDraw::DrawViewDetail','TechDraw::DrawProjGroup',
+    'TechDraw::DrawProjGroupItem','TechDraw::DrawViewDimension',
+    'TechDraw::DrawViewAnnotation','TechDraw::DrawViewSymbol',
+    'TechDraw::DrawViewSpreadsheet','TechDraw::DrawHatch',
+    'TechDraw::DrawGeomHatch','TechDraw::DrawViewBalloon',
+    'Spreadsheet::Sheet',
+    'App::Origin','App::Line','App::Plane',
+    'PartDesign::CoordinateSystem','PartDesign::Point',
+    'PartDesign::Line','PartDesign::Plane',
+    'Sketcher::SketchObject',
+})
+_CONTAINERS = frozenset({'Assembly::AssemblyObject','App::Part','App::DocumentObjectGroup'})
+_PARTS      = frozenset({'PartDesign::Body','Part::Feature','Part::FeaturePython','Part::Compound'})
+_SKIP_LBL   = frozenset({'Origin','X_Axis','Y_Axis','Z_Axis',
+                          'XY_Plane','XZ_Plane','YZ_Plane','LCS_Origin'})
+_GENERIC    = _re.compile(r'^Body\d*$|^Part\d*$|^Sketch\d*$', _re.IGNORECASE)
+
+# ============================================================
+# ASSEMBLY HELPERS  (identical to AssemblyTable)
+# ============================================================
+def _clean(label):
+    s = str(label or '').strip()
+    s = _re.sub(r'\.(prt|asm|stp|step|iges|igs|FCStd)$', '', s, flags=_re.IGNORECASE)
+    s = _re.sub(r'\.\d{3}$', '', s)
+    return s.strip() or str(label).strip()
+
+def _desc(obj):
+    return str(getattr(obj, 'Label2', '') or '').strip()
+
+def _add(lst, pn, desc=''):
+    if not pn or pn in _SKIP_LBL or _GENERIC.match(pn):
+        return
+    for r in lst:
+        if r[0] == pn:
+            r[2] += 1
+            return
+    lst.append([pn, desc, 1])
+
+def _merge(rows):
+    merged = []
+    for pn, desc, qty in rows:
+        m = _re.match(r'^(.+?)(\d{3})$', pn)
+        if m:
+            base = m.group(1)
+            for ex in merged:
+                if ex[0] == base:
+                    ex[2] += qty
+                    break
+            else:
+                merged.append([pn, desc, qty])
+        else:
+            merged.append([pn, desc, qty])
+    return merged
+
+def _walk(objects, rows, depth=0):
+    if depth > 12:
+        return
+    for obj in objects:
+        if obj is None: continue
+        tid = obj.TypeId
+        if tid in _SKIP or 'TechDraw' in tid: continue
+        if obj.Label in _SKIP_LBL: continue
+        if tid == 'App::Link':
+            linked = getattr(obj, 'LinkedObject', None)
+            if linked and linked.TypeId in _CONTAINERS:
+                _walk(getattr(linked, 'Group', []), rows, depth + 1)
+            else:
+                _add(rows, _clean(obj.Label), _desc(obj))
+        elif tid in _CONTAINERS:
+            _walk(getattr(obj, 'Group', []), rows, depth + 1)
+        elif tid in _PARTS:
+            _add(rows, _clean(obj.Label), _desc(obj))
+        else:
+            grp = getattr(obj, 'Group', None)
+            if grp:
+                _walk(grp, rows, depth + 1)
+
+def get_rows(doc):
+    rows = []
+    for obj in doc.Objects:
+        if obj.TypeId == 'Assembly::AssemblyObject':
+            _walk(getattr(obj, 'Group', []), rows)
+            break
+    if not rows:
+        for obj in doc.Objects:
+            if obj.TypeId == 'App::Part':
+                ch = [o for o in getattr(obj, 'Group', [])
+                      if o.TypeId not in _SKIP and 'TechDraw' not in o.TypeId]
+                if ch:
+                    _walk(ch, rows)
+    if not rows:
+        for obj in doc.Objects:
+            if obj.TypeId in _SKIP or 'TechDraw' in obj.TypeId: continue
+            if obj.Label in _SKIP_LBL: continue
+            parent_tids = {p.TypeId for p in getattr(obj, 'InList', [])}
+            if parent_tids & (_PARTS | _CONTAINERS): continue
+            if obj.TypeId in _PARTS:
+                _add(rows, _clean(obj.Label), _desc(obj))
+            elif obj.TypeId == 'App::Link':
+                linked = getattr(obj, 'LinkedObject', None)
+                if linked and linked.TypeId in _CONTAINERS:
+                    _walk(getattr(linked, 'Group', []), rows)
+                else:
+                    _add(rows, _clean(obj.Label), _desc(obj))
+    if not rows:
+        for d in App.listDocuments().values():
+            if d is doc: continue
+            for obj in d.Objects:
+                if obj.TypeId not in _PARTS: continue
+                parent_tids = {p.TypeId for p in getattr(obj, 'InList', [])}
+                if not (parent_tids & _PARTS):
+                    _add(rows, _clean(obj.Label), _desc(obj))
+    return _merge(rows)
+
+# ============================================================
+# PROJECTION HELPERS
+# ============================================================
+_VIEW_TYPES = frozenset({
+    'TechDraw::DrawViewPart',
+    'TechDraw::DrawProjGroupItem',
+})
+
+def _plc(obj):
+    """Own local placement of an object (identity if none)."""
+    p = getattr(obj, 'Placement', None)
+    return p if p is not None else App.Placement()
+
+def collect_instances(objects, parent_plc, out, depth=0):
+    """
+    Walk the assembly tree collecting PLACED part instances with their
+    WORLD bounding-box centres.  This is the crucial difference from
+    reading source .prt geometry (which sits at each part's own origin,
+    causing every balloon to collapse onto one point).
+
+    parent_plc holds the accumulated placement of ANCESTORS only.  An
+    object's own Placement is already baked into its Shape.BoundBox, so we
+    transform the shape's bbox centre by parent_plc — never double-count.
+
+    out receives (clean_label, world_centre_Vector) tuples.
+    """
+    if depth > 12:
+        return
+    for obj in objects:
+        if obj is None:
+            continue
+        tid = obj.TypeId
+        if tid in _SKIP or 'TechDraw' in tid:
+            continue
+        if obj.Label in _SKIP_LBL:
+            continue
+
+        if tid == 'App::Link':
+            linked = getattr(obj, 'LinkedObject', None)
+            if linked is not None and linked.TypeId in _CONTAINERS:
+                # Link points at a sub-assembly: descend, adding the link's
+                # placement and the linked container's own placement.
+                child_plc = parent_plc.multiply(_plc(obj)).multiply(_plc(linked))
+                collect_instances(getattr(linked, 'Group', []), child_plc, out, depth + 1)
+            else:
+                g = _leaf_geom(obj, parent_plc)
+                if g is not None:
+                    out.append((_clean(obj.Label), g[0], g[1]))
+        elif tid in _CONTAINERS:
+            child_plc = parent_plc.multiply(_plc(obj))
+            collect_instances(getattr(obj, 'Group', []), child_plc, out, depth + 1)
+        elif tid in _PARTS:
+            g = _leaf_geom(obj, parent_plc)
+            if g is not None:
+                out.append((_clean(obj.Label), g[0], g[1]))
+        else:
+            grp = getattr(obj, 'Group', None)
+            if grp:
+                collect_instances(grp, parent_plc.multiply(_plc(obj)), out, depth + 1)
+
+def _bbox_corners(bb):
+    """The 8 corner points of an (axis-aligned) BoundBox."""
+    from FreeCAD import Vector
+    return [Vector(x, y, z)
+            for x in (bb.XMin, bb.XMax)
+            for y in (bb.YMin, bb.YMax)
+            for z in (bb.ZMin, bb.ZMax)]
+
+def _leaf_geom(obj, parent_plc):
+    """
+    Return (world_centre, [8 world corner points]) for a placed leaf part.
+    Robust to how the object exposes geometry — parts here are App::Links
+    to EXTERNAL part documents, so obj.Shape is often absent.
+    """
+    gplc = None
+    try:
+        gplc = obj.getGlobalPlacement()
+    except Exception:
+        gplc = None
+
+    # A) direct Shape — bbox already in the parent frame
+    shp = getattr(obj, 'Shape', None)
+    if shp is not None and getattr(shp, 'BoundBox', None) is not None and shp.BoundBox.isValid():
+        bb = shp.BoundBox
+        corners = [parent_plc.multVec(c) for c in _bbox_corners(bb)]
+        return parent_plc.multVec(bb.Center), corners
+
+    # B) App::Link to an external-document part: linked local bbox, placed
+    linked = getattr(obj, 'LinkedObject', None)
+    if linked is not None:
+        lshp = getattr(linked, 'Shape', None)
+        if lshp is not None and getattr(lshp, 'BoundBox', None) is not None and lshp.BoundBox.isValid():
+            bb = lshp.BoundBox
+            plc = gplc if gplc is not None else parent_plc.multiply(_plc(obj))
+            corners = [plc.multVec(c) for c in _bbox_corners(bb)]
+            return plc.multVec(bb.Center), corners
+
+    # C) last resort: the part's world origin (zero-size box)
+    base = gplc.Base if gplc is not None else parent_plc.multiply(_plc(obj)).Base
+    return base, [base]
+
+def get_instances(doc):
+    """Return {clean_label: [(world_centre, corners), ...]} for all parts."""
+    out = []
+    for obj in doc.Objects:
+        if obj.TypeId == 'Assembly::AssemblyObject':
+            collect_instances(getattr(obj, 'Group', []), App.Placement(), out)
+            break
+    if not out:
+        for obj in doc.Objects:
+            if obj.TypeId == 'App::Part':
+                collect_instances(getattr(obj, 'Group', []), App.Placement(), out)
+    name_map = {}
+    for label, centre, corners in out:
+        name_map.setdefault(label, []).append((centre, corners))
+    return name_map
+
+def match_geom(part_name, name_map):
+    """Find (world_centre, corners) for a table row name (exact, then 001/suffix)."""
+    if part_name in name_map:
+        return name_map[part_name][0]
+    if part_name + '001' in name_map:
+        return name_map[part_name + '001'][0]
+    for lbl, entries in name_map.items():
+        if lbl.startswith(part_name) and lbl[len(part_name):].isdigit():
+            return entries[0]
+    return (None, None)
+
+def _view_scale(view):
+    try:
+        if view.TypeId == 'TechDraw::DrawProjGroupItem':
+            grp = next((o for o in getattr(view, 'InList', [])
+                        if o.TypeId == 'TechDraw::DrawProjGroup'), None)
+            if grp:
+                return float(grp.Scale)
+        return float(view.Scale)
+    except Exception:
+        return 1.0
+
+def _view_axes(view):
+    from FreeCAD import Vector
+    xd = Vector(view.XDirection).normalize()
+    d  = Vector(view.Direction).normalize()
+    yd = xd.cross(d).normalize()
+    return xd, yd
+
+def _view_extent_2d(view):
+    """
+    Radius (mm) enclosing the ACTUAL drawn geometry of the view, measured
+    from the view centre.  Read straight from TechDraw's projected 2D
+    geometry so it is correct for EXPLODED views too (where the drawn parts
+    are far more spread out than the assembled 3D placements).
+    Returns (radius, half_width, half_height) or None if unavailable.
+    """
+    candidates = []
+    # DrawViewPart may expose the projected compound as .Shape
+    shp = getattr(view, 'Shape', None)
+    if shp is not None and getattr(shp, 'BoundBox', None) is not None:
+        try:
+            if shp.BoundBox.isValid():
+                candidates.append(shp.BoundBox)
+        except Exception:
+            pass
+    # Fallback: visible/hidden edge accessors
+    for meth in ('getVisibleEdges', 'getHiddenEdges'):
+        fn = getattr(view, meth, None)
+        if fn is None:
+            continue
+        try:
+            edges = fn()
+            if edges:
+                import Part
+                comp = Part.makeCompound(edges)
+                if comp.BoundBox.isValid():
+                    candidates.append(comp.BoundBox)
+        except Exception:
+            pass
+    if not candidates:
+        return None
+    bb = candidates[0]
+    for extra in candidates[1:]:
+        bb.add(extra)
+    # TechDraw view-local geometry is centred on the view origin (0,0)
+    hw = max(abs(bb.XMin), abs(bb.XMax))
+    hh = max(abs(bb.YMin), abs(bb.YMax))
+    return math.sqrt(hw * hw + hh * hh), hw, hh
+
+def _get_page(doc, view):
+    for p in doc.Objects:
+        if p.TypeId != 'TechDraw::DrawPage':
+            continue
+        try:
+            if view in p.Views:
+                return p
+        except Exception:
+            pass
+    for inobj in getattr(view, 'InList', []):
+        if inobj.TypeId == 'TechDraw::DrawProjGroup':
+            for p2 in getattr(inobj, 'InList', []):
+                if p2.TypeId == 'TechDraw::DrawPage':
+                    return p2
+    return None
+
+# ============================================================
+# BUBBLE PLACEMENT
+# ============================================================
+def _repel(bubbles, min_sep, iterations=80):
+    """In-place repulsion so bubbles don't overlap (bubbles = [[sno, bx, by], ...])."""
+    for _ in range(iterations):
+        moved = False
+        for i in range(len(bubbles)):
+            for j in range(i + 1, len(bubbles)):
+                dx = bubbles[i][1] - bubbles[j][1]
+                dy = bubbles[i][2] - bubbles[j][2]
+                d  = math.sqrt(dx * dx + dy * dy)
+                if 0.01 < d < min_sep:
+                    push = (min_sep - d) * 0.5 + 0.1
+                    ux, uy = dx / d, dy / d
+                    bubbles[i][1] += ux * push
+                    bubbles[i][2] += uy * push
+                    bubbles[j][1] -= ux * push
+                    bubbles[j][2] -= uy * push
+                    moved = True
+        if not moved:
+            break
+
+def place_perimeter(items, ring_r):
+    """
+    Creo-style auto-balloon layout.  Each balloon's ARROW TIP lands on the
+    part's true projected 2D position; the BUBBLE sits on a ring that
+    ENCLOSES the whole drawing, evenly spaced and sorted by angle so leader
+    lines fan out neatly and rarely cross.
+
+    Because the ring is sized to the drawing extent (not to the part-centre
+    spread), tightly-packed parts still get distinct, well-separated bubbles
+    around the outside — exactly how Creo/SolidWorks place BOM balloons.
+
+    items  = [(sno, x2d, y2d), ...]  view-relative mm (centre = 0,0)
+    ring_r = radius enclosing the drawing
+    Returns [(sno, origin_x, origin_y, bx, by), ...]  view-relative mm.
+    """
+    n = len(items)
+    if n == 0:
+        return []
+
+    # Sort by the angle of each part from the drawing centre; bubbles then
+    # sit in the same angular order → leaders don't tangle.
+    def _ang(it):
+        _, x, y = it
+        return math.atan2(y, x) if (x * x + y * y) > 1.0 else 0.0
+
+    ordered = sorted(items, key=_ang)
+
+    out = []
+    for i, (sno, x2d, y2d) in enumerate(ordered):
+        # Evenly spaced slot on the ring, starting at 12 o'clock, clockwise
+        slot = -math.pi / 2.0 + 2.0 * math.pi * i / n
+        bx = ring_r * math.cos(slot)
+        by = ring_r * math.sin(slot)
+        out.append((sno, x2d, y2d, bx, by))
+    return out
+
+def place_column(view_half_w, items):
+    """
+    Degenerate fallback: parts don't spread (single part, or no placements
+    resolved).  Lay balloons in a numbered column beside the view centre.
+    items = [(sno, x2d, y2d), ...]  view-relative mm.
+    """
+    n = len(items)
+    row_h = 12.0
+    grid_x = view_half_w + 28.0
+    grid_y = (n - 1) * row_h / 2.0
+    out = []
+    for i, (sno, x2d, y2d) in enumerate(items):
+        by = grid_y - i * row_h
+        out.append((sno, x2d, y2d, grid_x, by))
+    return out
+
+# ============================================================
+# MAIN
+# ============================================================
+def main():
+    doc = App.ActiveDocument
+    if not doc:
+        QtWidgets.QMessageBox.warning(None, 'Error', 'No active document.')
+        return
+
+    sel_views = [o for o in Gui.Selection.getSelection() if o.TypeId in _VIEW_TYPES]
+    if not sel_views:
+        QtWidgets.QMessageBox.information(
+            None, 'Select Views First',
+            'Click one or more 3D views on the TechDraw sheet first,\n'
+            'then run Balloon Assembly.\n\n'
+            'Tip: hold Ctrl and click to select multiple views.')
+        return
+
+    rows = get_rows(doc)
+    if not rows:
+        QtWidgets.QMessageBox.warning(None, 'No Parts',
+            'No assembly parts found. Open the assembly document first.')
+        return
+
+    # World-space geometry of every PLACED part instance (the key fix — this
+    # is where each part actually sits in the assembly, hence in the view)
+    name_map = get_instances(doc)
+    App.Console.PrintMessage(
+        '[BalloonAssembly] resolved {} placed instances: {}\n'.format(
+            len(name_map), ', '.join(sorted(name_map.keys())[:40])))
+
+    # Whole-assembly extent from EVERY instance's bbox corners.  The ring is
+    # sized to this (the true drawing outline), NOT to the matched-part
+    # centres — otherwise long thin parts (shafts) collapse the estimate and
+    # the balloons clump.  centre3d = mid-point of the full 3D extent.
+    from FreeCAD import Vector
+    all_pts = []
+    for entries in name_map.values():
+        for centre, corners in entries:
+            if corners:
+                all_pts.extend(corners)
+            elif centre is not None:
+                all_pts.append(centre)
+    if all_pts:
+        centre3d = Vector(
+            (min(p.x for p in all_pts) + max(p.x for p in all_pts)) / 2.0,
+            (min(p.y for p in all_pts) + max(p.y for p in all_pts)) / 2.0,
+            (min(p.z for p in all_pts) + max(p.z for p in all_pts)) / 2.0)
+        dx = max(p.x for p in all_pts) - min(p.x for p in all_pts)
+        dy = max(p.y for p in all_pts) - min(p.y for p in all_pts)
+        dz = max(p.z for p in all_pts) - min(p.z for p in all_pts)
+    else:
+        centre3d = Vector(0, 0, 0)
+        dx = dy = dz = 0.0
+    n_with_box = sum(1 for entries in name_map.values()
+                     for c, corners in entries if corners and len(corners) > 1)
+    App.Console.PrintMessage(
+        '[BalloonAssembly] {} instances have real bbox; 3D extent = '
+        '{:.0f} x {:.0f} x {:.0f} mm\n'.format(n_with_box, dx, dy, dz))
+
+    # Remove existing BNC balloons
+    for obj in list(doc.Objects):
+        if (obj.TypeId == 'TechDraw::DrawViewBalloon'
+                and obj.Name.startswith(BALLOON_PREFIX)):
+            try:
+                doc.removeObject(obj.Name)
+            except Exception:
+                pass
+
+    # Distribute rows across selected views
+    n_views  = len(sel_views)
+    total    = len(rows)
+    per_view = int(math.ceil(total / float(n_views)))
+    chunks   = []
+    for vi in range(n_views):
+        start = vi * per_view
+        end   = min(start + per_view, total)
+        chunks.append([(start + i + 1, rows[start + i]) for i in range(end - start)])
+
+    pages_seen    = set()
+    total_created = 0
+    layout_used   = 'perimeter'
+
+    for view, chunk in zip(sel_views, chunks):
+        if not chunk:
+            continue
+        page = _get_page(doc, view)
+        if page is None:
+            continue
+
+        # TechDraw balloon X/Y/OriginX/OriginY are stored RELATIVE TO THE
+        # VIEW CENTRE (the balloon is a child of the view's scene item), NOT
+        # in absolute page coordinates.  Adding view.X/view.Y here is what
+        # pushed every balloon off into the page corner.  Reference is 0,0.
+        view_x = 0.0
+        view_y = 0.0
+        xd, yd = _view_axes(view)
+        scale  = _view_scale(view)
+
+        # ---- Resolve each part's WORLD geometry (centre + bbox corners) ----
+        raw = []   # (sno, world_centre or None, corners or None)
+        for sno, (pn, desc, qty) in chunk:
+            c, corners = match_geom(pn, name_map)
+            raw.append((sno, c, corners))
+
+        def _proj(p):
+            rel = p.sub(centre3d)
+            return rel.dot(xd) * scale, rel.dot(yd) * scale
+
+        # Arrow-tip position per part (projected part centre, view-relative)
+        items = []
+        for sno, c, corners in raw:
+            if c is not None:
+                x2d, y2d = _proj(c)
+            else:
+                x2d, y2d = 0.0, 0.0
+            items.append((sno, x2d, y2d))
+
+        # Radius of my projected assembled geometry (from all instances)
+        geom_r = 0.0
+        for p in all_pts:
+            px, py = _proj(p)
+            geom_r = max(geom_r, math.sqrt(px * px + py * py))
+
+        # GROUND TRUTH: the view's actual drawn 2D extent.  For exploded
+        # views this is far larger than the assembled geometry, so we size
+        # the ring to it and scale the tips outward to reach the spread parts.
+        ext = _view_extent_2d(view)
+        tip_scale = 1.0
+        if ext is not None and ext[0] > 1.0:
+            drawn_r = ext[0]
+            if geom_r > 1.0 and drawn_r > geom_r:
+                tip_scale = drawn_r / geom_r
+            draw_r = drawn_r
+        else:
+            draw_r = geom_r
+
+        if tip_scale != 1.0:
+            items = [(sno, x * tip_scale, y * tip_scale) for sno, x, y in items]
+
+        ring_r = max(draw_r + PERIM_MARGIN, PERIM_RADIUS_MIN)
+        App.Console.PrintMessage(
+            '[BalloonAssembly] geom_r={:.1f}mm, drawn_r={}, tip_scale={:.2f}\n'.format(
+                geom_r, ('%.1fmm' % ext[0]) if ext else 'n/a', tip_scale))
+
+        # ---- Diagnostics ----
+        spread = max((math.sqrt(x*x + y*y) for _, x, y in items), default=0.0)
+        n_matched = sum(1 for _, c, _ in raw if c is not None)
+        App.Console.PrintMessage(
+            '[BalloonAssembly] view "{}": {}/{} parts located, scale={:.3f}, '
+            'centre-spread={:.1f}mm, drawing radius={:.1f}mm, ring={:.1f}mm\n'.format(
+                view.Label, n_matched, len(raw), scale, spread, draw_r, ring_r))
+        if n_matched < len(raw):
+            missing = [pn for (sno, (pn, d, q)), (s2, c, cc) in zip(chunk, raw) if c is None]
+            App.Console.PrintWarning(
+                '[BalloonAssembly] NOT located (no placement match): {}\n'.format(
+                    ', '.join(missing[:30])))
+
+        if draw_r >= SPREAD_THRESHOLD:
+            placements  = place_perimeter(items, ring_r)
+            layout_used = 'perimeter'
+        else:
+            view_half_w = max(spread + 20.0, 50.0)
+            placements  = place_column(view_half_w, items)
+            layout_used = 'column'
+
+        # ---- Create TechDraw balloon objects ----
+        for sno, origin_x, origin_y, bx, by in placements:
+            name = '{}{:03d}'.format(BALLOON_PREFIX, sno)
+            b = doc.addObject('TechDraw::DrawViewBalloon', name)
+            b.SourceView = view
+            b.Text       = str(sno)
+            # All coordinate properties must be Quantity — plain floats
+            # break TechDraw's drag-to-move handler
+            b.OriginX    = _mm(origin_x)
+            b.OriginY    = _mm(origin_y)
+            b.X          = _mm(bx)
+            b.Y          = _mm(by)
+            try:
+                b.BubbleShape = 0   # 0 = Circular
+            except AttributeError:
+                pass
+            try:
+                b.ViewObject.FontSize  = _mm(3.5)
+                b.ViewObject.LineWidth = 0.5
+            except Exception:
+                pass
+            page.addView(b)
+            total_created += 1
+
+        pages_seen.add(page.Name)
+
+    # Recompute only affected pages
+    to_recompute = [doc.getObject(nm) for nm in pages_seen if doc.getObject(nm)]
+    try:
+        doc.recompute(to_recompute if to_recompute else [])
+    except Exception:
+        doc.recompute()
+
+    view_labels = ', '.join(v.Label for v in sel_views)
+
+    if layout_used == 'column':
+        tip = (
+            'Parts did not spread in this view (single part or placements\n'
+            'could not be resolved) — balloons placed in a column beside it.\n\n'
+            'Drag each numbered circle onto its part.\n\n'
+            'Numbers match the Assembly Table S.No column.\n'
+            'Re-run to regenerate after assembly changes.'
+        )
+    else:
+        tip = (
+            'Each leader points at the part\'s real position in the view;\n'
+            'bubbles are spread around the view perimeter (Creo-style).\n\n'
+            'TO FINE-TUNE:\n'
+            '  Click the numbered circle to select it, then drag.\n\n'
+            'Numbers match the Assembly Table S.No column.\n'
+            'Re-run to regenerate after assembly changes.'
+        )
+
+    QtWidgets.QMessageBox.information(
+        None, 'Balloons Created — BNC CAD',
+        '{} balloons on: {}\n\n{}'.format(total_created, view_labels, tip))
+
+
+main()

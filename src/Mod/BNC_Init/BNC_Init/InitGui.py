@@ -17,7 +17,7 @@ try:
 except Exception:
     pass
 
-# ── BNC CAD version — single source of truth: Start/UpdateChecker.py ─────────
+# ── ANVIL CAD version — single source of truth: Start/UpdateChecker.py ─────────
 # Load CURRENT_VERSION directly from UpdateChecker.py so that bumping the
 # version in that one file is all that is ever needed.
 def _read_bnc_version():
@@ -31,7 +31,7 @@ def _read_bnc_version():
         return "1.1.2"   # fallback if file is missing
 
 _BNC_VERSION = _read_bnc_version()
-_BNC_TITLE   = f"BNC CAD {_BNC_VERSION}"
+_BNC_TITLE   = f"ANVIL CAD {_BNC_VERSION}"
 
 # Patch mConfig so getNameWithVersion() returns the right version for all
 # future title updates (document open/close, etc.).
@@ -144,4 +144,4 @@ if _mod_dir not in sys.path:
 try:
     import BNC_MacroSetup
 except Exception as e:
-    FreeCAD.Console.PrintError("BNC CAD initialization error: " + str(e) + "\n")
+    FreeCAD.Console.PrintError("ANVIL CAD initialization error: " + str(e) + "\n")

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""BNC CAD: Pipe Bending toolbar — visible ONLY in Part Design workbench.
+"""ANVIL CAD: Pipe Bending toolbar — visible ONLY in Part Design workbench.
 
 Imported from InitGui.py.  Lives in its own module so that all objects
 survive FreeCAD's exec() scope cleanup.
@@ -74,7 +74,7 @@ def _ensure_toolbar():
 
     action.triggered.connect(_run_pipe_bending)
     _toolbar.addAction(action)
-    FreeCAD.Console.PrintLog("BNC CAD: Pipe Bending toolbar created\n")
+    FreeCAD.Console.PrintLog("ANVIL CAD: Pipe Bending toolbar created\n")
     return _toolbar
 
 
@@ -104,6 +104,6 @@ def init():
         mw = FreeCADGui.getMainWindow()
         if mw:
             mw.workbenchActivated.connect(_on_workbench_changed)
-        FreeCAD.Console.PrintLog("BNC CAD: Pipe Bending workbench observer registered\n")
+        FreeCAD.Console.PrintLog("ANVIL CAD: Pipe Bending workbench observer registered\n")
     except Exception as exc:
-        FreeCAD.Console.PrintError(f"BNC CAD: Pipe Bending init error: {exc}\n")
+        FreeCAD.Console.PrintError(f"ANVIL CAD: Pipe Bending init error: {exc}\n")

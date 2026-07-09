@@ -1,13 +1,13 @@
-; NSIS Modern UI installer for BNC CAD 1.1 (custom FreeCAD 1.1 build)
+; NSIS Modern UI installer for ANVIL CAD 1.1 (custom FreeCAD 1.1 build)
 
 !include "MUI2.nsh"
 
-!define PRODUCT_NAME "BNC CAD"
+!define PRODUCT_NAME "ANVIL CAD"
 !define PRODUCT_VERSION "1.1.2"
 !define PRODUCT_PUBLISHER "BNC Corporation"
 !define INSTALL_ARCHIVE "BNC-CAD-Output.7z"
 !define PAYLOAD_EXTRACTOR "7zr.exe"
-!define OUTPUT_FILE "BNC CAD 1.1.2.exe"
+!define OUTPUT_FILE "ANVIL CAD 1.1.2.exe"
 !define PRODUCT_REGKEY "Software\\${PRODUCT_NAME}"
 !define PRODUCT_UNREG "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${PRODUCT_NAME}"
 !define MUI_ABORTWARNING
@@ -58,7 +58,7 @@ Section "${PRODUCT_NAME}" SEC01
   File "${INSTALL_ARCHIVE}"
 
   ; ── Step 2: extract directly to install dir (single pass, no temp copy) ──────
-  DetailPrint "Installing BNC CAD to $INSTDIR..."
+  DetailPrint "Installing ANVIL CAD to $INSTDIR..."
   DetailPrint "This will take several minutes. Please wait..."
   CreateDirectory "$INSTDIR"
 
@@ -118,7 +118,7 @@ Section "${PRODUCT_NAME}" SEC01
   ; ── Step 8: register bnccad:// URL protocol handler ──────────────────────────
   ; Per-user registration under HKCU\Software\Classes (no admin needed).
   DetailPrint "Registering bnccad:// protocol handler..."
-  WriteRegStr HKCU "Software\Classes\bnccad" "" "URL:BNC CAD"
+  WriteRegStr HKCU "Software\Classes\bnccad" "" "URL:ANVIL CAD"
   WriteRegStr HKCU "Software\Classes\bnccad" "URL Protocol" ""
   WriteRegStr HKCU "Software\Classes\bnccad\DefaultIcon" "" "$INSTDIR\bin\FreeCAD.exe,0"
   WriteRegStr HKCU "Software\Classes\bnccad\shell" "" "open"

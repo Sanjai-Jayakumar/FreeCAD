@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    One-shot: install prerequisites, download LibPack, then build BNC CAD.
+    One-shot: install prerequisites, download LibPack, then build ANVIL CAD.
 
 .DESCRIPTION
     Runs the complete build pipeline:
@@ -9,7 +9,7 @@
       3. Installs VS 2022 Build Tools + Desktop C++ workload  (winget)
       4. Downloads FreeCAD LibPack 1.1 v3.1.1.3  (~948 MB)
       5. Extracts LibPack to C:\FreeCAD_LibPack
-      6. Calls build_bnc.ps1 to configure + compile + install BNC CAD
+      6. Calls build_bnc.ps1 to configure + compile + install ANVIL CAD
 
     Run this script from an Administrator PowerShell window.
     The compilation step (step 6) takes ~30-60 minutes.
@@ -24,7 +24,7 @@
     Where to extract the LibPack.  Default: C:\FreeCAD_LibPack
 
 .PARAMETER OutputDir
-    Where to install the finished BNC CAD application.  Default: C:\BNC-CAD-Output
+    Where to install the finished ANVIL CAD application.  Default: C:\BNC-CAD-Output
 
 .EXAMPLE
     # Full setup + build (first time):
@@ -84,7 +84,7 @@ if (-not $isAdmin) {
     exit 0
 }
 
-Banner "BNC CAD — Full Setup & Build"
+Banner "ANVIL CAD — Full Setup & Build"
 
 # ============================================================
 # PHASE 1 — Install tools
@@ -231,9 +231,9 @@ if (Test-Path (Join-Path $LibPackDir "bin")) {
 }
 
 # ============================================================
-# PHASE 4 — Build BNC CAD
+# PHASE 4 — Build ANVIL CAD
 # ============================================================
-Step "Phase 4/4 — Building BNC CAD 1.1 from source"
+Step "Phase 4/4 — Building ANVIL CAD 1.1 from source"
 Write-Host "  Source:  $repoRoot" -ForegroundColor DarkGray
 Write-Host "  LibPack: $LibPackDir" -ForegroundColor DarkGray
 Write-Host "  Output:  $OutputDir" -ForegroundColor DarkGray
@@ -257,4 +257,4 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-Banner "BNC CAD build complete!  Exe: $OutputDir\bin\BNC_CAD.exe"
+Banner "ANVIL CAD build complete!  Exe: $OutputDir\bin\BNC_CAD.exe"

@@ -1,8 +1,8 @@
-# BNC CAD — CI Pipeline
+# ANVIL CAD — CI Pipeline
 # Runs on every push and pull request to the bnc-* branches.
 # Enforces commit conventions, code quality, and build verification.
 
-name: BNC CAD CI
+name: ANVIL CAD CI
 
 on:
   push:

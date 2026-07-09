@@ -1,2 +1,2 @@
-# BNC CAD Initialization
-print("Loading BNC CAD custom configurations...")
+# ANVIL CAD Initialization
+print("Loading ANVIL CAD custom configurations...")

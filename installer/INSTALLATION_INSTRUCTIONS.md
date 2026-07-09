@@ -1,8 +1,8 @@
-# BNC CAD Installation Instructions
+# ANVIL CAD Installation Instructions
 
 ## Windows Defender SmartScreen Warning
 
-When you run the BNC CAD installer, you may see a **Windows SmartScreen warning** that says:
+When you run the ANVIL CAD installer, you may see a **Windows SmartScreen warning** that says:
 ```
 "Windows protected your PC"
 "Microsoft Defender SmartScreen prevented an unrecognized app from starting"
@@ -17,14 +17,14 @@ Publisher: Unknown publisher
 
 ### Method 1: Click "More info" and "Run anyway"
 
-1. **Double-click** the installer `BNC CAD.exe`
+1. **Double-click** the installer `ANVIL CAD.exe`
 2. **Click "More info"** link in the blue SmartScreen window
 3. **Click "Run anyway"** button that appears
 4. The installer will start normally
 
 ### Method 2: Right-click and "Run as administrator"
 
-1. **Right-click** on `BNC CAD.exe`
+1. **Right-click** on `ANVIL CAD.exe`
 2. Select **"Run as administrator"**
 3. If SmartScreen appears, click **"More info"** → **"Run anyway"**
 4. The installer will start with admin privileges
@@ -33,7 +33,7 @@ Publisher: Unknown publisher
 
 ## Why This Warning Appears
 
-- BNC CAD installer is **not digitally signed** with a code signing certificate
+- ANVIL CAD installer is **not digitally signed** with a code signing certificate
 - Code signing certificates cost **$150-500/year**
 - The software is **safe** - the warning is only because it's unsigned
 - Many open-source and small company software shows this warning
@@ -74,7 +74,7 @@ Publisher: Unknown publisher
 1. Go to **Windows Security** → **App & browser control**
 2. Click **"Reputation-based protection settings"**
 3. Temporarily turn **OFF** "Check apps and files"
-4. Install BNC CAD
+4. Install ANVIL CAD
 5. Turn protection **back ON** after installation
 
 ---
@@ -82,7 +82,7 @@ Publisher: Unknown publisher
 ## After Installation
 
 ### First Launch
-- BNC CAD may take **30-60 seconds** to start the first time
+- ANVIL CAD may take **30-60 seconds** to start the first time
 - Subsequent launches will be faster
 
 ### Update Banner

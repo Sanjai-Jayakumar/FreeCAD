@@ -1,7 +1,7 @@
-# BNC CAD Update System - Frontend Implementation
+# ANVIL CAD Update System - Frontend Implementation
 
 ## Overview
-This is a **frontend-only demonstration** of the BNC CAD auto-update system. It provides the complete user interface (VS Code-style update banner, dialogs) without requiring backend infrastructure.
+This is a **frontend-only demonstration** of the ANVIL CAD auto-update system. It provides the complete user interface (VS Code-style update banner, dialogs) without requiring backend infrastructure.
 
 ## Mock Mode Status
 ✅ **Currently in MOCK MODE** - Simulates update availability for demonstration purposes
@@ -35,8 +35,8 @@ This is a **frontend-only demonstration** of the BNC CAD auto-update system. It 
 ## How to Use (Frontend Demo)
 
 ### Testing the Update Banner
-1. Build BNC CAD with the new files
-2. Launch BNC CAD
+1. Build ANVIL CAD with the new files
+2. Launch ANVIL CAD
 3. Go to **Help → Check for Updates** (or press Ctrl+U)
 4. The update banner will appear at the top of the window
 

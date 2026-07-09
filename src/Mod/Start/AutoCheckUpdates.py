@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-Calls the update API on launch then repeats every _CHECK_INTERVAL_MS.
-Uses only QTimer.singleShot (static) in a self-rescheduling pattern so no
-QTimer instance is stored in Python — avoiding FreeCAD's GC-kills-QObject bug.
+Calls the update API ONCE on launch, then stops (no repeated polling).
+Uses only QTimer.singleShot (static) so no QTimer instance is stored in Python
+— avoiding FreeCAD's GC-kills-QObject bug.
 
-When the user dismisses the banner, polling is stopped permanently for the
-session (call stop_update_polling() from UpdateUI).
+The update check runs on a background thread and posts its result to a queue;
+a short, self-terminating drain reads that result on the main thread and then
+stops. The menu "Check for Updates" command can still call run_check() any time.
 """
 import queue
 import FreeCAD
@@ -15,11 +16,12 @@ try:
 except ImportError:
     from PySide import QtCore
 
-_CHECK_INTERVAL_MS = 2 * 60 * 1000   # <-- adjust polling interval here
-
 _result_queue    = queue.Queue()
 _polling_started = False
 _polling_stopped = False   # set to True when user dismisses banner
+_drain_active    = False
+_drain_ticks     = 0
+_MAX_DRAIN_TICKS = 60      # safety stop (~60 s) if no result ever arrives
 
 
 # ── result handling (always in main thread via queue drain) ─────────────────
@@ -29,8 +31,8 @@ def _handle_result(result):
         import UpdateUI
         if result.get("update_available"):
             ver = result.get("latest_version", "")
-            msg = (f"BNC CAD {ver} is available — please update."
-                   if ver else "A new version of BNC CAD is available.")
+            msg = (f"ANVIL CAD {ver} is available — please update."
+                   if ver else "A new version of ANVIL CAD is available.")
             url = result.get("download_url", "")
             FreeCAD.Console.PrintMessage(f"BNC: Update available — {msg}\n")
             UpdateUI.show_update_banner(msg, url)
@@ -50,56 +52,59 @@ def _on_result(result):
     _result_queue.put(result)
 
 
-# ── self-rescheduling drain (1 s tick) ──────────────────────────────────────
+# ── self-terminating drain (1 s tick, stops once the result is handled) ──────
 
-def _drain_and_reschedule():
-    if _polling_stopped:
-        return
+def _drain_once():
+    global _drain_ticks, _drain_active
+    handled = False
     try:
         while True:
-            result = _result_queue.get_nowait()
-            _handle_result(result)
+            _handle_result(_result_queue.get_nowait())
+            handled = True
     except queue.Empty:
         pass
-    QtCore.QTimer.singleShot(1000, _drain_and_reschedule)
-
-
-# ── self-rescheduling API check ─────────────────────────────────────────────
-
-def _check_and_reschedule():
-    if _polling_stopped:
+    _drain_ticks += 1
+    # one check yields one result → stop as soon as it is handled (or time out)
+    if handled or _drain_ticks >= _MAX_DRAIN_TICKS:
+        _drain_active = False
         return
-    run_check()
-    QtCore.QTimer.singleShot(_CHECK_INTERVAL_MS, _check_and_reschedule)
+    QtCore.QTimer.singleShot(1000, _drain_once)
+
+
+def _start_drain():
+    """Begin (or restart) the bounded drain that handles the next result."""
+    global _drain_active, _drain_ticks
+    _drain_ticks = 0
+    if _drain_active:
+        return
+    _drain_active = True
+    QtCore.QTimer.singleShot(500, _drain_once)
 
 
 # ── public API ───────────────────────────────────────────────────────────────
 
 def run_check():
-    """Run a single update check now (used by both the timer and the menu button)."""
+    """Run a single update check now (used by both launch and the menu button)."""
     FreeCAD.Console.PrintMessage("BNC: Checking for updates...\n")
     try:
         import UpdateChecker
         UpdateChecker.check_for_updates_async(_on_result)
+        _start_drain()
     except Exception as exc:
         FreeCAD.Console.PrintError(f"BNC: Update check error: {exc}\n")
 
 
 def stop_update_polling():
-    """Stop all future auto-checks (called when user dismisses the banner)."""
+    """Kept for UpdateUI compatibility (called when user dismisses the banner)."""
     global _polling_stopped
     _polling_stopped = True
-    FreeCAD.Console.PrintMessage("BNC: Update polling stopped by user\n")
 
 
 def start_update_polling():
-    """Call once from InitGui.py. Fires on launch then repeats."""
-    global _polling_started, _polling_stopped
+    """Call once from InitGui.py. Runs a SINGLE update check on launch — no repeat."""
+    global _polling_started
     if _polling_started:
         return
     _polling_started = True
-    _polling_stopped = False
-
-    QtCore.QTimer.singleShot(1000, _drain_and_reschedule)
-    QtCore.QTimer.singleShot(5000, _check_and_reschedule)
-    FreeCAD.Console.PrintMessage("BNC: Update polling started\n")
+    QtCore.QTimer.singleShot(5000, run_check)
+    FreeCAD.Console.PrintMessage("BNC: Update check scheduled (one-time)\n")

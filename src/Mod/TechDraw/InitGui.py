@@ -92,6 +92,26 @@ class TechDrawWorkbench(Gui.Workbench):
                 return any(o.TypeId == "TechDraw::DrawPage" for o in _FC.ActiveDocument.Objects)
             def Activated(self): run_macro("InsertToleranceTable.FCMacro")
 
+        class CmdAssemblyTable(object):
+            def GetResources(self):
+                return {"Pixmap": icon("BNC_AssemblyTable.svg"),
+                        "MenuText": "Assembly Table",
+                        "ToolTip": "Insert assembly parts list (BOM) into TechDraw sheet"}
+            def IsActive(self):
+                if _FC.ActiveDocument is None: return False
+                return any(o.TypeId == "TechDraw::DrawPage" for o in _FC.ActiveDocument.Objects)
+            def Activated(self): run_macro("AssemblyTable.FCMacro")
+
+        class CmdBalloonAssembly(object):
+            def GetResources(self):
+                return {"Pixmap": icon("BNC_BalloonAssembly.svg"),
+                        "MenuText": "Balloon Assembly",
+                        "ToolTip": "Auto-create balloons on selected view numbered to match Assembly Table"}
+            def IsActive(self):
+                if _FC.ActiveDocument is None: return False
+                return any(o.TypeId == "TechDraw::DrawPage" for o in _FC.ActiveDocument.Objects)
+            def Activated(self): run_macro("BalloonAssembly.FCMacro")
+
         class CmdViewManager(object):
             def GetResources(self):
                 return {"Pixmap": icon("BNC_ViewManager.svg"),
@@ -103,6 +123,8 @@ class TechDrawWorkbench(Gui.Workbench):
         _Gui.addCommand("TechDraw_GenerateDrawing",     CmdGenerateDrawing())
         _Gui.addCommand("TechDraw_FillTitleBlock",       CmdFillTitleBlock())
         _Gui.addCommand("TechDraw_InsertToleranceTable", CmdInsertToleranceTable())
+        _Gui.addCommand("TechDraw_AssemblyTable",        CmdAssemblyTable())
+        _Gui.addCommand("TechDraw_BalloonAssembly",      CmdBalloonAssembly())
         _Gui.addCommand("TechDraw_ViewManager",          CmdViewManager())
 
         self._run_macro = run_macro
@@ -607,6 +629,8 @@ class TechDrawWorkbench(Gui.Workbench):
                 ("BNC_GenerateDrawing.svg",     "Generate Drawing",       "GenerateDrawing.FCMacro"),
                 ("BNC_InsertTitleBlock.svg",     "Fill Title Block",       "FillTitleBlock.FCMacro"),
                 ("BNC_InsertToleranceTable.svg", "Insert Tolerance Table", "InsertToleranceTable.FCMacro"),
+                ("BNC_AssemblyTable.svg",        "Assembly Table",         "AssemblyTable.FCMacro"),
+                ("BNC_BalloonAssembly.svg",      "Balloon Assembly",       "BalloonAssembly.FCMacro"),
                 ("BNC_ExportPDF.svg",            "Export PDF",             "ExportPDF.FCMacro"),
             ]:
                 icon_path = _o2.path.join(icon_dir, icon_file)

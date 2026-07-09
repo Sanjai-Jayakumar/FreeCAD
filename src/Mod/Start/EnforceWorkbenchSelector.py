@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # ***************************************************************************
-# *   Copyright (c) 2024 BNC CAD                                            *
+# *   Copyright (c) 2024 ANVIL CAD                                            *
 # *                                                                         *
-# *   This file is part of BNC CAD.                                         *
+# *   This file is part of ANVIL CAD.                                         *
 # *                                                                         *
 # ***************************************************************************
 
-"""BNC CAD - Enforce Workbench Selector as Toolbar Buttons"""
+"""ANVIL CAD - Enforce Workbench Selector as Toolbar Buttons"""
 
 import FreeCAD
 import FreeCADGui
@@ -31,7 +31,7 @@ def enforce_workbench_selector():
         # Force it to toolbar button style (type 1) if not already set
         if current_type != 1:
             main_prefs.SetInt("WorkbenchSelectorType", 1)
-            FreeCAD.Console.PrintLog("BNC CAD: Workbench selector set to toolbar buttons style\n")
+            FreeCAD.Console.PrintLog("ANVIL CAD: Workbench selector set to toolbar buttons style\n")
 
             # Try to apply the change immediately
             try:
@@ -40,9 +40,9 @@ def enforce_workbench_selector():
                 workbench_selector = mw.findChild(QtWidgets.QToolBar, "Workbench selector toolbar")
                 if workbench_selector:
                     workbench_selector.setVisible(True)
-                    FreeCAD.Console.PrintLog("BNC CAD: Workbench toolbar visibility refreshed\n")
+                    FreeCAD.Console.PrintLog("ANVIL CAD: Workbench toolbar visibility refreshed\n")
             except Exception as e:
-                FreeCAD.Console.PrintLog(f"BNC CAD: Could not refresh workbench selector: {e}\n")
+                FreeCAD.Console.PrintLog(f"ANVIL CAD: Could not refresh workbench selector: {e}\n")
 
     except Exception as e:
         FreeCAD.Console.PrintError(f"Error enforcing workbench selector: {str(e)}\n")
@@ -55,4 +55,4 @@ QtCore.QTimer.singleShot(3000, enforce_workbench_selector)
 QtCore.QTimer.singleShot(5000, enforce_workbench_selector)
 QtCore.QTimer.singleShot(10000, enforce_workbench_selector)
 
-FreeCAD.Console.PrintLog("BNC CAD: Workbench selector enforcement module loaded\n")
+FreeCAD.Console.PrintLog("ANVIL CAD: Workbench selector enforcement module loaded\n")

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
-# BNC CAD — Google Sign-In Dialog
+# ANVIL CAD — Google Sign-In Dialog
 # Shows a login screen on first launch, similar to Claude Desktop app.
 # Users authenticate with their Google account via OAuth 2.0.
 
@@ -99,7 +99,7 @@ def _oauth_config():
                 return cid, csec
         except (json.JSONDecodeError, OSError):
             pass
-    FreeCAD.Console.PrintWarning("BNC CAD: OAuth config not found. Place bnc_oauth.json in " + FreeCAD.getUserAppDataDir() + "\n")
+    FreeCAD.Console.PrintWarning("ANVIL CAD: OAuth config not found. Place bnc_oauth.json in " + FreeCAD.getUserAppDataDir() + "\n")
     return "", ""
 
 
@@ -132,8 +132,8 @@ class _OAuthCallbackHandler(http.server.BaseHTTPRequestHandler):
         html = (
             "<html><body style='font-family:Segoe UI,sans-serif;text-align:center;"
             "padding:60px;background:#f8f9fa'>"
-            "<h2 style='color:#1a73e8'>&#10004; Signed in to BNC CAD</h2>"
-            "<p>You can close this tab and return to BNC CAD.</p>"
+            "<h2 style='color:#1a73e8'>&#10004; Signed in to ANVIL CAD</h2>"
+            "<p>You can close this tab and return to ANVIL CAD.</p>"
             "</body></html>"
         )
         self.send_response(200)
@@ -199,7 +199,7 @@ _BNC_LOGO_PNG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "freeca
 # ─── Login Dialog ─────────────────────────────────────────────────────────────
 class BNCLoginDialog(QtWidgets.QDialog):
     """
-    A modern Google Sign-In dialog for BNC CAD.
+    A modern Google Sign-In dialog for ANVIL CAD.
     Styled similarly to the Claude Desktop login screen.
     """
 
@@ -207,7 +207,7 @@ class BNCLoginDialog(QtWidgets.QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Sign in to BNC CAD")
+        self.setWindowTitle("Sign in to ANVIL CAD")
         self.setFixedSize(460, 720)
         self.setWindowFlags(
             QtCore.Qt.Dialog
@@ -416,7 +416,7 @@ class BNCLoginDialog(QtWidgets.QDialog):
         # ── Footer ──
         footer = QtWidgets.QLabel(
             '<span style="color:#aaa; font-size:11px;">'
-            'By signing in, you agree to the BNC CAD Terms of Service'
+            'By signing in, you agree to the ANVIL CAD Terms of Service'
             '</span>'
         )
         footer.setAlignment(QtCore.Qt.AlignCenter)
@@ -589,7 +589,7 @@ class BNCLoginDialog(QtWidgets.QDialog):
 
                 self._otp_container.setVisible(True)
                 self._otp_input.setFocus()
-                FreeCAD.Console.PrintMessage(f"BNC CAD: OTP requested for {email}\n")
+                FreeCAD.Console.PrintMessage(f"ANVIL CAD: OTP requested for {email}\n")
             else:
                 # API returned error status
                 msg = body.get("message", "Registration failed. Please try again.")
@@ -600,7 +600,7 @@ class BNCLoginDialog(QtWidgets.QDialog):
                 self._email_input.setEnabled(True)
                 self._email_input.setFocus()
                 self._email_status.setText("")
-                FreeCAD.Console.PrintWarning(f"BNC CAD: Register API error — {msg}\n")
+                FreeCAD.Console.PrintWarning(f"ANVIL CAD: Register API error — {msg}\n")
 
         except urllib.error.HTTPError as http_err:
             # Try to parse error body from server
@@ -617,7 +617,7 @@ class BNCLoginDialog(QtWidgets.QDialog):
             self._email_input.setEnabled(True)
             self._email_input.setFocus()
             self._email_status.setText("")
-            FreeCAD.Console.PrintError(f"BNC CAD: Register HTTP error {http_err.code} — {msg}\n")
+            FreeCAD.Console.PrintError(f"ANVIL CAD: Register HTTP error {http_err.code} — {msg}\n")
 
         except Exception as exc:
             self._email_error.setText(f"Network error: {exc}")
@@ -627,7 +627,7 @@ class BNCLoginDialog(QtWidgets.QDialog):
             self._email_input.setEnabled(True)
             self._email_input.setFocus()
             self._email_status.setText("")
-            FreeCAD.Console.PrintError(f"BNC CAD: Register API exception — {exc}\n")
+            FreeCAD.Console.PrintError(f"ANVIL CAD: Register API exception — {exc}\n")
 
     def _on_otp_submit(self):
         """Validate the 6-digit OTP via API and sign in."""
@@ -681,7 +681,7 @@ class BNCLoginDialog(QtWidgets.QDialog):
                 self._email_status.setStyleSheet("font-size: 12px; color: #2e7d32;")
                 self._email_status.setText("Account verified successfully!")
                 FreeCAD.Console.PrintMessage(
-                    f"BNC CAD: Account verified for {user_info['email']}\n"
+                    f"ANVIL CAD: Account verified for {user_info['email']}\n"
                 )
                 self.login_successful.emit(user_info)
                 QtCore.QTimer.singleShot(800, self.accept)
@@ -694,7 +694,7 @@ class BNCLoginDialog(QtWidgets.QDialog):
                 self._otp_submit_btn.setText("Submit")
                 self._otp_input.setEnabled(True)
                 self._otp_input.setFocus()
-                FreeCAD.Console.PrintWarning(f"BNC CAD: OTP verify error — {msg}\n")
+                FreeCAD.Console.PrintWarning(f"ANVIL CAD: OTP verify error — {msg}\n")
 
         except urllib.error.HTTPError as http_err:
             msg = "OTP verification failed. Please try again."
@@ -709,7 +709,7 @@ class BNCLoginDialog(QtWidgets.QDialog):
             self._otp_submit_btn.setText("Submit")
             self._otp_input.setEnabled(True)
             self._otp_input.setFocus()
-            FreeCAD.Console.PrintError(f"BNC CAD: OTP verify HTTP error {http_err.code} — {msg}\n")
+            FreeCAD.Console.PrintError(f"ANVIL CAD: OTP verify HTTP error {http_err.code} — {msg}\n")
 
         except Exception as exc:
             self._otp_error.setText(f"Network error: {exc}")
@@ -718,10 +718,10 @@ class BNCLoginDialog(QtWidgets.QDialog):
             self._otp_submit_btn.setText("Submit")
             self._otp_input.setEnabled(True)
             self._otp_input.setFocus()
-            FreeCAD.Console.PrintError(f"BNC CAD: OTP verify exception — {exc}\n")
+            FreeCAD.Console.PrintError(f"ANVIL CAD: OTP verify exception — {exc}\n")
 
     def _on_google_signin(self):
-        """Open BNC CAD portal for Google Sign-In."""
+        """Open ANVIL CAD portal for Google Sign-In."""
         webbrowser.open("https://cad.nemi-ai.com/")
         QtCore.QTimer.singleShot(400, self.accept)
 
@@ -742,7 +742,7 @@ class BNCLoginDialog(QtWidgets.QDialog):
                 self._google_status.setStyleSheet("font-size: 12px; color: #2e7d32;")
                 self._google_status.setText(f"Signed in as {user_info['name']}")
                 FreeCAD.Console.PrintMessage(
-                    f"BNC CAD: Signed in as {user_info['email']}\n"
+                    f"ANVIL CAD: Signed in as {user_info['email']}\n"
                 )
                 self.login_successful.emit(user_info)
                 QtCore.QTimer.singleShot(800, self.accept)
@@ -753,14 +753,14 @@ class BNCLoginDialog(QtWidgets.QDialog):
         except Exception as e:
             self._google_status.setStyleSheet("font-size: 12px; color: #d32f2f;")
             self._google_status.setText(f"Error: {e}")
-            FreeCAD.Console.PrintError(f"BNC CAD: OAuth error — {e}\n")
+            FreeCAD.Console.PrintError(f"ANVIL CAD: OAuth error — {e}\n")
 
         self._google_btn.setEnabled(True)
         self._google_btn.setText("  Sign in with Google")
 
     def closeEvent(self, event):
         """Close button exits the entire application — login is required."""
-        FreeCAD.Console.PrintMessage("BNC CAD: User closed login — clearing session and exiting\n")
+        FreeCAD.Console.PrintMessage("ANVIL CAD: User closed login — clearing session and exiting\n")
         logout()  # Clear any stale session so next launch always prompts login
         QtWidgets.QApplication.instance().quit()
 
@@ -769,7 +769,7 @@ class BNCLoginDialog(QtWidgets.QDialog):
 def show_login_if_needed():
     """
     Show the login dialog if the user hasn't signed in yet.
-    Called once during BNC CAD startup.
+    Called once during ANVIL CAD startup.
     Returns True if signed in, False if skipped.
     """
     _dbg("show_login_if_needed() called")
@@ -777,7 +777,7 @@ def show_login_if_needed():
         info = get_user_info()
         _dbg(f"Already signed in as {info.get('email', '?')}")
         FreeCAD.Console.PrintMessage(
-            f"BNC CAD: Already signed in as {info.get('email', '?')}\n"
+            f"ANVIL CAD: Already signed in as {info.get('email', '?')}\n"
         )
         return True
 
@@ -792,7 +792,7 @@ def show_login_if_needed():
     _dbg(f"exec_() returned: {result} (Accepted={QtWidgets.QDialog.Accepted})")
     if result != QtWidgets.QDialog.Accepted:
         # User closed the dialog without signing in — clear session and exit
-        FreeCAD.Console.PrintMessage("BNC CAD: Login required — clearing session and exiting\n")
+        FreeCAD.Console.PrintMessage("ANVIL CAD: Login required — clearing session and exiting\n")
         _dbg("Login not accepted — clearing session and quitting")
         logout()  # Ensure stale auth is wiped so next launch always prompts
         QtWidgets.QApplication.instance().quit()

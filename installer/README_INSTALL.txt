@@ -1,5 +1,5 @@
 ===============================================
-  BNC CAD INSTALLATION - SMARTSCREEN BYPASS
+  ANVIL CAD INSTALLATION - SMARTSCREEN BYPASS
 ===============================================
 
 IMPORTANT: The Windows warning is NORMAL for unsigned software!
@@ -16,7 +16,7 @@ WHEN YOU SEE "Windows protected your PC":
 WHY THIS WARNING APPEARS:
 -----------------------------------------------
 
-- BNC CAD installer is NOT digitally signed
+- ANVIL CAD installer is NOT digitally signed
 - Code signing certificates cost $150-500/year
 - The software is SAFE - warning only for unsigned files
 - Common for open-source software
@@ -25,7 +25,7 @@ WHY THIS WARNING APPEARS:
 ALTERNATIVE METHOD (if blocked):
 -----------------------------------------------
 
-1. Right-click on "BNC CAD.exe"
+1. Right-click on "ANVIL CAD.exe"
 2. Select "Properties"
 3. Check "Unblock" box at bottom
 4. Click "Apply" and "OK"
@@ -47,7 +47,7 @@ VERIFY FILE INTEGRITY:
 SHA256: C718FB00F2C2E627CBBA2BEAC8F98ABE7C1DC03C2F8FA6515A6A4270750F9887
 
 To check (in PowerShell):
-Get-FileHash -Path "BNC CAD.exe" -Algorithm SHA256
+Get-FileHash -Path "ANVIL CAD.exe" -Algorithm SHA256
 
 If hash matches = file is safe and unmodified
 
@@ -55,10 +55,10 @@ If hash matches = file is safe and unmodified
 INSTALLER INFO:
 -----------------------------------------------
 
-File: BNC CAD.exe
+File: ANVIL CAD.exe
 Size: 840.41 MB
 Publisher: BNC Corporation
-Product: BNC CAD 1.1
+Product: ANVIL CAD 1.1
 Date: April 18, 2026
 
 -----------------------------------------------

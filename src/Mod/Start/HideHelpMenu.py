@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # ***************************************************************************
-# *   Copyright (c) 2024 BNC CAD                                            *
+# *   Copyright (c) 2024 ANVIL CAD                                            *
 # *                                                                         *
-# *   This file is part of BNC CAD.                                         *
+# *   This file is part of ANVIL CAD.                                         *
 # *                                                                         *
 # ***************************************************************************
 
-"""Hide Help menu and enforce BNC CAD branding in menubar text"""
+"""Hide Help menu and enforce ANVIL CAD branding in menubar text"""
 
 import FreeCAD
 import FreeCADGui
@@ -55,18 +55,18 @@ def _replace_freecad_text(action):
             return
         current = action.text()
         if current and "FreeCAD" in current:
-            action.setText(current.replace("FreeCAD", "BNC CAD"))
+            action.setText(current.replace("FreeCAD", "ANVIL CAD"))
 
         menu = action.menu()
         if menu:
             menu_title = menu.title()
             if menu_title and "FreeCAD" in menu_title:
-                menu.setTitle(menu_title.replace("FreeCAD", "BNC CAD"))
+                menu.setTitle(menu_title.replace("FreeCAD", "ANVIL CAD"))
 
             for sub_action in menu.actions():
                 sub_text = sub_action.text()
                 if sub_text and "FreeCAD" in sub_text:
-                    sub_action.setText(sub_text.replace("FreeCAD", "BNC CAD"))
+                    sub_action.setText(sub_text.replace("FreeCAD", "ANVIL CAD"))
     except Exception:
         pass
 
@@ -84,7 +84,7 @@ def hide_help_menu():
         # Get the menubar
         menubar = mw.menuBar()
         if not menubar:
-            FreeCAD.Console.PrintWarning("BNC CAD: Could not access menubar\n")
+            FreeCAD.Console.PrintWarning("ANVIL CAD: Could not access menubar\n")
             return
 
         help_found = False
@@ -121,14 +121,14 @@ def hide_help_menu():
 
         # Keep application/window title branded
         if "FreeCAD" in mw.windowTitle():
-            mw.setWindowTitle(mw.windowTitle().replace("FreeCAD", "BNC CAD"))
+            mw.setWindowTitle(mw.windowTitle().replace("FreeCAD", "ANVIL CAD"))
 
         app = QtGui.QApplication.instance()
         if app and app.applicationName() and "FreeCAD" in app.applicationName():
-            app.setApplicationName(app.applicationName().replace("FreeCAD", "BNC CAD"))
+            app.setApplicationName(app.applicationName().replace("FreeCAD", "ANVIL CAD"))
 
     except Exception as e:
-        FreeCAD.Console.PrintError(f"BNC CAD: Error hiding Help menu: {str(e)}\n")
+        FreeCAD.Console.PrintError(f"ANVIL CAD: Error hiding Help menu: {str(e)}\n")
         import traceback
         FreeCAD.Console.PrintError(traceback.format_exc())
 
@@ -142,4 +142,4 @@ _runtime_timer.setInterval(1500)
 _runtime_timer.timeout.connect(hide_help_menu)
 _runtime_timer.start()
 
-FreeCAD.Console.PrintLog("BNC CAD: Help menu hide module loaded\n")
+FreeCAD.Console.PrintLog("ANVIL CAD: Help menu hide module loaded\n")

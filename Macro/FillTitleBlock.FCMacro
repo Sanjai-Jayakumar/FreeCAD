@@ -1,0 +1,1105 @@
+# -*- coding: utf-8 -*-
+# FillTitleBlock.FCMacro — BNC Motors Title Block Auto-Fill
+# Fills TechDraw title blocks from MP_ model parameters.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+from PySide import QtWidgets, QtCore
+
+
+# ============================================================
+# SHARED: FILL ALL PAGES IN A DOCUMENT
+# ============================================================
+
+def fill_all_pages_in_doc(doc, silent=False):
+    """
+    Fill every TechDraw page in *doc* from its MP_ model parameters.
+    Returns (filled_count, summary_string).
+    silent=True suppresses the message box (used by the auto-observer).
+    """
+    pages = get_all_pages(doc)
+    if not pages:
+        return 0, "No TechDraw pages found."
+
+    total_pages  = len(pages)
+    params       = get_model_parameters(doc)
+    filled_pages = []
+    failed_pages = []
+
+    for idx, page in enumerate(pages):
+        template = get_template(page)
+        if not template:
+            failed_pages.append("{} (no template)".format(page.Label))
+            continue
+
+        values = {
+            'DRAWING_NUMBER'      : params['PartNumber'],
+            'DESCRIPTION'         : params['Description'],
+            'WEIGHT'              : params['Weight'],
+            'MATERIAL_1'          : params['Material1'],
+            'MATERIAL_2'          : params['Material2'],
+            'Rev'                 : params['Revision'],
+            'SCALE'               : get_drawing_scale(page),
+            'CURRENT_SHEET_NUMBER': str(idx + 1),
+            'TOTAL_SHEET_NUMBER'  : str(total_pages),
+        }
+
+        ok = update_template_texts(template, values)
+        if ok:
+            filled_pages.append(page.Label)
+        else:
+            failed_pages.append("{} (field mismatch)".format(page.Label))
+
+    doc.recompute()
+
+    summary = ""
+    if filled_pages:
+        summary += "Updated : " + ", ".join(filled_pages)
+    if failed_pages:
+        summary += ("\n" if summary else "") + "Failed  : " + ", ".join(failed_pages)
+
+    if not silent:
+        if filled_pages:
+            QtWidgets.QMessageBox.information(
+                None, "Title Block Updated", summary)
+        else:
+            QtWidgets.QMessageBox.warning(
+                None, "Auto-fill incomplete",
+                "Could not fill any page automatically.\n\n" + summary)
+
+    return len(filled_pages), summary
+
+
+# ============================================================
+# AUTO-FILL DOCUMENT OBSERVER
+# ============================================================
+
+class _TitleBlockObserver(object):
+    """
+    FreeCAD document observer that watches for changes to any
+    MP_ model parameter property and automatically re-fills all
+    TechDraw title blocks in the same document.
+
+    A short debounce timer prevents multiple rapid triggers when
+    several properties are saved at once.
+    """
+
+    # Class-level debounce timer (one shared instance is fine)
+    _timer = None
+    _pending_doc = None
+    _busy = False              # re-entrancy guard
+
+    _MP_PROPS = {
+        'MP_PartNumber', 'MP_Description', 'MP_Weight',
+        'MP_Material', 'MP_THK', 'MP_Revision'
+    }
+
+    def slotChangedObject(self, obj, prop):
+        """Called by FreeCAD whenever any object property changes."""
+        if _TitleBlockObserver._busy:
+            return
+        if prop not in self._MP_PROPS:
+            return
+        # Make sure the document has at least one TechDraw page
+        try:
+            doc = obj.Document
+        except Exception:
+            return
+        if not any(o.TypeId == 'TechDraw::DrawPage' for o in doc.Objects):
+            return
+
+        _TitleBlockObserver._pending_doc = doc
+        self._restart_timer()
+
+    def _restart_timer(self):
+        """(Re)start a 300 ms single-shot timer to batch rapid saves."""
+        if _TitleBlockObserver._timer is None:
+            t = QtCore.QTimer()
+            t.setSingleShot(True)
+            t.timeout.connect(self._on_timer)
+            _TitleBlockObserver._timer = t
+        _TitleBlockObserver._timer.start(300)
+
+    def _on_timer(self):
+        doc = _TitleBlockObserver._pending_doc
+        _TitleBlockObserver._pending_doc = None
+        if doc is None:
+            return
+        _TitleBlockObserver._busy = True
+        try:
+            fill_all_pages_in_doc(doc, silent=True)
+            print("FillTitleBlock: title blocks updated automatically.")
+        except Exception as e:
+            print("FillTitleBlock observer error: {}".format(e))
+        finally:
+            _TitleBlockObserver._busy = False
+
+
+def _register_observer():
+    """
+    Register the auto-fill observer for this FreeCAD session.
+    Safe to call multiple times — only one observer is ever registered.
+    The instance is stored in App namespace to prevent garbage collection.
+    """
+    existing = getattr(App, '_bnc_titleblock_observer', None)
+    if existing is not None:
+        return existing    # already registered
+
+    obs = _TitleBlockObserver()
+    App.addDocumentObserver(obs)
+    App._bnc_titleblock_observer = obs   # keep alive
+    print("FillTitleBlock: auto-update observer registered.")
+    return obs
+
+
+def get_page_views(page):
+    """
+    Get all views from a TechDraw page.
+    Handles different FreeCAD versions.
+    """
+    if hasattr(page, 'Views'):
+        return page.Views
+    if hasattr(page, 'Group'):
+        return page.Group
+    return []
+
+
+# ============================================================
+# FIND THE OBJECT CARRYING MP_ PROPERTIES
+# ============================================================
+
+def _mp_score(target):
+    """
+    Return how many MP_ fields have non-empty / non-zero values.
+    Higher = better candidate.
+    """
+    score = 0
+    for attr in ('MP_PartNumber', 'MP_Description', 'MP_Material'):
+        if getattr(target, attr, ''):
+            score += 1
+    weight = getattr(target, 'MP_Weight', 0.0)
+    if weight:
+        score += 1
+    return score
+
+
+def _has_any_mp(obj):
+    """Return True when obj actually carries at least one MP_ property.
+    Uses getattr instead of hasattr so FreeCAD custom property look-up
+    (which goes through __getattr__) is exercised reliably.
+    """
+    _PROPS = ('MP_PartNumber', 'MP_Description', 'MP_Material',
+              'MP_Weight', 'MP_THK', 'MP_Revision')
+    for p in _PROPS:
+        try:
+            v = getattr(obj, p, None)
+            if v is not None:      # property exists (even if empty string)
+                return True
+        except Exception:
+            pass
+    # FreeCAD objects also expose a PropertiesList / getPropertyNameOfValue
+    try:
+        plist = obj.PropertiesList
+        if any(p in plist for p in _PROPS):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def find_best_mp_target(doc):
+    """
+    Scan ALL open FreeCAD documents (and every object inside them) to
+    find the best source of MP_ model parameters.
+
+    Two common setups:
+      A) Page lives inside the assembly/part document  -> that doc has MP_ data
+         and should win.
+      B) Page lives in a separate drawing-only document -> that doc has no MP_
+         data; the part/assembly doc (open alongside) should win.
+
+    Strategy: give the *page's own document* a strong bonus (+20) so it wins
+    whenever it actually has data (setup A).  If it has no MP_ properties it
+    will not appear in the candidates list at all and setup B falls through
+    naturally to whichever external doc has the most data.
+    """
+    type_bonus = {
+        'Assembly::AssemblyObject': 5,
+        'App::Part': 4,
+        'PartDesign::Body': 3,
+    }
+
+    candidates = []
+
+    for d in App.listDocuments().values():
+        is_page_doc = (d is doc)
+        page_doc_bonus = 20 if is_page_doc else 0
+
+        # Document-level MP_ properties (target = App.ActiveDocument when
+        # nothing was selected in Model_Parameters dialog)
+        if _has_any_mp(d):
+            candidates.append((d, _mp_score(d) + 10 + page_doc_bonus))
+
+        # Object-level MP_ properties (Body / AssemblyObject / App::Part)
+        for obj in d.Objects:
+            if _has_any_mp(obj):
+                bonus = type_bonus.get(obj.TypeId, 0) + page_doc_bonus
+                candidates.append((obj, _mp_score(obj) + bonus))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    return candidates[0][0]
+
+
+# ============================================================
+# GET MODEL PARAMETERS
+# ============================================================
+
+def _clean_doc_name(d):
+    """Return a human-readable name from the document filename."""
+    import os, re as _re
+    fname = getattr(d, 'FileName', '') or ''
+    if not fname:
+        return ''
+    name = os.path.splitext(os.path.basename(fname))[0]
+    name = _re.sub(r'\.(prt|asm|drg)$', '', name, flags=_re.IGNORECASE)
+    name = _re.sub(r'\.\d+$', '', name)
+    return name
+
+
+def _get_live_material(obj):
+    """Read the material name set by Apply Material macro from a single object.
+
+    Apply Material stores material in two places:
+      1. obj.Material  -- a PropertyMap dict with key 'Name' / 'CardName'
+      2. obj.Mat_Name  -- a PropertyString (visible in the properties panel)
+
+    This is separate from, and more up-to-date than, obj.MP_Material which
+    is only written when the user explicitly clicks Save in Model Parameters.
+    """
+    def _read_one(o):
+        mat_dict = getattr(o, 'Material', None)
+        if isinstance(mat_dict, dict):
+            for key in ('Name', 'CardName'):
+                val = str(mat_dict.get(key, '') or '').strip()
+                if val:
+                    return val
+        val = str(getattr(o, 'Mat_Name', '') or '').strip()
+        if val:
+            return val
+        return ''
+
+    # For a Document walk all objects to find one with a material assigned
+    if isinstance(obj, App.Document):
+        for o in obj.Objects:
+            result = _read_one(o)
+            if result:
+                return result
+            for child in getattr(o, 'Group', []):
+                result = _read_one(child)
+                if result:
+                    return result
+        return ''
+
+    # For a regular object check it and its children (Body group)
+    result = _read_one(obj)
+    if result:
+        return result
+    for child in getattr(obj, 'Group', []):
+        result = _read_one(child)
+        if result:
+            return result
+    return ''
+
+
+def get_model_parameters(doc):
+    """
+    Extract Model Parameters from the best available source across all
+    open FreeCAD documents.  Accepts an App.Document or any FC object.
+    Returns a dict (empty strings when not set).
+
+    Falls back to document filename / built-in properties when no
+    MP_ custom properties have been saved yet so the dialog never shows
+    SVG placeholder text.
+    """
+    params = {
+        'PartNumber': '',
+        'Description': '',
+        'Weight': '',
+        'Material1': '',
+        'Material2': '',
+        'Revision': ''
+    }
+
+    # Normalise: always work with an App.Document
+    if not isinstance(doc, App.Document):
+        fdoc = getattr(doc, 'Document', None)
+        doc = fdoc if fdoc else None
+    if doc is None:
+        return params
+
+    target = find_best_mp_target(doc)
+    # When no MP_ properties exist at all, use the page's own doc as fallback
+    # so filename-based values can still be returned.
+    fallback_doc = doc
+
+    # ---------------------------------------------------------------
+    # Part Number -- MP_ first, then document filename
+    # ---------------------------------------------------------------
+    if target is not None:
+        params['PartNumber'] = getattr(target, 'MP_PartNumber', '') or ''
+    if not params['PartNumber']:
+        # Try the page's own doc objects (Assembly root / Body label)
+        for obj in doc.Objects:
+            if obj.TypeId in ('Assembly::AssemblyObject', 'PartDesign::Body', 'App::Part'):
+                lbl = str(getattr(obj, 'Label', '') or '').strip()
+                if lbl:
+                    params['PartNumber'] = lbl
+                    break
+    if not params['PartNumber']:
+        params['PartNumber'] = _clean_doc_name(fallback_doc)
+
+    # ---------------------------------------------------------------
+    # Description -- MP_ first, then doc.Description / Comment / PartNumber
+    # ---------------------------------------------------------------
+    if target is not None:
+        params['Description'] = getattr(target, 'MP_Description', '') or ''
+    if not params['Description']:
+        params['Description'] = (
+            str(getattr(fallback_doc, 'Description', '') or '').strip() or
+            str(getattr(fallback_doc, 'Comment',     '') or '').strip()
+        )
+    if not params['Description']:
+        params['Description'] = params['PartNumber']
+
+    # ---------------------------------------------------------------
+    # Revision -- MP_ first, default to 'NR'
+    # ---------------------------------------------------------------
+    if target is not None:
+        params['Revision'] = getattr(target, 'MP_Revision', '') or ''
+
+    # ---------------------------------------------------------------
+    # Weight -- MP_ on best target
+    # ---------------------------------------------------------------
+    weight = 0.0
+    if target is not None:
+        weight = getattr(target, 'MP_Weight', 0.0) or 0.0
+    if weight:
+        params['Weight'] = '{:.3f}'.format(weight)
+
+    # ---------------------------------------------------------------
+    # Material -- Apply Material live data takes priority over the saved
+    # MP_Material value (which can be stale if Apply Material was run
+    # after the last Model Parameters save).
+    #
+    # Priority:
+    #   1. Live material from obj.Material dict / obj.Mat_Name  (Apply Material)
+    #   2. obj.MP_Material  (saved by Model Parameters)
+    # If neither is set, leave both lines blank.
+    # ---------------------------------------------------------------
+    mat = ''
+    if target is not None:
+        mat = _get_live_material(target)
+        if not mat:
+            mat = getattr(target, 'MP_Material', '') or ''
+
+    if ' - ' in mat:
+        parts = mat.split(' - ', 1)
+        params['Material1'] = parts[0].strip()
+        params['Material2'] = parts[1].strip()
+    else:
+        params['Material1'] = mat
+
+    # THK overrides Material2
+    thk = ''
+    if target is not None:
+        thk = getattr(target, 'MP_THK', '') or ''
+    if thk:
+        params['Material2'] = '{} mm THK'.format(thk)
+
+    return params
+
+
+# ============================================================
+# GET DRAWING SCALE
+# ============================================================
+
+def _format_scale(scale):
+    """Convert a float scale factor to a human-readable ratio string."""
+    if scale <= 0:
+        return "1:1"
+    if abs(scale - 1.0) < 1e-6:
+        return "1:1"
+    if scale < 1.0:
+        inv = 1.0 / scale
+        if abs(inv - round(inv)) < 1e-6:
+            return "1:{}".format(int(round(inv)))
+        return "1:{:.2f}".format(inv)
+    if abs(scale - round(scale)) < 1e-6:
+        return "{}:1".format(int(round(scale)))
+    return "{:.2f}:1".format(scale)
+
+
+def get_drawing_scale(page):
+    """
+    Get the scale from the first projection/group view in the page.
+    Checks DrawViewPart, DrawProjGroup, DrawViewSection, etc.
+    Returns scale as string like "1:2" or "2:1".
+    """
+    view_typeid_prefixes = (
+        'TechDraw::DrawViewPart',
+        'TechDraw::DrawProjGroup',
+        'TechDraw::DrawViewSection',
+        'TechDraw::DrawViewDetail',
+        'TechDraw::DrawView',
+    )
+    for obj in get_page_views(page):
+        if any(obj.TypeId.startswith(p) for p in view_typeid_prefixes):
+            if hasattr(obj, 'Scale'):
+                try:
+                    return _format_scale(float(obj.Scale))
+                except Exception:
+                    pass
+    return "1:1"
+
+
+# ============================================================
+# GET SHEET INFO
+# ============================================================
+
+def get_sheet_info(page, doc):
+    """
+    Calculate sheet number info based on TechDraw pages in document.
+    Returns (current_sheet, total_sheets).
+    """
+    pages = [obj for obj in doc.Objects
+             if obj.TypeId == 'TechDraw::DrawPage']
+
+    total = len(pages)
+    current = 1
+
+    for i, p in enumerate(pages):
+        if p.Name == page.Name:
+            current = i + 1
+            break
+
+    return current, total
+
+
+# ============================================================
+# GET TECHDRAW PAGES
+# ============================================================
+
+def get_all_pages(doc):
+    """Return all TechDraw pages in the document, in document order."""
+    return [obj for obj in doc.Objects
+            if obj.TypeId == 'TechDraw::DrawPage']
+
+
+def get_active_page():
+    """
+    Return the page the user is currently looking at.
+    Checks selection first, then the active MDI view, then first page.
+    """
+    # 1) Selection
+    sel = Gui.Selection.getSelection()
+    for obj in sel:
+        if obj.TypeId == 'TechDraw::DrawPage':
+            return obj
+        for parent in obj.InList:
+            if parent.TypeId == 'TechDraw::DrawPage':
+                return parent
+
+    # 2) Active MDI view (TechDraw tab)
+    try:
+        mdi = Gui.getMainWindow().centralWidget().activeSubWindow()
+        if mdi:
+            view = mdi.widget()
+            if hasattr(view, 'getPage'):
+                return view.getPage()
+    except Exception:
+        pass
+
+    # 3) First page in document
+    doc = App.ActiveDocument
+    if doc:
+        for obj in doc.Objects:
+            if obj.TypeId == 'TechDraw::DrawPage':
+                return obj
+
+    return None
+
+
+# ============================================================
+# GET TEMPLATE FROM PAGE
+# ============================================================
+
+def get_template(page):
+    """Get the TechDraw Template object from a Page."""
+    if hasattr(page, 'Template') and page.Template:
+        return page.Template
+    # Also check Views for template (fallback)
+    for obj in get_page_views(page):
+        if 'Template' in obj.TypeId:
+            return obj
+    return None
+
+
+# ============================================================
+# UPDATE TEMPLATE EDITABLE TEXTS
+# ============================================================
+
+def update_template_texts(template, values):
+    """
+    Update editable text fields in the TechDraw template.
+    values is a dict mapping field names to values.
+    """
+    if template is None:
+        return False
+
+    updated = False
+
+    # Get current editable texts
+    if hasattr(template, 'EditableTexts'):
+        texts = template.EditableTexts.copy()
+
+        for key, value in values.items():
+            if key in texts:
+                texts[key] = str(value)
+                updated = True
+
+        if updated:
+            template.EditableTexts = texts
+
+    return updated
+
+
+# ============================================================
+# TITLE BLOCK DIALOG
+# ============================================================
+
+class TitleBlockDialog(QtWidgets.QDialog):
+    """
+    Comprehensive dialog for viewing and editing ALL title block fields.
+    Auto-populates from Model Parameters but allows full manual override.
+    Includes tables for Next Assembly (Used On) and Modification history,
+    both filled bottom-to-top in the title block.
+    """
+
+    # Modification table: 5 rows, 8 columns
+    MOD_ROWS = 5
+    MOD_COLS = ["Date", "ECN No.", "Rev No.", "Zone", "Modification", "Modi By", "Checked", "Approved"]
+
+    # Next Assembly table: 4 rows, 2 columns
+    NA_ROWS = 4
+    NA_COLS = ["Next Assembly", "Model"]
+
+    def __init__(self, page, parent=None):
+        super(TitleBlockDialog, self).__init__(parent)
+
+        self.page = page
+        self.template = get_template(page)
+
+        if not self.template:
+            QtWidgets.QMessageBox.warning(
+                self, "Error", "No template found in this page.")
+            self.reject()
+            return
+
+        self.doc   = page.Document
+        self.pages = get_all_pages(self.doc)
+
+        self.setWindowTitle("Fill Title Block \u2013 BNC Motors")
+        self.setMinimumWidth(700)
+        self.setMinimumHeight(420)
+
+        self._build_ui()
+        self._load_values()
+
+    # ----------------------------------------------------------
+    # UI construction
+    # ----------------------------------------------------------
+
+    def _build_ui(self):
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # -- Sheet selector bar --
+        page_bar = QtWidgets.QHBoxLayout()
+        page_bar.setContentsMargins(10, 7, 10, 5)
+        page_bar.addWidget(QtWidgets.QLabel("<b>Filling sheet:</b>"))
+        self.pageCombo = QtWidgets.QComboBox()
+        self.pageCombo.setMinimumWidth(180)
+        for p in self.pages:
+            self.pageCombo.addItem(p.Label)
+        try:
+            self.pageCombo.setCurrentIndex(self.pages.index(self.page))
+        except ValueError:
+            pass
+        self.pageCombo.currentIndexChanged.connect(self._on_page_changed)
+        page_bar.addWidget(self.pageCombo)
+        page_bar.addStretch()
+        outer.addLayout(page_bar)
+        _sep0 = QtWidgets.QFrame()
+        _sep0.setFrameShape(QtWidgets.QFrame.HLine)
+        outer.addWidget(_sep0)
+
+        # ---- Scroll area --------------------------------------------------------
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        outer.addWidget(scroll, 1)
+
+        container = QtWidgets.QWidget()
+        scroll.setWidget(container)
+        main = QtWidgets.QVBoxLayout(container)
+        main.setContentsMargins(10, 8, 10, 6)
+        main.setSpacing(6)
+
+        h = 22   # row height
+        SP = 6   # column spacing between the two form columns
+
+        # -- Section 1 : Drawing Information  (2-column grid) --
+        grp_draw = QtWidgets.QGroupBox("Drawing Information")
+        g1 = QtWidgets.QGridLayout(grp_draw)
+        g1.setVerticalSpacing(4)
+        g1.setHorizontalSpacing(SP)
+        g1.setContentsMargins(8, 6, 8, 6)
+        g1.setColumnStretch(1, 1)
+        g1.setColumnStretch(3, 1)
+
+        def _add2(row, pair, lbl_text):
+            c = pair * 2
+            g1.addWidget(QtWidgets.QLabel(lbl_text), row, c)
+            le = QtWidgets.QLineEdit(); le.setFixedHeight(h)
+            g1.addWidget(le, row, c + 1)
+            return le
+
+        self.partNumber  = _add2(0, 0, "Part Number:")
+        self.description = _add2(0, 1, "Description:")
+        self.weight      = _add2(1, 0, "Weight (kg):")
+        self.revision    = _add2(1, 1, "Revision:")
+        self.material1   = _add2(2, 0, "Material Line 1:")
+        self.material2   = _add2(2, 1, "Material Line 2:")
+
+        # Scale
+        g1.addWidget(QtWidgets.QLabel("Scale:"), 3, 0)
+        sl = QtWidgets.QHBoxLayout(); sl.setSpacing(4); sl.setContentsMargins(0, 0, 0, 0)
+        self.scaleCheck = QtWidgets.QCheckBox("Manual")
+        self.scaleCheck.setToolTip("Check to override the auto-detected scale")
+        self.scale = QtWidgets.QLineEdit(); self.scale.setFixedSize(64, h)
+        self.scale.setEnabled(False)
+        self.scaleCheck.toggled.connect(self.scale.setEnabled)
+        self.scaleCheck.toggled.connect(lambda on: self._auto_scale() if not on else None)
+        sl.addWidget(self.scaleCheck); sl.addWidget(self.scale); sl.addStretch()
+        g1.addLayout(sl, 3, 1)
+
+        main.addWidget(grp_draw)
+
+        # -- Section 2 : Signatures --
+        grp_sig = QtWidgets.QGroupBox("Signatures")
+        g2 = QtWidgets.QGridLayout(grp_sig)
+        g2.setVerticalSpacing(4); g2.setHorizontalSpacing(SP)
+        g2.setContentsMargins(8, 6, 8, 6)
+        g2.setColumnStretch(1, 1)
+        g2.setColumnStretch(5, 1)
+        g2.setColumnMinimumWidth(3, 10)
+
+        DW = 90
+        NW = 130
+
+        g2.addWidget(QtWidgets.QLabel("<b>Name / By</b>"), 0, 1)
+        g2.addWidget(QtWidgets.QLabel("<b>Date</b>"),      0, 2)
+        g2.addWidget(QtWidgets.QLabel("<b>Name / By</b>"), 0, 5)
+        g2.addWidget(QtWidgets.QLabel("<b>Date</b>"),      0, 6)
+
+        g2.addWidget(QtWidgets.QLabel("Drawn:"), 1, 0)
+        self.drawnBy   = QtWidgets.QLineEdit(); self.drawnBy.setFixedHeight(h)
+        self.drawnBy.setMinimumWidth(NW)
+        self.drawnDate = QtWidgets.QLineEdit(); self.drawnDate.setFixedHeight(h)
+        self.drawnDate.setFixedWidth(DW); self.drawnDate.setPlaceholderText("DD-MM-YYYY")
+        g2.addWidget(self.drawnBy,   1, 1)
+        g2.addWidget(self.drawnDate, 1, 2)
+
+        g2.addWidget(QtWidgets.QLabel("Checked:"), 1, 4)
+        self.checkedBy   = QtWidgets.QLineEdit(); self.checkedBy.setFixedHeight(h)
+        self.checkedBy.setMinimumWidth(NW)
+        self.checkedDate = QtWidgets.QLineEdit(); self.checkedDate.setFixedHeight(h)
+        self.checkedDate.setFixedWidth(DW); self.checkedDate.setPlaceholderText("DD-MM-YYYY")
+        g2.addWidget(self.checkedBy,   1, 5)
+        g2.addWidget(self.checkedDate, 1, 6)
+
+        g2.addWidget(QtWidgets.QLabel("Approved:"), 2, 0)
+        self.approvedBy   = QtWidgets.QLineEdit(); self.approvedBy.setFixedHeight(h)
+        self.approvedBy.setMinimumWidth(NW)
+        self.approvedDate = QtWidgets.QLineEdit(); self.approvedDate.setFixedHeight(h)
+        self.approvedDate.setFixedWidth(DW); self.approvedDate.setPlaceholderText("DD-MM-YYYY")
+        g2.addWidget(self.approvedBy,   2, 1)
+        g2.addWidget(self.approvedDate, 2, 2)
+
+        main.addWidget(grp_sig)
+
+        # -- Section 3 : Other Information --
+        grp_other = QtWidgets.QGroupBox("Other Information")
+        g3 = QtWidgets.QGridLayout(grp_other)
+        g3.setVerticalSpacing(4); g3.setHorizontalSpacing(SP)
+        g3.setContentsMargins(8, 6, 8, 6)
+        g3.setColumnStretch(1, 1)
+        g3.setColumnStretch(3, 1)
+
+        g3.addWidget(QtWidgets.QLabel("Treatment, Std No.:"),    0, 0)
+        self.treatment = QtWidgets.QLineEdit(); self.treatment.setFixedHeight(h)
+        g3.addWidget(self.treatment, 0, 1)
+
+        g3.addWidget(QtWidgets.QLabel("Product / Group No.:"),   0, 2)
+        self.productGroupNo = QtWidgets.QLineEdit(); self.productGroupNo.setFixedHeight(h)
+        g3.addWidget(self.productGroupNo, 0, 3)
+
+        main.addWidget(grp_other)
+
+        # -- Section 4 : Next Assembly --
+        self.naCheck = QtWidgets.QCheckBox("Next Assembly (Used On)")
+        self.naCheck.setStyleSheet("font-weight: bold; margin-top: 4px;")
+        main.addWidget(self.naCheck)
+
+        self.naFrame = QtWidgets.QGroupBox("")
+        na_layout = QtWidgets.QVBoxLayout(self.naFrame)
+        na_layout.setContentsMargins(6, 2, 6, 4)
+        self.naTable = QtWidgets.QTableWidget(self.NA_ROWS, len(self.NA_COLS))
+        self.naTable.setHorizontalHeaderLabels(self.NA_COLS)
+        self.naTable.horizontalHeader().setStretchLastSection(True)
+        self.naTable.setFixedHeight(22 * self.NA_ROWS + 28)
+        self.naTable.verticalHeader().setDefaultSectionSize(22)
+        self._set_col_widths(self.naTable, [160, 160])
+        for r in range(self.NA_ROWS):
+            self.naTable.setVerticalHeaderItem(r, QtWidgets.QTableWidgetItem(str(r + 1)))
+        _na_hdr_pt = self.naTable.horizontalHeader().font().pointSize()
+        _na_font = self.naTable.font(); _na_font.setPointSize(_na_hdr_pt)
+        self.naTable.setFont(_na_font)
+        na_layout.addWidget(self.naTable)
+        self.naFrame.setVisible(False)
+        main.addWidget(self.naFrame)
+        self.naCheck.toggled.connect(self.naFrame.setVisible)
+
+        # -- Section 5 : Modification --
+        self.modCheck = QtWidgets.QCheckBox("Modification History")
+        self.modCheck.setStyleSheet("font-weight: bold; margin-top: 4px;")
+        main.addWidget(self.modCheck)
+
+        self.modFrame = QtWidgets.QGroupBox("")
+        mod_layout = QtWidgets.QVBoxLayout(self.modFrame)
+        mod_layout.setContentsMargins(6, 2, 6, 4)
+        self.modTable = QtWidgets.QTableWidget(self.MOD_ROWS, len(self.MOD_COLS))
+        self.modTable.setHorizontalHeaderLabels(self.MOD_COLS)
+        self.modTable.horizontalHeader().setStretchLastSection(True)
+        self.modTable.setFixedHeight(22 * self.MOD_ROWS + 28)
+        self.modTable.verticalHeader().setDefaultSectionSize(22)
+        self._set_col_widths(self.modTable, [82, 58, 50, 42, 190, 65, 65, 65])
+        for r in range(self.MOD_ROWS):
+            self.modTable.setVerticalHeaderItem(r, QtWidgets.QTableWidgetItem(str(r + 1)))
+        _mod_hdr_pt = self.modTable.horizontalHeader().font().pointSize()
+        _mod_font = self.modTable.font(); _mod_font.setPointSize(_mod_hdr_pt)
+        self.modTable.setFont(_mod_font)
+        mod_layout.addWidget(self.modTable)
+        self.modFrame.setVisible(False)
+        main.addWidget(self.modFrame)
+        self.modCheck.toggled.connect(self.modFrame.setVisible)
+
+        main.addStretch(1)
+
+        # -- Button bar --
+        sep = QtWidgets.QFrame(); sep.setFrameShape(QtWidgets.QFrame.HLine)
+        outer.addWidget(sep)
+
+        btn_bar = QtWidgets.QHBoxLayout()
+        btn_bar.setContentsMargins(10, 6, 10, 8)
+
+        self.reloadBtn = QtWidgets.QPushButton("\u21ba  Reload from Model")
+        self.reloadBtn.clicked.connect(self._load_from_model)
+        btn_bar.addWidget(self.reloadBtn)
+
+        btn_bar.addStretch()
+
+        self.applyBtn = QtWidgets.QPushButton("\u2714  Apply")
+        self.applyBtn.setDefault(True)
+        self.applyBtn.setMinimumWidth(90)
+        self.applyBtn.clicked.connect(self._apply)
+        btn_bar.addWidget(self.applyBtn)
+
+        self.closeBtn = QtWidgets.QPushButton("Close")
+        self.closeBtn.setMinimumWidth(72)
+        self.closeBtn.clicked.connect(self.reject)
+        btn_bar.addWidget(self.closeBtn)
+
+        outer.addLayout(btn_bar)
+
+    # ----------------------------------------------------------
+    # Small helpers
+    # ----------------------------------------------------------
+
+    @staticmethod
+    def _le(grid, row, label, fixed_w, h):
+        """Add a labelled QLineEdit to a grid and return the widget."""
+        grid.addWidget(QtWidgets.QLabel(label), row, 0)
+        le = QtWidgets.QLineEdit()
+        le.setFixedHeight(h)
+        le.setFixedWidth(fixed_w)
+        grid.addWidget(le, row, 1)
+        return le
+
+    @staticmethod
+    def _set_col_widths(table, widths):
+        for i, w in enumerate(widths):
+            if i < table.columnCount():
+                table.setColumnWidth(i, w)
+
+    @staticmethod
+    def _tbl_cell(table, row, col):
+        item = table.item(row, col)
+        return item.text().strip() if item else ""
+
+    @staticmethod
+    def _tbl_set(table, row, col, text):
+        item = QtWidgets.QTableWidgetItem(text)
+        table.setItem(row, col, item)
+
+    # ----------------------------------------------------------
+    # Load values
+    # ----------------------------------------------------------
+
+    def _load_values(self):
+        """Load existing template values and supplement from model params."""
+        cur = {}
+        if hasattr(self.template, 'EditableTexts'):
+            cur = self.template.EditableTexts.copy()
+
+        params = get_model_parameters(self.page.Document)
+
+        # -- Drawing info --
+        self.partNumber.setText( params['PartNumber']  or cur.get('DRAWING_NUMBER', ''))
+        self.description.setText(params['Description'] or cur.get('DESCRIPTION', ''))
+        self.weight.setText(     params['Weight']      or cur.get('WEIGHT', ''))
+        self.material1.setText(  params['Material1']   or cur.get('MATERIAL_1', ''))
+        self.material2.setText(  params['Material2']   or cur.get('MATERIAL_2', ''))
+        self.revision.setText(   params['Revision']    or cur.get('Rev', ''))
+
+        # Scale
+        self.scale.setText(get_drawing_scale(self.page))
+
+        # -- Signatures --
+        self.drawnBy.setText(     cur.get('DRAWN BY', ''))
+        self.drawnDate.setText(   cur.get('DRAWN_DATE', ''))
+        self.checkedBy.setText(   cur.get('CHECKED BY', ''))
+        self.checkedDate.setText( cur.get('CHECKED_DATE', ''))
+        self.approvedBy.setText(  cur.get('APPROVED BY', ''))
+        self.approvedDate.setText(cur.get('APPROVED_DATE', ''))
+
+        # -- Other --
+        self.treatment.setText(      cur.get('TREATMENT, Std No.', ''))
+        self.productGroupNo.setText( cur.get('PRODUCT/GROUP_No', ''))
+
+        # -- Next Assembly table --
+        na_has_data = False
+        for dlg_row in range(self.NA_ROWS):
+            svgIdx    = dlg_row + 1
+            na_val    = cur.get("NEXT_ASSEMBLY_{}".format(svgIdx), '')
+            model_val = cur.get("MODEL_{}".format(svgIdx), '')
+            self._tbl_set(self.naTable, dlg_row, 0, na_val)
+            self._tbl_set(self.naTable, dlg_row, 1, model_val)
+            if na_val or model_val:
+                na_has_data = True
+        if na_has_data:
+            self.naCheck.setChecked(True)
+
+        # -- Modification table --
+        mod_has_data = False
+        for dlg_row in range(self.MOD_ROWS):
+            svgIdx = dlg_row + 1
+            dt_key = 'ECN DATE' if svgIdx == 1 else 'ECN_DATE_{}'.format(svgIdx)
+            vals = [
+                cur.get(dt_key, ''),
+                cur.get('ECN.No.{}'.format(svgIdx), ''),
+                cur.get('REV No.{}'.format(svgIdx), ''),
+                cur.get('ZONE_{}'.format(svgIdx), ''),
+                cur.get('MODIFICATION_{}'.format(svgIdx), ''),
+                cur.get('MODIFIED_BY_{}'.format(svgIdx), ''),
+                cur.get('CHECKED_BY_{}'.format(svgIdx), ''),
+                cur.get('APPROVED_BY_{}'.format(svgIdx), ''),
+            ]
+            for col_i, v in enumerate(vals):
+                self._tbl_set(self.modTable, dlg_row, col_i, v)
+            if any(vals):
+                mod_has_data = True
+        if mod_has_data:
+            self.modCheck.setChecked(True)
+
+    def _load_from_model(self):
+        """Re-read fields from MP_ model properties across all open documents."""
+        params = get_model_parameters(self.page.Document)
+        if not any(params.values()):
+            return
+        self.partNumber.setText( params['PartNumber'])
+        self.description.setText(params['Description'])
+        self.weight.setText(     params['Weight'])
+        self.material1.setText(  params['Material1'])
+        self.material2.setText(  params['Material2'])
+        self.revision.setText(   params['Revision'])
+        self._auto_scale()
+
+    def _auto_scale(self):
+        """Re-read scale from the first view (only updates if not in manual mode)."""
+        if not self.scaleCheck.isChecked():
+            self.scale.setText(get_drawing_scale(self.page))
+
+    def _auto_sheets(self):
+        """Return (current, total) sheet counts."""
+        return get_sheet_info(self.page, self.page.Document)
+
+    # ----------------------------------------------------------
+    # Sheet switch
+    # ----------------------------------------------------------
+
+    def _on_page_changed(self, index):
+        """Switch the active sheet; reload all fields from that sheet's template."""
+        if 0 <= index < len(self.pages):
+            self.page     = self.pages[index]
+            self.template = get_template(self.page)
+            self._load_values()
+
+    # ----------------------------------------------------------
+    # Apply
+    # ----------------------------------------------------------
+
+    def _apply(self):
+        """Collect all values from the dialog and push to the template."""
+        values = {}
+
+        # Drawing info
+        values['DRAWING_NUMBER'] = self.partNumber.text()
+        values['DESCRIPTION']    = self.description.text()
+        values['WEIGHT']         = self.weight.text()
+        values['MATERIAL_1']     = self.material1.text()
+        values['MATERIAL_2']     = self.material2.text()
+        values['Rev']            = self.revision.text()
+        values['SCALE']          = self.scale.text()
+
+        # Sheet numbers
+        cur_s, tot_s = get_sheet_info(self.page, self.page.Document)
+        values['CURRENT_SHEET_NUMBER'] = str(cur_s)
+        values['TOTAL_SHEET_NUMBER']   = str(tot_s)
+
+        # Signatures
+        values['DRAWN BY']      = self.drawnBy.text()
+        values['DRAWN_DATE']    = self.drawnDate.text()
+        values['CHECKED BY']    = self.checkedBy.text()
+        values['CHECKED_DATE']  = self.checkedDate.text()
+        values['APPROVED BY']   = self.approvedBy.text()
+        values['APPROVED_DATE'] = self.approvedDate.text()
+
+        # Other
+        values['TREATMENT, Std No.'] = self.treatment.text()
+        values['PRODUCT/GROUP_No']   = self.productGroupNo.text()
+
+        # Next Assembly
+        for dlg_row in range(self.NA_ROWS):
+            svgIdx = dlg_row + 1
+            values['NEXT_ASSEMBLY_{}'.format(svgIdx)] = self._tbl_cell(self.naTable, dlg_row, 0)
+            values['MODEL_{}'.format(svgIdx)]         = self._tbl_cell(self.naTable, dlg_row, 1)
+
+        # Modification
+        for dlg_row in range(self.MOD_ROWS):
+            svgIdx = dlg_row + 1
+            dt_key = 'ECN DATE' if svgIdx == 1 else 'ECN_DATE_{}'.format(svgIdx)
+            values[dt_key]                           = self._tbl_cell(self.modTable, dlg_row, 0)
+            values['ECN.No.{}'.format(svgIdx)]       = self._tbl_cell(self.modTable, dlg_row, 1)
+            values['REV No.{}'.format(svgIdx)]       = self._tbl_cell(self.modTable, dlg_row, 2)
+            values['ZONE_{}'.format(svgIdx)]         = self._tbl_cell(self.modTable, dlg_row, 3)
+            values['MODIFICATION_{}'.format(svgIdx)] = self._tbl_cell(self.modTable, dlg_row, 4)
+            values['MODIFIED_BY_{}'.format(svgIdx)]  = self._tbl_cell(self.modTable, dlg_row, 5)
+            values['CHECKED_BY_{}'.format(svgIdx)]   = self._tbl_cell(self.modTable, dlg_row, 6)
+            values['APPROVED_BY_{}'.format(svgIdx)]  = self._tbl_cell(self.modTable, dlg_row, 7)
+
+        if update_template_texts(self.template, values):
+            self.page.Document.recompute()
+            QtWidgets.QMessageBox.information(
+                self, "Success",
+                "Title block updated successfully.")
+        else:
+            QtWidgets.QMessageBox.warning(
+                self, "Warning",
+                "Could not update some template fields.\n"
+                "Ensure your template contains the expected freecad:editable field names.")
+
+
+# ============================================================
+# QUICK FILL (No Dialog)
+# ============================================================
+
+def quick_fill_titleblock(page):
+    """
+    Fill title block directly from model parameters -- no dialog.
+    Scans the entire document for MP_ properties.
+    """
+    template = get_template(page)
+    if not template:
+        return False, "No template found in this TechDraw page."
+
+    doc = page.Document
+    params = get_model_parameters(doc)
+    scale  = get_drawing_scale(page)
+    cur_sheet, total_sheets = get_sheet_info(page, doc)
+
+    values = {
+        'DRAWING_NUMBER'      : params['PartNumber'],
+        'DESCRIPTION'         : params['Description'],
+        'WEIGHT'              : params['Weight'],
+        'MATERIAL_1'          : params['Material1'],
+        'MATERIAL_2'          : params['Material2'],
+        'Rev'                 : params['Revision'],
+        'SCALE'               : scale,
+        'CURRENT_SHEET_NUMBER': str(cur_sheet),
+        'TOTAL_SHEET_NUMBER'  : str(total_sheets),
+    }
+
+    ok = update_template_texts(template, values)
+    doc.recompute()
+
+    filled = [k for k, v in values.items() if v]
+    empty  = [k for k, v in values.items() if not v]
+    msg    = "Filled : {}\n".format(", ".join(filled)) if filled else ""
+    msg   += "Empty  : {}".format(", ".join(empty)) if empty else ""
+    return ok, msg.strip()
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+    if not App.ActiveDocument:
+        QtWidgets.QMessageBox.warning(
+            None, "Error", "No active document.")
+        return
+
+    # Register auto-observer (updates title blocks when MP_ params change)
+    _register_observer()
+
+    # Find the active TechDraw page
+    page = get_active_page()
+    if not page:
+        QtWidgets.QMessageBox.warning(
+            None, "No TechDraw Page",
+            "No active TechDraw page found.\n"
+            "Please open or select a TechDraw page and run the macro again.")
+        return
+
+    # Open the comprehensive dialog
+    dlg = TitleBlockDialog(page, Gui.getMainWindow())
+    dlg.exec_()
+
+
+if __name__ == '__main__':
+    main()

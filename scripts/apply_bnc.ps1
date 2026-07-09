@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Apply BNC CAD overlay files to a FreeCAD source or binary directory.
+    Apply ANVIL CAD overlay files to a FreeCAD source or binary directory.
 
 .DESCRIPTION
     Copies all files from the overlay/ folder into the target FreeCAD
@@ -57,7 +57,7 @@ function Copy-Overlay {
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
-Write-Host "  BNC CAD — Apply Overlay" -ForegroundColor Green
+Write-Host "  ANVIL CAD — Apply Overlay" -ForegroundColor Green
 Write-Host "  Target: $FreeCADTarget" -ForegroundColor Green
 if ($DryRun) { Write-Host "  Mode: DRY RUN (no files written)" -ForegroundColor Yellow }
 Write-Host "========================================" -ForegroundColor Green
@@ -251,7 +251,7 @@ Write-Host "========================================" -ForegroundColor Green
 if ($DryRun) {
     Write-Host "  DRY RUN complete - no files were written." -ForegroundColor Yellow
 } else {
-    Write-Host "  BNC CAD overlay applied successfully!" -ForegroundColor Green
-    Write-Host "  Next: Run build_bnc.ps1 or launch BNC CAD." -ForegroundColor Green
+    Write-Host "  ANVIL CAD overlay applied successfully!" -ForegroundColor Green
+    Write-Host "  Next: Run build_bnc.ps1 or launch ANVIL CAD." -ForegroundColor Green
 }
 Write-Host "========================================" -ForegroundColor Green

@@ -824,7 +824,7 @@ class Joint:
             and len(joint.Reference1[1]) != 0
             and (joint.Reference1[1][0].find("?") != -1)
         ):
-            raise Exception(errStr + "Reference1")
+            return  # broken reference — skip silently instead of flooding Report view
 
         if (
             hasattr(joint, "Reference2")
@@ -833,7 +833,7 @@ class Joint:
             and len(joint.Reference2[1]) != 0
             and (joint.Reference2[1][0].find("?") != -1)
         ):
-            raise Exception(errStr + "Reference2")
+            return  # broken reference — skip silently instead of flooding Report view
 
         self.updateJCSPlacements(joint)
 

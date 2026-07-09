@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# BNC CAD View Manager
+# ANVIL CAD View Manager
 # Creo-style named view management for Part Design and TechDraw
 
 import FreeCAD

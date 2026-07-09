@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no" ?>
 <package format="1">
-  <name>BNC CAD Built-In Preference Packs</name>
-  <description>Preference Packs included with the BNC CAD distribution</description>
+  <name>ANVIL CAD Built-In Preference Packs</name>
+  <description>Preference Packs included with the ANVIL CAD distribution</description>
   <version>1.0.0</version>
-  <maintainer email="info@nemi.energy">BNC CAD</maintainer>
+  <maintainer email="info@nemi.energy">ANVIL CAD</maintainer>
   <license file="../../LICENSE">LGPL2</license>
   <url type="repository">https://github.com/FreeCAD/FreeCAD</url>
   <content>
     <preferencepack>
       <name>BNC Theme Light</name>
       <type>Theme</type>
-      <description>BNC CAD light theme with a clean gray interface.</description>
+      <description>ANVIL CAD light theme with a clean gray interface.</description>
       <version>1.0.0</version>
       <tag>built-in</tag>
       <tag>background</tag>
@@ -19,7 +19,7 @@
     <preferencepack>
       <name>BNC Theme Dark</name>
       <type>Theme</type>
-      <description>BNC CAD dark theme with a deep navy interface.</description>
+      <description>ANVIL CAD dark theme with a deep navy interface.</description>
       <version>1.0.0</version>
       <tag>built-in</tag>
       <tag>background</tag>
