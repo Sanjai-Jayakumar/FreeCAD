@@ -1,0 +1,50 @@
+# -*- coding: utf-8 -*-
+# ResetDimFormats.FCMacro - ANVIL CAD
+# Reset every TechDraw dimension on the active document to a clean, value-only
+# format ("%.2w") with no arbitrary-text override. Use this to clean up
+# dimensions whose displayed text got messed up (e.g. showing "85.00 mm85" or a
+# raw "%.2w" / "00 mm%.2w" format).
+
+import FreeCAD as App
+
+try:
+    from PySide2 import QtWidgets
+except ImportError:
+    from PySide import QtGui as QtWidgets
+
+
+def main():
+    doc = App.ActiveDocument
+    if not doc:
+        QtWidgets.QMessageBox.warning(None, "Reset Dimensions", "No active document.")
+        return
+    dims = [o for o in doc.Objects if o.TypeId == "TechDraw::DrawViewDimension"]
+    if not dims:
+        QtWidgets.QMessageBox.information(None, "Reset Dimensions",
+                                          "No dimensions found in this document.")
+        return
+    App.setActiveTransaction("Reset dimension formats")
+    n = 0
+    for d in dims:
+        try:
+            if hasattr(d, "Arbitrary"):
+                d.Arbitrary = False
+            if hasattr(d, "FormatSpec"):
+                d.FormatSpec = "%.2w"     # value only, 2 decimals, no unit text
+            d.recompute()
+            n += 1
+        except Exception as exc:
+            App.Console.PrintWarning("ResetDimFormats: %s skipped (%s)\n"
+                                     % (getattr(d, "Name", "?"), exc))
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+    App.closeActiveTransaction()
+    App.Console.PrintMessage("ANVIL CAD: reset %d dimension(s) to value-only format\n" % n)
+    QtWidgets.QMessageBox.information(
+        None, "Reset Dimensions",
+        "Reset %d dimension(s) to a clean value-only format." % n)
+
+
+main()

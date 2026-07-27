@@ -22,6 +22,8 @@
 
 #include <QApplication>
 #include <QMessageBox>
+#include <algorithm>
+#include <cmath>
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
 #include <BRepAdaptor_Curve.hxx>
@@ -123,24 +125,70 @@ void execHoleCircle(Gui::Command* cmd)
                              QObject::tr("Fewer than three circles selected"));
         return;
     }
-    Gui::Command::openCommand(QT_TRANSLATE_NOOP("Command", "Bolt circle centerlines"));
+    Gui::Command::openCommand(QT_TRANSLATE_NOOP("Command", "PCD circle centerlines"));
 
-    // make the bolt hole circle from 3 scaled and rotated points
-    Base::Vector3d bigCenter =
+    // make the PCD circle from 3 scaled points (scene/scaled coordinates)
+    Base::Vector3d bigCenterScaled =
         _circleCenter(Circles[0]->center, Circles[1]->center, Circles[2]->center);
-    double bigRadius = (Circles[0]->center - bigCenter).Length();
-    // now convert the center & radius to canonical form
-    bigCenter = CosmeticVertex::makeCanonicalPointInverted(objFeat, bigCenter);
-    bigRadius = bigRadius / objFeat->getScale();
+    double bigRadiusScaled = (Circles[0]->center - bigCenterScaled).Length();
+
+    // average radius of the selected holes, used to recognise sibling holes
+    double avgHoleRadius = 0.0;
+    for (const TechDraw::CirclePtr& c : Circles) {
+        avgHoleRadius += c->radius;
+    }
+    avgHoleRadius /= static_cast<double>(Circles.size());
+
+    // ANVIL CAD: gather EVERY circle/arc in the view that lies on the same PCD
+    // (same distance from the PCD centre) and has a similar radius, so that
+    // selecting only a few holes marks centerlines on the whole bolt pattern.
+    std::vector<TechDraw::CirclePtr> allCircles;
+    const double posTol = std::max(bigRadiusScaled * 0.03, 0.05);  // on-PCD tolerance
+    const double radTol = std::max(avgHoleRadius * 0.30, 0.05);    // hole-size tolerance
+    for (const TechDraw::BaseGeomPtr& geom : objFeat->getEdgeGeometry()) {
+        if (!geom) {
+            continue;
+        }
+        if (geom->getGeomType() != GeomType::CIRCLE
+            && geom->getGeomType() != GeomType::ARCOFCIRCLE) {
+            continue;
+        }
+        TechDraw::CirclePtr cand = std::static_pointer_cast<TechDraw::Circle>(geom);
+        double dist = (cand->center - bigCenterScaled).Length();
+        if (std::fabs(dist - bigRadiusScaled) > posTol) {
+            continue;   // centre is not on the PCD
+        }
+        if (std::fabs(cand->radius - avgHoleRadius) > radTol) {
+            continue;   // not a matching bolt hole (skips the PCD / outer / centre circle)
+        }
+        // skip holes we already recorded (e.g. a circle split into arcs)
+        bool duplicate = false;
+        for (const TechDraw::CirclePtr& have : allCircles) {
+            if ((have->center - cand->center).Length() < radTol) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            allCircles.push_back(cand);
+        }
+    }
+    if (allCircles.empty()) {
+        allCircles = Circles;   // safety fallback: at least mark the selection
+    }
+
+    // now convert the PCD centre & radius to canonical form and draw the PCD circle
+    Base::Vector3d bigCenter = CosmeticVertex::makeCanonicalPointInverted(objFeat, bigCenterScaled);
+    double bigRadius = bigRadiusScaled / objFeat->getScale();
     TechDraw::BaseGeomPtr bigCircle =
         std::make_shared<TechDraw::Circle>(bigCenter, bigRadius);
     std::string bigCircleTag = objFeat->addCosmeticEdge(bigCircle);
     TechDraw::CosmeticEdge* ceCircle = objFeat->getCosmeticEdge(bigCircleTag);
     _setLineAttributes(ceCircle);
 
-    // make the center lines for the individual bolt holes
+    // make the center lines for ALL bolt holes found on the PCD
     constexpr double ExtendFactor{1.1};
-    for (const TechDraw::CirclePtr& oneCircle : Circles) {
+    for (const TechDraw::CirclePtr& oneCircle : allCircles) {
         // convert the center to canonical form
         Base::Vector3d oneCircleCenter = CosmeticVertex::makeCanonicalPointInverted(objFeat, oneCircle->center);
         // oneCircle->radius is scaled.
@@ -168,7 +216,7 @@ CmdTechDrawExtensionHoleCircle::CmdTechDrawExtensionHoleCircle()
 {
     sAppModule = "TechDraw";
     sGroup = QT_TR_NOOP("TechDraw");
-    sMenuText = QT_TR_NOOP("Bolt Circle Centerlines");
+    sMenuText = QT_TR_NOOP("PCD Circle Centerlines");
     sToolTipText = QT_TR_NOOP("Adds centerlines to a circular pattern of three or more selected circles");
     sWhatsThis = "TechDraw_ExtensionHoleCircle";
     sStatusTip = sMenuText;
@@ -203,40 +251,226 @@ void execCircleCenterLines(Gui::Command* cmd)
     }
     Gui::Command::openCommand(QT_TRANSLATE_NOOP("Command", "Circle Centerlines"));
     const std::vector<std::string> SubNames = selection[0].getSubNames();
+
+    // ANVIL CAD: draw an axis-aligned centre cross at a canonical centre.
+    auto drawAxisCross = [&](const Base::Vector3d& center, double radius) {
+        constexpr double lineOutside{2.0};
+        Base::Vector3d right(center.x + radius + lineOutside, center.y, 0.0);
+        Base::Vector3d top(center.x, center.y + radius + lineOutside, 0.0);
+        Base::Vector3d left(center.x - radius - lineOutside, center.y, 0.0);
+        Base::Vector3d bottom(center.x, center.y - radius - lineOutside, 0.0);
+        TechDraw::CosmeticEdge* h = objFeat->getCosmeticEdge(objFeat->addCosmeticEdge(right, left));
+        TechDraw::CosmeticEdge* v = objFeat->getCosmeticEdge(objFeat->addCosmeticEdge(top, bottom));
+        _setLineAttributes(h);
+        _setLineAttributes(v);
+        h->m_format.setLineNumber(Preferences::CenterLineStyle());
+        v->m_format.setLineNumber(Preferences::CenterLineStyle());
+    };
+
+    int created = 0;
+    std::string typesSeen;
+    std::vector<std::pair<Base::Vector3d, Base::Vector3d>> lineEdges;  // straight edges, raw frame
     for (const std::string& Name : SubNames) {
         int GeoId = TechDraw::DrawUtil::getIndexFromName(Name);
         TechDraw::BaseGeomPtr geom = objFeat->getGeomByIndex(GeoId);
         std::string GeoType = TechDraw::DrawUtil::getGeomTypeFromName(Name);
-        if (GeoType == "Edge") {
-            if (geom->getGeomType() == GeomType::CIRCLE || geom->getGeomType() == GeomType::ARCOFCIRCLE) {
-                TechDraw::CirclePtr cgen = std::static_pointer_cast<TechDraw::Circle>(geom);
-                // cgen->center is a scaled, rotated and inverted point
-                Base::Vector3d center = CosmeticVertex::makeCanonicalPointInverted(objFeat, cgen->center);
-                double radius = cgen->radius / objFeat->getScale();
-                // right, left, top, bottom are formed from a canonical point (center)
-                // so they do not need to be changed to canonical form.
-                constexpr double lineOutsideCircle{2.0};
-                Base::Vector3d right(center.x + radius + lineOutsideCircle, center.y, 0.0);
-                Base::Vector3d top(center.x, center.y + radius + lineOutsideCircle, 0.0);
-                Base::Vector3d left(center.x - radius - lineOutsideCircle, center.y, 0.0);
-                Base::Vector3d bottom(center.x, center.y - radius - lineOutsideCircle, 0.0);
-                std::string line1tag = objFeat->addCosmeticEdge(right, left);
-                std::string line2tag = objFeat->addCosmeticEdge(top, bottom);
-                TechDraw::CosmeticEdge* horiz = objFeat->getCosmeticEdge(line1tag);
-                _setLineAttributes(horiz);
-                TechDraw::CosmeticEdge* vert = objFeat->getCosmeticEdge(line2tag);
-                _setLineAttributes(vert);
-                // horiz & vert are centerlines, so they should use the default centerline
-                // number and not the number from line attributes
-                horiz->m_format.setLineNumber(Preferences::CenterLineStyle());
-                vert->m_format.setLineNumber(Preferences::CenterLineStyle());
+        if (GeoType != "Edge" || !geom) {
+            continue;
+        }
+        GeomType gt = geom->getGeomType();
+        typesSeen += geom->geomTypeName() + " ";
+        if (gt == GeomType::CIRCLE || gt == GeomType::ARCOFCIRCLE) {
+            TechDraw::CirclePtr cgen = std::static_pointer_cast<TechDraw::Circle>(geom);
+            // cgen->center is a scaled, rotated and inverted point
+            Base::Vector3d center = CosmeticVertex::makeCanonicalPointInverted(objFeat, cgen->center);
+            double radius = cgen->radius / objFeat->getScale();
+            drawAxisCross(center, radius);
+            created++;
+        }
+        // A hole seen at an angle / cut in a section view projects as an ELLIPSE
+        // or ARCOFELLIPSE; draw a cross aligned to the ellipse's major/minor axes.
+        else if (gt == GeomType::ELLIPSE || gt == GeomType::ARCOFELLIPSE) {
+            auto egen = std::static_pointer_cast<TechDraw::Ellipse>(geom);
+            double scale = objFeat->getScale();
+            double ext = 2.0 * scale;                     // extend beyond, scaled units
+            double a = egen->angle;                       // major-axis angle, raw frame
+            Base::Vector3d majorDir(std::cos(a), std::sin(a), 0.0);
+            Base::Vector3d minorDir(-std::sin(a), std::cos(a), 0.0);
+            const Base::Vector3d& c = egen->center;       // raw (scaled) centre
+            Base::Vector3d majA = CosmeticVertex::makeCanonicalPointInverted(objFeat, c + majorDir * (egen->major + ext));
+            Base::Vector3d majB = CosmeticVertex::makeCanonicalPointInverted(objFeat, c - majorDir * (egen->major + ext));
+            Base::Vector3d minA = CosmeticVertex::makeCanonicalPointInverted(objFeat, c + minorDir * (egen->minor + ext));
+            Base::Vector3d minB = CosmeticVertex::makeCanonicalPointInverted(objFeat, c - minorDir * (egen->minor + ext));
+            TechDraw::CosmeticEdge* e1 = objFeat->getCosmeticEdge(objFeat->addCosmeticEdge(majA, majB));
+            TechDraw::CosmeticEdge* e2 = objFeat->getCosmeticEdge(objFeat->addCosmeticEdge(minA, minB));
+            _setLineAttributes(e1);
+            _setLineAttributes(e2);
+            e1->m_format.setLineNumber(Preferences::CenterLineStyle());
+            e2->m_format.setLineNumber(Preferences::CenterLineStyle());
+            created++;
+        }
+        // ANVIL CAD: ANY other curved edge - e.g. a section/HLR projection that came
+        // through as a bspline/generic "half circle". Fit a circle through 3 points on
+        // the edge and mark its centre, like Creo. Straight lines are skipped.
+        else {
+            Base::Vector3d sp = geom->getStartPoint();
+            Base::Vector3d mp = geom->getMidPoint();
+            Base::Vector3d ep = geom->getEndPoint();
+            Base::Vector3d v1 = mp - sp;
+            Base::Vector3d v2 = ep - sp;
+            double crossz = v1.x * v2.y - v1.y * v2.x;    // ~0 => collinear (straight line)
+            if (std::fabs(crossz) > 1.0e-6) {
+                // curved edge: fit a circle through 3 points and mark its centre
+                Base::Vector3d ctrRaw = _circleCenter(sp, mp, ep);
+                double radRaw = (sp - ctrRaw).Length();
+                if (radRaw > 1.0e-6 && radRaw < 1.0e6) {
+                    Base::Vector3d center = CosmeticVertex::makeCanonicalPointInverted(objFeat, ctrRaw);
+                    drawAxisCross(center, radRaw / objFeat->getScale());
+                    created++;
+                }
             }
+            else {
+                // straight line: remember it. Two of them (the walls of a hole seen
+                // edge-on in a section/side view) get a centre line drawn between.
+                lineEdges.emplace_back(sp, ep);
+            }
+        }
+    }
+
+    // is an edge geometry a straight segment? return its endpoints (raw frame)
+    auto straightEnds = [](const TechDraw::BaseGeomPtr& g,
+                           Base::Vector3d& s, Base::Vector3d& e) -> bool {
+        if (!g) {
+            return false;
+        }
+        s = g->getStartPoint();
+        Base::Vector3d m = g->getMidPoint();
+        e = g->getEndPoint();
+        Base::Vector3d w1 = m - s, w2 = e - s;
+        return std::fabs(w1.x * w2.y - w1.y * w2.x) < 1.0e-6 && (e - s).Length() > 1.0e-6;
+    };
+
+    // ANVIL CAD: a hole seen edge-on in a section/side view has NO circle to pick.
+    // Draw the hole AXIS: a centre line PERPENDICULAR to the plate FACES (the
+    // longest edges of the view), passing through the hole centre, spanning the part
+    // and extending a little past both faces. Works whether the user picked the
+    // hole's opening edge (parallel to the faces) or one/both of its walls.
+    if (created == 0 && !lineEdges.empty()) {
+        Base::Vector3d s, e;
+        // 1) face direction = direction of the longest straight edge; axis is normal to it
+        Base::Vector3d faceDir(1.0, 0.0, 0.0);
+        double longest = -1.0;
+        for (const TechDraw::BaseGeomPtr& g : objFeat->getEdgeGeometry()) {
+            if (!straightEnds(g, s, e)) {
+                continue;
+            }
+            double l = (e - s).Length();
+            if (l > longest) {
+                longest = l;
+                faceDir = (e - s) / l;
+            }
+        }
+        Base::Vector3d axisDir(-faceDir.y, faceDir.x, 0.0);   // unit, perpendicular
+
+        // 2) part extent along the axis direction (the two face positions)
+        double aMin = 1.0e18, aMax = -1.0e18;
+        for (const TechDraw::BaseGeomPtr& g : objFeat->getEdgeGeometry()) {
+            if (!straightEnds(g, s, e)) {
+                continue;
+            }
+            double t1 = s.x * axisDir.x + s.y * axisDir.y;
+            double t2 = e.x * axisDir.x + e.y * axisDir.y;
+            aMin = std::min(aMin, std::min(t1, t2));
+            aMax = std::max(aMax, std::max(t1, t2));
+        }
+
+        // 3) hole-centre position along the face direction
+        bool haveCentre = false;
+        double cFace = 0.0;
+        if (lineEdges.size() >= 2) {
+            double sum = 0.0;
+            for (const auto& le : lineEdges) {
+                Base::Vector3d m = (le.first + le.second) * 0.5;
+                sum += m.x * faceDir.x + m.y * faceDir.y;
+            }
+            cFace = sum / double(lineEdges.size());
+            haveCentre = true;
+        }
+        else {
+            Base::Vector3d a1 = lineEdges[0].first, a2 = lineEdges[0].second;
+            Base::Vector3d mid = (a1 + a2) * 0.5;
+            Base::Vector3d ed = a2 - a1;
+            double el = ed.Length();
+            if (el > 1.0e-6) {
+                ed = ed / el;
+                double along = std::fabs(ed.x * faceDir.x + ed.y * faceDir.y);
+                if (along > 0.7) {
+                    // opening edge (parallel to the faces): its midpoint is the centre
+                    cFace = mid.x * faceDir.x + mid.y * faceDir.y;
+                }
+                else {
+                    // a wall (perpendicular to faces): centre = midway to nearest parallel wall
+                    double bestPerp = 1.0e18, partnerFace = 0.0;
+                    bool found = false;
+                    for (const TechDraw::BaseGeomPtr& g : objFeat->getEdgeGeometry()) {
+                        if (!straightEnds(g, s, e)) {
+                            continue;
+                        }
+                        Base::Vector3d d = e - s;
+                        d = d / d.Length();
+                        if (std::fabs(ed.x * d.y - ed.y * d.x) > 1.0e-3) {
+                            continue;   // not parallel
+                        }
+                        Base::Vector3d gm = (s + e) * 0.5;
+                        Base::Vector3d rel = gm - mid;
+                        double perp = std::fabs(rel.x * ed.y - rel.y * ed.x);
+                        if (perp < 1.0e-3) {
+                            continue;   // same line
+                        }
+                        if (perp < bestPerp) {
+                            bestPerp = perp;
+                            partnerFace = gm.x * faceDir.x + gm.y * faceDir.y;
+                            found = true;
+                        }
+                    }
+                    double selFace = mid.x * faceDir.x + mid.y * faceDir.y;
+                    cFace = found ? 0.5 * (selFace + partnerFace) : selFace;
+                }
+                haveCentre = true;
+            }
+        }
+
+        // 4) draw the axis line through faceDir-coord == cFace, along axisDir, extended
+        if (haveCentre && aMax > aMin) {
+            double ext = 3.0 * objFeat->getScale();
+            Base::Vector3d pA = faceDir * cFace + axisDir * (aMin - ext);
+            Base::Vector3d pB = faceDir * cFace + axisDir * (aMax + ext);
+            Base::Vector3d c1 = CosmeticVertex::makeCanonicalPointInverted(objFeat, pA);
+            Base::Vector3d c2 = CosmeticVertex::makeCanonicalPointInverted(objFeat, pB);
+            TechDraw::CosmeticEdge* ce = objFeat->getCosmeticEdge(objFeat->addCosmeticEdge(c1, c2));
+            _setLineAttributes(ce);
+            ce->m_format.setLineNumber(Preferences::CenterLineStyle());
+            created++;
         }
     }
     Gui::Selection().clearCompleteSelection();
     objFeat->refreshCEGeoms();
     objFeat->requestPaint();
     Gui::Command::commitCommand();
+
+    // ANVIL CAD diagnostic: surface why nothing appeared if it didn't.
+    Base::Console().message(
+        "ANVIL CAD Circle Centerlines: edge types [ %s], created %d centerline(s)\n",
+        typesSeen.c_str(), created);
+    if (created == 0) {
+        QMessageBox::information(Gui::getMainWindow(),
+            QObject::tr("Circle Centerlines"),
+            QObject::tr("No centerline could be created for the selection.\n"
+                        "Edge type(s) seen: %1\n"
+                        "Pick a circular / arc / elliptical edge, or - for a hole seen "
+                        "edge-on in a section view - select its TWO straight edges.")
+                .arg(QString::fromStdString(typesSeen)));
+    }
 }
 
 DEF_STD_CMD_A(CmdTechDrawExtensionCircleCenterLines)
@@ -349,7 +583,7 @@ void CmdTechDrawExtensionCircleCenterLinesGroup::languageChange()
     arc1->setStatusTip(arc1->text());
     QAction* arc2 = action[1];
     arc2->setText(
-        QApplication::translate("CmdTechDrawExtensionHoleCircle", "Bolt Circle Centerlines"));
+        QApplication::translate("CmdTechDrawExtensionHoleCircle", "PCD Circle Centerlines"));
     arc2->setToolTip(QApplication::translate("CmdTechDrawExtensionHoleCircle",
                                              "Adds centerlines to a circular pattern of selected circles"));
     arc2->setStatusTip(arc2->text());

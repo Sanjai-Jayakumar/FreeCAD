@@ -263,9 +263,15 @@ DrawViewSection::DrawViewSection()
 
 DrawViewSection::~DrawViewSection()
 {
-    // don't destroy this object while it has dependent threads running
-    if (m_cutFuture.isRunning()) {
-        m_cutFuture.waitForFinished();
+    // don't destroy this object while it has dependent threads running.
+    // ANVIL CAD: guard the wait - waitForFinished() rethrows a worker exception,
+    // and throwing from a (noexcept) destructor calls std::terminate.
+    try {
+        if (m_cutFuture.isRunning()) {
+            m_cutFuture.waitForFinished();
+        }
+    }
+    catch (...) {
     }
 }
 

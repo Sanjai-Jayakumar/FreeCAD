@@ -1362,6 +1362,13 @@ bool QGIViewPart::isExporting() const
     // dvp already validated
     auto viewPart {freecad_cast<TechDraw::DrawViewPart*>(getViewObject())};
     auto vpPage = getViewProviderPage(viewPart);
+    // ANVIL CAD: during page/document teardown getViewProviderPage() can return
+    // null (e.g. a queued hover event fires while the page is closing). The
+    // original code dereferenced vpPage unconditionally -> null-pointer crash
+    // (0xC0000005) via hoverEnterEvent -> hideCenterMarks -> isExporting. Guard it.
+    if (!vpPage) {
+        return false;
+    }
 
     QGSPage* scenePage = vpPage->getQGSPage();
     if (!scenePage) {

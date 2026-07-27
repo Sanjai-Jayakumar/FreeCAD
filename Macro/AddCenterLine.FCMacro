@@ -1,0 +1,89 @@
+# -*- coding: utf-8 -*-
+# AddCenterLine.FCMacro — ANVIL CAD
+#
+# Adds a centre line to a hole/bore/boss shown in a SIDE view (where it
+# projects as two parallel lines, so the "Circle Centerlines" tool can't be
+# used).  Select the two side edges of the hole (or its two corners) in a
+# TechDraw view and run this — a centre line is drawn between them, aligned
+# to the feature.  Works for vertical, horizontal or angled holes.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide import QtGui as QtWidgets
+except ImportError:
+    from PySide2 import QtWidgets
+
+_VIEW_TIDS = ("TechDraw::DrawViewPart", "TechDraw::DrawProjGroupItem")
+_ALIGNED = 2   # CenterLine::Mode  0=VERTICAL 1=HORIZONTAL 2=ALIGNED
+
+
+def _msg(text):
+    QtWidgets.QMessageBox.information(None, "Add Center Line", text)
+
+
+def main():
+    doc = App.ActiveDocument
+    if not doc:
+        _msg("No active document.")
+        return
+
+    view = None
+    subs = []
+    for s in Gui.Selection.getSelectionEx():
+        if s.Object.TypeId in _VIEW_TIDS:
+            view = s.Object
+            subs = list(s.SubElementNames or [])
+            break
+
+    if view is None:
+        _msg("Select the two side edges of the hole (or its two corners) in "
+             "a view, then run this again.")
+        return
+
+    edges = [x for x in subs if x.startswith("Edge")]
+    verts = [x for x in subs if x.startswith("Vertex")]
+    if len(edges) >= 2:
+        use = edges[:2]
+    elif len(verts) >= 2:
+        use = verts[:2]
+    else:
+        _msg("Select TWO edges (the two sides of the hole) — or two corner "
+             "points — in the view, then run this.\n\n"
+             "Tip: click one edge, hold Ctrl and click the opposite edge.")
+        return
+
+    App.setActiveTransaction("Add center line")
+    ok = False
+    try:
+        view.makeCenterLine(use, _ALIGNED)
+        ok = True
+    except Exception as exc:
+        App.Console.PrintError("AddCenterLine: %s\n" % exc)
+    try:
+        doc.recompute([view, _page_of(view)] if _page_of(view) else None)
+    except Exception:
+        doc.recompute()
+    App.closeActiveTransaction()
+
+    if ok:
+        App.Console.PrintMessage(
+            "ANVIL CAD: centre line added to {} between {}\n".format(
+                view.Label, use))
+    else:
+        _msg("Could not add a centre line to that selection. Make sure the "
+             "two picked edges belong to the same view.")
+
+
+def _page_of(view):
+    for p in getattr(view, "InList", []):
+        if p.TypeId == "TechDraw::DrawPage":
+            return p
+        for p2 in getattr(p, "InList", []):
+            if p2.TypeId == "TechDraw::DrawPage":
+                return p2
+    return None
+
+
+main()

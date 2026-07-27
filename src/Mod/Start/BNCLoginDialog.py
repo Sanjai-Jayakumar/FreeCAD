@@ -250,7 +250,7 @@ class BNCLoginDialog(QtWidgets.QDialog):
         logo_label.setAlignment(QtCore.Qt.AlignCenter)
         logo_label.setText(
             '<span style="font-size:42px; font-weight:700; color:#1a1a2e;">'
-            'BNC&nbsp;<span style="color:#1a73e8;">CAD</span></span>'
+            'ANVIL&nbsp;<span style="color:#1a73e8;">CAD</span></span>'
         )
         layout.addWidget(logo_label)
 
@@ -271,7 +271,7 @@ class BNCLoginDialog(QtWidgets.QDialog):
 
         layout.addSpacing(8)
 
-        subtitle = QtWidgets.QLabel("Sign in to your BNC account to continue")
+        subtitle = QtWidgets.QLabel("Sign in to your ANVIL CAD account to continue")
         subtitle.setAlignment(QtCore.Qt.AlignCenter)
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("font-size: 13px; color: #666;")

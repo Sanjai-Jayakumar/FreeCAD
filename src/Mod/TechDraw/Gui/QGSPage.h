@@ -99,6 +99,8 @@ public:
     void fixOrphans(bool force = false);
 
     void redrawAllViews();
+    void applyDimensionLineBreaks();  // ANVIL CAD: gap dimension lines at crossings
+    void scheduleDimensionLineBreaks(const QList<QRectF>& region);  // debounced trigger
     void redraw1View(TechDraw::DrawView* dView);
 
     QGIView* findQViewForDocObj(App::DocumentObject* obj) const;
@@ -166,6 +168,10 @@ private:
 
     bool m_exportingSvg{false};
     bool m_exportingPdf{false};
+
+    // ANVIL CAD: dimension-line-break pass state (re-entrancy + debounce guards)
+    bool m_applyingBreaks{false};
+    bool m_breakPending{false};
 };
 
 }// namespace TechDrawGui

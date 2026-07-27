@@ -25,6 +25,8 @@
 
 #include <Mod/TechDraw/TechDrawGlobal.h>
 
+#include <QPainterPath>
+
 #include "QGIPrimPath.h"
 #include "QGIUserTypes.h"
 
@@ -49,6 +51,12 @@ public:
 
 public:
     void draw();
+    // ANVIL CAD: store the full (un-gapped) dimension-line path. The page-level
+    // pass (QGSPage::applyDimensionLineBreaks) reads this base and sets the
+    // displayed path with small gaps where lines cross - always re-deriving from
+    // the base so re-runs never compound.
+    void setUngappedPath(const QPainterPath& p);
+    const QPainterPath& ungappedPath() const { return m_ungapped; }
     //void setHighlighted(bool state);
     //double getLineWidth() { return m_lineWidth; }
     //void setLineWidth(double w);
@@ -60,6 +68,7 @@ protected:
 
 
 private:
+    QPainterPath m_ungapped;
 };
 
 }

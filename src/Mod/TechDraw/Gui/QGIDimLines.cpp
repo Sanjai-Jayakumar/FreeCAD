@@ -45,6 +45,15 @@ void QGIDimLines::draw()
 {
 }
 
+void QGIDimLines::setUngappedPath(const QPainterPath& p)
+{
+    // Keep the full base path, and show it un-gapped by default. The page's
+    // dimension-line-break pass will replace the displayed path with a gapped
+    // version derived from this base.
+    m_ungapped = p;
+    setPath(p);
+}
+
 QPainterPath QGIDimLines::shape() const
 {
     QPainterPath outline;

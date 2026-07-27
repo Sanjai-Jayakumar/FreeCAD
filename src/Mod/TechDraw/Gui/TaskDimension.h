@@ -55,6 +55,8 @@ private Q_SLOTS:
     void onUndertoleranceChanged();
     void onFormatSpecifierChanged();
     void onArbitraryChanged();
+    void onEditValueChanged();  // ANVIL CAD: dedicated display-only value box
+    void onTolTypeChanged();    // ANVIL CAD: Creo-style tolerance mode dropdown
     void onFormatSpecifierOverToleranceChanged();
     void onFormatSpecifierUnderToleranceChanged();
     void onArbitraryTolerancesChanged();
@@ -77,6 +79,7 @@ private:
     QGIViewDimension *m_parent;
     Gui::WeakPtrT<ViewProviderDimension> m_dimensionVP;
     std::pair<double, bool> getAngleFromSelection();
+    void updateToleranceModeUi(int mode);  // ANVIL CAD: show/hide +/- boxes per mode
     std::string m_originalFormatChar;
     std::string m_formatPrefix;
     std::string m_formatSuffix;

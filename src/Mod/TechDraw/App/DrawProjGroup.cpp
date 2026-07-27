@@ -187,7 +187,7 @@ App::DocumentObjectExecReturn* DrawProjGroup::execute()
         }
     }
 
-    if (AutoDistribute.getValue()) {
+    if (AutoDistribute.getValue() || needsInitialLayout()) {
         autoPositionChildren();
     }
     overrideKeepUpdated(false);
@@ -224,7 +224,7 @@ void DrawProjGroup::reportReady()
         return;
     }
     //all the secondary views are ready so we can now figure out alignment
-    if (AutoDistribute.getValue()) {
+    if (AutoDistribute.getValue() || needsInitialLayout()) {
         recomputeFeature();
     }
 }
@@ -482,10 +482,11 @@ App::DocumentObject* DrawProjGroup::addProjection(const char* viewProjType)
         else {//Front
             Anchor.setValue(view);
             requestPaint();//make sure the group object is on the Gui page
-            view->LockPosition.setValue(
-                true);//lock "Front" position within DPG (note not Page!).
-            view->LockPosition.setStatus(App::Property::ReadOnly,
-                                            true);//Front should stay locked.
+            // ANVIL CAD: Do NOT lock the anchor.  Upstream locked "Front" and
+            // marked LockPosition ReadOnly so it could never be dragged; ANVIL
+            // CAD wants ProjGroup views freely movable.  Leave LockPosition at
+            // its default (false) and editable.
+            view->LockPosition.setValue(false);
         }
     }
     return view;
@@ -604,7 +605,14 @@ Base::Vector3d DrawProjGroup::getXYPosition(const char* viewTypeCStr)
     //TODO: bounding boxes do not take view orientation into account
     //      i.e. X&Y widths might be swapped on page
 
-    if (viewPtrs[viewIndex]->LockPosition.getValue() || !AutoDistribute.getValue()) {
+    // ANVIL CAD: with AutoDistribute off, keep the CURRENT position only for a view
+    // that has already been placed/moved (non-zero). A freshly-created secondary view
+    // (still at 0,0) falls through to the computed spread below, so a new ProjGroup
+    // lays out on creation instead of clumping at the centre.
+    bool alreadyPlaced = !(DrawUtil::fpCompare(viewPtrs[viewIndex]->X.getValue(), 0.0)
+                           && DrawUtil::fpCompare(viewPtrs[viewIndex]->Y.getValue(), 0.0));
+    if (viewPtrs[viewIndex]->LockPosition.getValue()
+        || (!AutoDistribute.getValue() && alreadyPlaced)) {
         return Base::Vector3d(
             viewPtrs[viewIndex]->X.getValue(),
             viewPtrs[viewIndex]->Y.getValue(),
@@ -957,6 +965,28 @@ void DrawProjGroup::autoPositionChildren()
             view->autoPosition();
         }
     }
+}
+
+//! ANVIL CAD: true if any SECONDARY view is still at its default (0,0) location,
+//! i.e. the group was just created and needs its one-time spread layout even when
+//! AutoDistribute is off. Once views are placed (or the user moves them) they are
+//! non-zero, so this returns false and no re-layout (snap-back) happens.
+bool DrawProjGroup::needsInitialLayout() const
+{
+    for (const auto it : Views.getValues()) {
+        auto view(freecad_cast<DrawProjGroupItem*>(it));
+        if (!view) {
+            continue;
+        }
+        if (strcmp(view->Type.getValueAsString(), "Front") == 0) {
+            continue;
+        }
+        if (DrawUtil::fpCompare(view->X.getValue(), 0.0)
+            && DrawUtil::fpCompare(view->Y.getValue(), 0.0)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /*!

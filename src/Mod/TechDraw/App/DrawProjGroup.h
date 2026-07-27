@@ -147,6 +147,7 @@ public:
     void recomputeChildren();
     void updateChildrenScale();
     void autoPositionChildren();
+    bool needsInitialLayout() const;   // ANVIL CAD: any secondary view still unplaced?
     void updateChildrenEnforce();
 
     std::vector<App::DocumentObject*> getAllSources() const;

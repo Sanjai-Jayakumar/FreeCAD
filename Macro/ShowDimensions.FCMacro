@@ -1,0 +1,415 @@
+# -*- coding: utf-8 -*-
+# ShowDimensions.FCMacro — ANVIL CAD
+#
+# Creo-style "Show Dimensions". Select geometry inside a TechDraw view and this
+# creates the matching dimensions and places them ON that view (next to the
+# geometry they measure) instead of piling them at the view centre.
+#
+#   * Select a circle edge          -> Diameter (full circle) / Radius (arc)
+#   * Select a straight edge        -> Length (Distance)
+#   * Select 2 vertices             -> Distance between them
+#   * Select a whole view (no sub-  -> auto-dimension every VISIBLE edge on it
+#     element, e.g. from the tree)     (all hole diameters + edge lengths)
+#
+# Each new dimension is offset away from the view centre so nothing overlaps.
+
+import re
+import math
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide2 import QtGui, QtWidgets
+except ImportError:
+    from PySide import QtGui
+    QtWidgets = QtGui
+
+_TWO_PI = 2.0 * math.pi
+_MAX_AUTO = 80          # safety cap for "dimension the whole view" mode
+
+
+# --------------------------------------------------------------------------- #
+#  helpers
+# --------------------------------------------------------------------------- #
+def _is_viewpart(o):
+    try:
+        return o.isDerivedFrom("TechDraw::DrawViewPart")
+    except Exception:
+        return False
+
+
+def _index_of(subname):
+    m = re.search(r"(\d+)$", subname or "")
+    return int(m.group(1)) if m else None
+
+
+def _page_of(view):
+    try:
+        p = view.findParentPage()
+        if p:
+            return p
+    except Exception:
+        pass
+    for o in getattr(view, "InListRecursive", []) or []:
+        if o.TypeId == "TechDraw::DrawPage":
+            return o
+    return None
+
+
+def _scale(view):
+    try:
+        s = view.getScale()
+        if s:
+            return float(s)
+    except Exception:
+        pass
+    try:
+        return float(view.Scale) or 1.0
+    except Exception:
+        return 1.0
+
+
+def _is_closed(edge):
+    try:
+        if bool(edge.isClosed()):
+            return True
+    except Exception:
+        pass
+    try:
+        if bool(edge.Closed):
+            return True
+    except Exception:
+        pass
+    try:
+        return abs(edge.LastParameter - edge.FirstParameter) >= (_TWO_PI - 1e-3)
+    except Exception:
+        return False
+
+
+# Curve types that stand for a round feature. In an orthographic view a hole is
+# a true Circle; in an isometric/axonometric view the same hole projects to an
+# Ellipse (or a B-spline), so all of these must be treated as circular.
+_ROUND_TIDS = (
+    "Part::GeomCircle", "Part::GeomArcOfCircle",
+    "Part::GeomEllipse", "Part::GeomArcOfEllipse",
+    "Part::GeomBSplineCurve", "Part::GeomBezierCurve",
+)
+_LINE_TIDS = ("Part::GeomLine", "Part::GeomLineSegment")
+
+
+def _edge_kind(edge):
+    """'line', 'circle_full', 'circle_arc', or None if not dimensionable."""
+    try:
+        tid = edge.Curve.TypeId
+    except Exception:
+        return None
+    if tid in _LINE_TIDS:
+        return "line"
+    if tid in _ROUND_TIDS:
+        return "circle_full" if _is_closed(edge) else "circle_arc"
+    return None
+
+
+def _circ_r(p1, p2, p3):
+    """Radius of the circle through three 2-D points, or None if collinear."""
+    ax, ay, bx, by, cx, cy = p1.x, p1.y, p2.x, p2.y, p3.x, p3.y
+    d = 2.0 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+    if abs(d) < 1e-9:
+        return None
+    a2, b2, c2 = ax * ax + ay * ay, bx * bx + by * by, cx * cx + cy * cy
+    ux = (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / d
+    uy = (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / d
+    return math.hypot(ax - ux, ay - uy)
+
+
+def _radius_of(edge):
+    """Approximate the (projected) radius of a round edge — used only to group
+    equal features so they aren't dimensioned repeatedly."""
+    try:
+        crv = edge.Curve
+        tid = crv.TypeId
+    except Exception:
+        return None
+    if tid in ("Part::GeomCircle", "Part::GeomArcOfCircle"):
+        try:
+            return float(crv.Radius)
+        except Exception:
+            pass
+    if tid in ("Part::GeomEllipse", "Part::GeomArcOfEllipse"):
+        try:
+            return (float(crv.MajorRadius) + float(crv.MinorRadius)) / 2.0
+        except Exception:
+            pass
+    try:
+        f, l = edge.FirstParameter, edge.LastParameter
+        pts = [edge.valueAt(f + (l - f) * t) for t in (0.25, 0.5, 0.75)]
+        return _circ_r(pts[0], pts[1], pts[2])
+    except Exception:
+        return None
+
+
+def _value_sig(edge, kind):
+    """Grouping key so equal-size features collapse to one dimension."""
+    try:
+        if kind == "line":
+            return ("len", round(edge.Length, 2))
+        r = _radius_of(edge)
+        return (kind, round(r, 2)) if r is not None else None
+    except Exception:
+        return None
+
+
+def _place(dim, dtype, idx):
+    """Set dim.X/dim.Y so the label sits beside its geometry, offset outward.
+    getArcPoints/getLinearPoints are in the view frame (origin = view centre,
+    +Y up, page mm); the label wants (x, -y)."""
+    try:
+        if dtype in ("Radius", "Diameter"):
+            pts = dim.getArcPoints()
+            c = pts[0]
+            r = (pts[1] - c).Length or 5.0
+            ang = math.radians(35.0 + (idx * 57.0) % 300.0)
+            off = r + 9.0
+            px = c.x + off * math.cos(ang)
+            py = c.y + off * math.sin(ang)
+        else:
+            p1, p2 = dim.getLinearPoints()
+            mx, my = (p1.x + p2.x) / 2.0, (p1.y + p2.y) / 2.0
+            dx, dy = (p2.x - p1.x), (p2.y - p1.y)
+            length = math.hypot(dx, dy) or 1.0
+            nx, ny = -dy / length, dx / length        # perpendicular
+            if (nx * mx + ny * my) < 0:               # push away from centre
+                nx, ny = -nx, -ny
+            off = 11.0 + 6.0 * (idx % 3)
+            px, py = mx + nx * off, my + ny * off
+        dim.X = px
+        dim.Y = -py
+    except Exception:
+        pass
+
+
+def _make_dim(doc, page, view, dtype, subnames, idx):
+    dim = doc.addObject("TechDraw::DrawViewDimension", "Dimension")
+    dim.Type = dtype
+    dim.MeasureType = "Projected"
+    dim.References2D = [(view, subnames)]
+    page.addView(dim)
+    dim.recompute()
+    _place(dim, dtype, idx)
+    dim.recompute()
+    return dim
+
+
+def _safe_remove(doc, obj):
+    try:
+        doc.removeObject(obj.Name)
+    except Exception:
+        pass
+
+
+def _dim_ok(dim, arc):
+    """True if the freshly recomputed dimension is valid and has a real value."""
+    try:
+        st = dim.State
+        st = st if isinstance(st, (list, tuple)) else [str(st)]
+        if any(("Inval" in s) or ("rror" in s) for s in st):
+            return False
+    except Exception:
+        pass
+    try:
+        pts = dim.getArcPoints() if arc else dim.getLinearPoints()
+        if not pts:
+            return False
+    except Exception:
+        return False
+    try:
+        if float(dim.getRawValue()) <= 1e-6:
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def _make_circular(doc, page, view, subname, idx, prefer_diameter):
+    """Diameter (holes) or Radius (arcs/fillets). Prefer TRUE measurement so the
+    value is the real bore size even when the feature is a projected ellipse;
+    fall back to the projected value when the 3D reference can't be resolved."""
+    if prefer_diameter:
+        # holes: prefer the real 3D bore size, fall back to the projected value
+        attempts = [("Diameter", "True"), ("Diameter", "Projected"),
+                    ("Radius", "Projected")]
+    else:
+        # arcs / fillets: keep projected so equal fillets read the same value
+        attempts = [("Radius", "Projected")]
+    for dtype, mtype in attempts:
+        dim = doc.addObject("TechDraw::DrawViewDimension", "Dimension")
+        dim.Type = dtype
+        try:
+            dim.MeasureType = mtype
+        except Exception:
+            pass
+        dim.References2D = [(view, [subname])]
+        page.addView(dim)
+        try:
+            dim.recompute()
+        except Exception:
+            pass
+        if _dim_ok(dim, arc=True):
+            _place(dim, dtype, idx)
+            dim.recompute()
+            return dim
+        _safe_remove(doc, dim)
+    return None
+
+
+# --------------------------------------------------------------------------- #
+#  gather work from the current selection
+# --------------------------------------------------------------------------- #
+def _visible_signatures(view):
+    """Signatures (curve-type, rounded scaled-length) of the view's visible edges."""
+    sigs = set()
+    try:
+        scale = _scale(view)
+        for e in view.getVisibleEdges():
+            try:
+                sigs.add((e.Curve.TypeId, round(e.Length, 1)))
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return sigs
+
+
+def _all_edges_jobs(view):
+    """(view, kind, 'EdgeN') for every visible dimensionable edge on the view,
+    with duplicate sizes removed: only ONE dimension per unique (kind, length).
+    This keeps equal edges / repeated fillets from being dimensioned many times."""
+    jobs = []
+    vis = _visible_signatures(view)
+    scale = _scale(view)
+    seen = set()
+    i = 0
+    while i < 5000:
+        try:
+            edge = view.getEdgeByIndex(i)
+        except Exception:
+            break
+        if edge is None:
+            break
+        kind = _edge_kind(edge)
+        if kind:
+            try:
+                length = edge.Length
+            except Exception:
+                length = None
+            # visibility filter (scaled length signature)
+            vis_sig = ((edge.Curve.TypeId, round(length * scale, 1))
+                       if length is not None else None)
+            visible = (not vis) or (vis_sig in vis)
+            # de-dup by the measured value: equal lengths / equal radii collapse
+            dedup = _value_sig(edge, kind)
+            if visible and (dedup is None or dedup not in seen):
+                if dedup is not None:
+                    seen.add(dedup)
+                jobs.append((view, kind, "Edge%d" % i))
+        i += 1
+        if len(jobs) >= _MAX_AUTO:
+            break
+    return jobs
+
+
+def _collect_jobs(doc):
+    """Selecting ANY item that belongs to a view (an edge, a vertex, or the view
+    itself) dimensions that ENTIRE view. Every view touched by the selection is
+    fully auto-dimensioned (all visible edges -> diameters / radii / lengths)."""
+    views = []
+    for so in Gui.Selection.getSelectionEx(doc.Name):
+        view = so.Object
+        if _is_viewpart(view) and view not in views:
+            views.append(view)
+
+    jobs = []
+    for view in views:
+        jobs.extend(_all_edges_jobs(view))
+    return jobs
+
+
+# --------------------------------------------------------------------------- #
+#  main
+# --------------------------------------------------------------------------- #
+def main():
+    doc = App.ActiveDocument
+    if not doc:
+        QtWidgets.QMessageBox.warning(None, "Show Dimensions", "No active document.")
+        return
+
+    jobs = _collect_jobs(doc)
+    if not jobs:
+        QtWidgets.QMessageBox.information(
+            None, "Show Dimensions",
+            "Nothing selected.\n\n"
+            "Click any part of a drawing view (an edge, a corner, or the view "
+            "itself) and run this again — the whole view will be dimensioned:\n"
+            "  • every circle  → diameter / radius\n"
+            "  • every straight edge  → length")
+        return
+
+    App.setActiveTransaction("Show dimensions")
+    made = 0
+    dropped = 0
+    touched = []
+    placed = set()          # authoritative de-dup: (view, dim type, shown value)
+    for i, (view, kind, subname) in enumerate(jobs):
+        page = _page_of(view)
+        if page is None:
+            continue
+        try:
+            if kind == "line":
+                dim = _make_dim(doc, page, view, "Distance", [subname], i)
+            else:  # circle_full -> diameter, circle_arc -> radius
+                dim = _make_circular(doc, page, view, subname, i,
+                                     prefer_diameter=(kind == "circle_full"))
+        except Exception as exc:
+            App.Console.PrintWarning(
+                "ANVIL CAD ShowDimensions: skipped %s on %s (%s)\n"
+                % (kind, getattr(view, "Name", "?"), exc))
+            continue
+        if dim is None:
+            continue
+        # collapse anything that would display the SAME type + value
+        try:
+            val = round(float(dim.getRawValue()), 2)
+        except Exception:
+            val = None
+        key = (getattr(view, "Name", ""), dim.Type, val)
+        if val is not None and key in placed:
+            _safe_remove(doc, dim)
+            dropped += 1
+            continue
+        placed.add(key)
+        made += 1
+        if view not in touched:
+            touched.append(view)
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+    for view in touched:
+        try:
+            view.requestPaint()
+        except Exception:
+            pass
+    App.closeActiveTransaction()
+    Gui.Selection.clearSelection()
+
+    App.Console.PrintMessage(
+        "ANVIL CAD: placed %d dimension(s), skipped %d duplicate(s)\n"
+        % (made, dropped))
+    if made == 0:
+        QtWidgets.QMessageBox.information(
+            None, "Show Dimensions",
+            "No dimensions could be created for the current selection.")
+
+
+main()

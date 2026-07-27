@@ -1,0 +1,149 @@
+# -*- coding: utf-8 -*-
+# FitViewToPage.FCMacro — ANVIL CAD
+#
+# HOW TO USE:
+#   Select one or more TechDraw views on the sheet (a Projection Group,
+#   a single part view, an exploded pictorial, a Symbol view — anything
+#   with a Scale/X/Y) and run this macro. Each selected view is rescaled
+#   to fit within ~85% of its page and re-centred on the page.
+#
+#   Fixes views that were inserted off-sheet or oversized (e.g. an
+#   Exploded View at 1:1 real-world scale spilling out past the page
+#   border) without you having to manually guess a Scale/X/Y.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+from PySide import QtWidgets
+
+MARGIN_FRACTION = 0.85  # target view occupies at most this much of the page
+
+_VIEW_TYPES = frozenset({
+    'TechDraw::DrawViewPart',
+    'TechDraw::DrawProjGroup',
+    'TechDraw::DrawProjGroupItem',
+    'TechDraw::DrawViewSymbol',
+})
+
+
+def get_page_for(view):
+    doc = view.Document
+    for p in doc.Objects:
+        if p.TypeId != 'TechDraw::DrawPage':
+            continue
+        try:
+            if view in p.Views:
+                return p
+        except Exception:
+            pass
+    for inobj in getattr(view, 'InList', []):
+        if inobj.TypeId == 'TechDraw::DrawPage':
+            return inobj
+        for p2 in getattr(inobj, 'InList', []):
+            if p2.TypeId == 'TechDraw::DrawPage':
+                return p2
+    return None
+
+
+def view_extent(view):
+    """Half-width/half-height (mm) of the view's ACTUAL drawn geometry, at
+    whatever scale it is currently drawn — read straight from TechDraw's
+    projected 2D output so it works for exploded/pictorial views too."""
+    candidates = []
+    shp = getattr(view, 'Shape', None)
+    if shp is not None and getattr(shp, 'BoundBox', None) is not None:
+        try:
+            if shp.BoundBox.isValid():
+                candidates.append(shp.BoundBox)
+        except Exception:
+            pass
+    for meth in ('getVisibleEdges', 'getHiddenEdges'):
+        fn = getattr(view, meth, None)
+        if fn is None:
+            continue
+        try:
+            edges = fn()
+            if edges:
+                import Part
+                comp = Part.makeCompound(edges)
+                if comp.BoundBox.isValid():
+                    candidates.append(comp.BoundBox)
+        except Exception:
+            pass
+    if not candidates:
+        return None
+    bb = candidates[0]
+    for extra in candidates[1:]:
+        bb.add(extra)
+    hw = max(abs(bb.XMin), abs(bb.XMax))
+    hh = max(abs(bb.YMin), abs(bb.YMax))
+    return hw, hh
+
+
+def main():
+    sel = [o for o in Gui.Selection.getSelection() if o.TypeId in _VIEW_TYPES]
+    if not sel:
+        QtWidgets.QMessageBox.information(
+            None, 'Select a View',
+            'Select the oversized / off-sheet view (or its Projection\n'
+            'Group) on the drawing sheet first, then run this macro.')
+        return
+
+    fixed, skipped = 0, []
+    for view in sel:
+        page = get_page_for(view)
+        if page is None:
+            skipped.append(view.Label + ' (no page found)')
+            continue
+        ext = view_extent(view)
+        if ext is None:
+            skipped.append(view.Label + ' (no drawn geometry yet)')
+            continue
+        hw, hh = ext
+        if hw < 0.01 and hh < 0.01:
+            skipped.append(view.Label + ' (degenerate extent)')
+            continue
+
+        try:
+            cur_scale = float(view.Scale)
+            if cur_scale <= 0:
+                cur_scale = 1.0
+        except Exception:
+            cur_scale = 1.0
+
+        # Scale-independent real half-extent, so we can solve for a NEW scale.
+        real_hw = hw / cur_scale
+        real_hh = hh / cur_scale
+
+        target_w = float(page.PageWidth) * MARGIN_FRACTION / 2.0
+        target_h = float(page.PageHeight) * MARGIN_FRACTION / 2.0
+        candidates = []
+        if real_hw > 0.01:
+            candidates.append(target_w / real_hw)
+        if real_hh > 0.01:
+            candidates.append(target_h / real_hh)
+        new_scale = max(0.01, min(candidates) if candidates else cur_scale)
+
+        try:
+            view.Scale = new_scale
+        except Exception as e:
+            App.Console.PrintWarning('FitViewToPage: could not set Scale on {}: {}\n'.format(view.Label, e))
+        try:
+            view.X = float(page.PageWidth) / 2.0
+            view.Y = float(page.PageHeight) / 2.0
+        except Exception as e:
+            App.Console.PrintWarning('FitViewToPage: could not set X/Y on {}: {}\n'.format(view.Label, e))
+        fixed += 1
+
+    if fixed:
+        try:
+            App.ActiveDocument.recompute()
+        except Exception:
+            pass
+
+    msg = '{} view(s) rescaled and centred on their page.'.format(fixed)
+    if skipped:
+        msg += '\n\nSkipped:\n' + '\n'.join(skipped[:20])
+    QtWidgets.QMessageBox.information(None, 'Fit View To Page — ANVIL CAD', msg)
+
+
+main()

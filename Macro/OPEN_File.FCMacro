@@ -21,6 +21,31 @@ if not wd or not os.path.isdir(wd):
 # -------------------------------------------------
 version_re = re.compile(r"(.+)\.(\d{3})\.FCStd$", re.IGNORECASE)
 
+# Filter dropdown entries: (label, extensions tuple | None for the FCStd scan).
+# A specific filter lists real files on disk with that extension so a crowded
+# workspace can be narrowed to just DWG / STEP / PRT / ... files.
+FILTERS = [
+    ("All types (*.FCStd)",       None),
+    ("PRT files (*.prt)",         (".prt",)),
+    ("ASM files (*.asm)",         (".asm",)),
+    ("DWG files (*.dwg)",         (".dwg",)),
+    ("STEP files (*.stp *.step)", (".stp", ".step")),
+    ("STL files (*.stl)",         (".stl",)),
+    ("DXF files (*.dxf)",         (".dxf",)),
+]
+
+
+def scan_real(directory, exts):
+    """Real (non-FCStd) CAD files on disk whose extension matches the filter."""
+    out = []
+    for f in os.listdir(directory):
+        low = f.lower()
+        if low.endswith('.fcstd'):
+            continue
+        if low.endswith(tuple(exts)):
+            out.append((f, os.path.join(directory, f), f, 0))
+    return sorted(out, key=lambda x: x[0].lower())
+
 
 def scan_files(directory, show_all=False):
     versioned = []
@@ -175,9 +200,11 @@ class OpenFileDialog(QtWidgets.QDialog):
         self.fname_edit.setReadOnly(True)
         self.fname_edit.setStyleSheet("padding:4px;")
         form.addRow("File name:", self.fname_edit)
-        type_combo = QtWidgets.QComboBox()
-        type_combo.addItem("All types (*.FCStd)")
-        form.addRow("Type:", type_combo)
+        self.type_combo = QtWidgets.QComboBox()
+        for label, _exts in FILTERS:
+            self.type_combo.addItem(label)
+        self.type_combo.currentIndexChanged.connect(self._refresh)
+        form.addRow("Filter:", self.type_combo)
         root.addLayout(form)
 
         # ── footer: checkboxes + buttons ──────────────────────
@@ -222,7 +249,12 @@ class OpenFileDialog(QtWidgets.QDialog):
 
     def _refresh(self):
         search = self.search_box.text().lower()
-        files = scan_files(self.working_dir, self.chk_all.isChecked())
+        idx = self.type_combo.currentIndex() if hasattr(self, "type_combo") else 0
+        exts = FILTERS[idx][1] if 0 <= idx < len(FILTERS) else None
+        if exts is None:
+            files = scan_files(self.working_dir, self.chk_all.isChecked())
+        else:
+            files = scan_real(self.working_dir, exts)
         if search:
             files = [f for f in files if search in f[0].lower()]
         self._files = files
@@ -325,5 +357,12 @@ dlg = OpenFileDialog(wd)
 if dlg.exec():
     fp = dlg.selected_file
     if fp:
-        FreeCAD.openDocument(fp)
-        FreeCAD.Console.PrintMessage(f"Opened: {os.path.basename(fp)}\n")
+        try:
+            FreeCAD.openDocument(fp)
+            FreeCAD.Console.PrintMessage(f"Opened: {os.path.basename(fp)}\n")
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                None, "Open",
+                "Could not open:\n{}\n\n{}\n\n"
+                "(DWG / STEP / DXF need their importer to be available.)".format(
+                    os.path.basename(fp), exc))

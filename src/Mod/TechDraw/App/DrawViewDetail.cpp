@@ -100,10 +100,16 @@ DrawViewDetail::DrawViewDetail() : m_waitingForDetail(false), m_saveDvp(nullptr)
 
 DrawViewDetail::~DrawViewDetail()
 {
-    //don't delete this object while it still has dependent tasks running
-    if (m_detailFuture.isRunning()) {
-        Base::Console().message("%s is waiting for detail cut to finish\n", Label.getValue());
-        m_detailFuture.waitForFinished();
+    // don't delete this object while it still has dependent tasks running.
+    // ANVIL CAD: guard the wait - waitForFinished() rethrows a worker exception,
+    // and throwing from a (noexcept) destructor calls std::terminate.
+    try {
+        if (m_detailFuture.isRunning()) {
+            Base::Console().message("%s is waiting for detail cut to finish\n", Label.getValue());
+            m_detailFuture.waitForFinished();
+        }
+    }
+    catch (...) {
     }
 }
 

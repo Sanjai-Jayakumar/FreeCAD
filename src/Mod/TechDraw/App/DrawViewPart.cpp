@@ -154,14 +154,23 @@ DrawViewPart::DrawViewPart()
 
 DrawViewPart::~DrawViewPart()
 {
-    //don't delete this object while it still has dependent threads running
-    if (m_hlrFuture.isRunning()) {
-        Base::Console().message("%s is waiting for HLR to finish\n", Label.getValue());
-        m_hlrFuture.waitForFinished();
+    // Don't delete this object while it still has dependent threads running.
+    // ANVIL CAD: waitForFinished() RETHROWS any exception the worker stored (e.g.
+    // an OCC Standard_Failure / bad_alloc thrown by projectShape on a huge or
+    // invalid assembly). A destructor is implicitly noexcept, so that rethrow
+    // would call std::terminate() -> hard crash. Guard both waits.
+    try {
+        if (m_hlrFuture.isRunning()) {
+            Base::Console().message("%s is waiting for HLR to finish\n", Label.getValue());
+            m_hlrFuture.waitForFinished();
+        }
+        if (m_faceFuture.isRunning()) {
+            Base::Console().message("%s is waiting for face finding to finish\n", Label.getValue());
+            m_faceFuture.waitForFinished();
+        }
     }
-    if (m_faceFuture.isRunning()) {
-        Base::Console().message("%s is waiting for face finding to finish\n", Label.getValue());
-        m_faceFuture.waitForFinished();
+    catch (...) {
+        // nothing useful we can do during destruction; just don't terminate
     }
     removeAllReferencesFromGeom();
 }
@@ -297,10 +306,11 @@ void DrawViewPart::partExec(TopoDS_Shape& shape)
 
     //we need to keep using the old geometryObject until the new one is fully populated
     m_tempGeometryObject = makeGeometryForShape(shape);
-    if (CoarseView.getValue() ||
+    if (CoarseView.getValue() || m_forcedCoarse ||
         !DU::isGuiUp()) {
-        onHlrFinished();//poly algo and console mode do not run in separate thread, so we need to invoke
-                        //the post hlr processing manually
+        onHlrFinished();//poly algo (incl. the ANVIL CAD forced-coarse large-model
+                        //fallback) and console mode do not run in a separate thread,
+                        //so we invoke the post-HLR processing manually
     }
 }
 
@@ -349,10 +359,39 @@ TechDraw::GeometryObjectPtr DrawViewPart::buildGeometryObject(TopoDS_Shape& shap
     go->setIsoCount(IsoCount.getValue());
     go->isPerspective(Perspective.getValue());
     go->setFocus(Focus.getValue());
-    go->usePolygonHLR(CoarseView.getValue());
     go->setScrubCount(ScrubCount.getValue());
 
-    if (CoarseView.getValue()) {
+    // ANVIL CAD: large-assembly guard. Exact OCC HLR (HLRBRep_Algo) is superlinear
+    // in face/edge count and exhausts memory / hangs on assembly-sized compounds.
+    // Above a (preference-configurable) face count, fall back to the fast polygon
+    // HLR so a big drawing degrades gracefully instead of crashing the HLR worker.
+    m_forcedCoarse = false;
+    if (!CoarseView.getValue()) {
+        int maxExactFaces =
+            Preferences::getPreferenceGroup("HLR")->GetInt("MaxExactFaces", 6000);
+        if (maxExactFaces > 0) {
+            int faceCount = 0;
+            for (TopExp_Explorer ex(shape, TopAbs_FACE); ex.More(); ex.Next()) {
+                if (++faceCount > maxExactFaces) {
+                    break;   // no need to keep counting a huge model
+                }
+            }
+            if (faceCount > maxExactFaces) {
+                Base::Console().warning(
+                    "%s: model exceeds the exact-HLR face limit (%d) - using fast "
+                    "(coarse) hidden line removal to avoid running out of memory. "
+                    "Raise the HLR/MaxExactFaces preference or enable CoarseView to "
+                    "change this.\n",
+                    Label.getValue(), maxExactFaces);
+                m_forcedCoarse = true;
+            }
+        }
+    }
+
+    const bool usingCoarse = CoarseView.getValue() || m_forcedCoarse;
+    go->usePolygonHLR(usingCoarse);
+
+    if (usingCoarse) {
         //the polygon approximation HLR process runs quickly, so doesn't need to be in a
         //separate thread
         go->projectShapeWithPolygonAlgo(shape, viewAxis);
@@ -413,13 +452,16 @@ void DrawViewPart::onHlrFinished()
     //start face finding in a separate thread.  We don't find faces when using the polygon
     //HLR method.
 
-    if (handleFaces() && !DU::isGuiUp()) {
+    // ANVIL CAD: when we fell back to coarse HLR for a large model, skip face
+    // finding too - the default finder is O(n^2) in edge count and would hang on
+    // an assembly-sized result (and polygon HLR does not yield reliable faces).
+    if (handleFaces() && !m_forcedCoarse && !DU::isGuiUp()) {
         extractFaces();
         onFacesFinished();
         return;
     }
 
-    if (handleFaces() && !CoarseView.getValue()) {
+    if (handleFaces() && !CoarseView.getValue() && !m_forcedCoarse) {
         try {
             //note that &m_faceWatcher in the third parameter is not strictly required, but using the
             //4 parameter signature instead of the 3 parameter signature prevents clazy warning:

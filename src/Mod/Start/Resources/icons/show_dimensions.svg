@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- circle being dimensioned -->
+  <circle cx="22" cy="24" r="12" fill="none" stroke="#2b2b2b" stroke-width="2.5"/>
+  <!-- diameter line across the circle -->
+  <line x1="13.5" y1="15.5" x2="30.5" y2="32.5" stroke="#c0392b" stroke-width="2.5"/>
+  <!-- horizontal dimension line with arrows -->
+  <line x1="8" y1="52" x2="56" y2="52" stroke="#2b2b2b" stroke-width="2.5"/>
+  <polygon points="8,52 16,48 16,56" fill="#2b2b2b"/>
+  <polygon points="56,52 48,48 48,56" fill="#2b2b2b"/>
+  <!-- extension lines -->
+  <line x1="8" y1="44" x2="8" y2="58" stroke="#2b2b2b" stroke-width="2"/>
+  <line x1="56" y1="44" x2="56" y2="58" stroke="#2b2b2b" stroke-width="2"/>
+</svg>
