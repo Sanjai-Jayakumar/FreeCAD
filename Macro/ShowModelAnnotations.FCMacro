@@ -1,0 +1,564 @@
+# -*- coding: utf-8 -*-
+# ShowModelAnnotations.FCMacro - ANVIL CAD
+#
+# Creo-style "Show Model Annotations". Scans the model that feeds a TechDraw
+# drawing and lists, in a tabbed dialog, the annotations that CAN be pulled onto
+# the sheet - you tick the ones you want (preview-first) and click OK to place:
+#
+#   * Dimensions      - design dimensions from the part's sketches
+#                       (hole diameters are matched to circles on the target view;
+#                        other dims are listed for manual placement)
+#   * Parameters      - model parameters (MP_* : PartNumber, Material, Rev, ...)
+#                       placed as a PARAMETERS note block
+#   * Holes / Threads - callouts built from the PartDesign Hole features
+#   * Datums / Axes   - turns on hole/arc centre marks on the target view
+#
+# NOTE: FreeCAD's 3D model does not store GD&T / surface-finish, so those are not
+# listed here - add them on the drawing with the Feature Control Frame / Datum
+# Feature Symbol tools.
+
+import math
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide2 import QtCore, QtGui, QtWidgets
+except ImportError:
+    from PySide import QtCore, QtGui
+    QtWidgets = QtGui
+
+
+# --------------------------------------------------------------------------- #
+#  model / view discovery
+# --------------------------------------------------------------------------- #
+def _resolve_link(obj):
+    seen = set()
+    while obj is not None and id(obj) not in seen:
+        seen.add(id(obj))
+        linked = getattr(obj, "LinkedObject", None)
+        if linked is not None and linked is not obj:
+            obj = linked
+        else:
+            break
+    return obj
+
+
+def _active_page(doc):
+    for obj in Gui.Selection.getSelection():
+        if obj.TypeId == "TechDraw::DrawPage":
+            return obj
+        for p in getattr(obj, "InListRecursive", []) or []:
+            if p.TypeId == "TechDraw::DrawPage":
+                return p
+    try:
+        av = Gui.ActiveDocument.ActiveView
+        if av and hasattr(av, "getPage"):
+            p = av.getPage()
+            if p:
+                return p
+    except Exception:
+        pass
+    pages = [o for o in doc.Objects if o.TypeId == "TechDraw::DrawPage"]
+    return pages[0] if pages else None
+
+
+def _page_views(page):
+    out = []
+    for v in getattr(page, "Views", []) or []:
+        if v.isDerivedFrom("TechDraw::DrawViewPart"):
+            out.append(v)
+        if v.isDerivedFrom("TechDraw::DrawProjGroup"):
+            for c in getattr(v, "Views", []) or []:
+                if c.isDerivedFrom("TechDraw::DrawViewPart"):
+                    out.append(c)
+    return out
+
+
+def _source_model(views):
+    for v in views:
+        for src in getattr(v, "Source", []) or []:
+            m = _resolve_link(src)
+            if m is not None:
+                return m
+    return None
+
+
+def _selected_view(views):
+    """The DrawViewPart the user currently has selected (view object, or the owner
+    of a selected edge/vertex, or a tree selection). None if nothing relevant."""
+    vset = {v.Name: v for v in views}
+    try:
+        for s in Gui.Selection.getSelectionEx():
+            o = s.Object
+            if o is not None and o.Name in vset:
+                return vset[o.Name]
+    except Exception:
+        pass
+    for o in Gui.Selection.getSelection():
+        if getattr(o, "Name", None) in vset:
+            return vset[o.Name]
+    return None
+
+
+def _scale(view):
+    try:
+        return float(view.getScale()) or 1.0
+    except Exception:
+        try:
+            return float(view.Scale) or 1.0
+        except Exception:
+            return 1.0
+
+
+def _mm(v):
+    """TechDraw balloon coordinate properties must be Quantities, not plain floats."""
+    return App.Units.Quantity("{} mm".format(float(v)))
+
+
+# --------------------------------------------------------------------------- #
+#  gather annotations from the model
+# --------------------------------------------------------------------------- #
+def gather_parameters(model):
+    """MP_* model parameters (see ModelParameters.FCMacro)."""
+    rows = []
+    if model is None:
+        return rows
+    label_map = {
+        "MP_PartNumber": "Part Number", "MP_Description": "Description",
+        "MP_Revision": "Revision", "MP_Weight": "Weight", "MP_Material": "Material",
+        "MP_Category": "Category", "MP_Type": "Type", "MP_TypeSub": "Sub Type",
+        "MP_BOMType": "BOM Type", "MP_THK": "Thickness", "MP_Aggregate": "Aggregate",
+        "MP_Identification": "Identification",
+    }
+    for p in model.PropertiesList:
+        if p.startswith("MP_"):
+            try:
+                val = getattr(model, p)
+            except Exception:
+                val = ""
+            name = label_map.get(p, p[3:])
+            rows.append(("Parameter", name, u"%s" % (val,)))
+    return rows
+
+
+def gather_dimensions(mdoc):
+    """Design dimensional constraints from the model's sketches."""
+    rows = []
+    if mdoc is None:
+        return rows
+    wanted = {"Distance": "Length", "DistanceX": "Horizontal",
+              "DistanceY": "Vertical", "Radius": "Radius",
+              "Diameter": "Diameter", "Angle": "Angle"}
+    for sk in mdoc.Objects:
+        if not sk.isDerivedFrom("Sketcher::SketchObject"):
+            continue
+        try:
+            cons = sk.Constraints
+        except Exception:
+            continue
+        for i, c in enumerate(cons):
+            ctype = getattr(c, "Type", "")
+            if ctype not in wanted:
+                continue
+            try:
+                val = float(c.Value)
+            except Exception:
+                continue
+            if ctype == "Angle":
+                shown = u"%.1f°" % math.degrees(val)
+                real = math.degrees(val)
+            else:
+                shown = u"%.2f" % val
+                real = val
+            nm = getattr(c, "Name", "") or ("%s%d" % (sk.Name, i))
+            rows.append((wanted[ctype], nm, shown, ctype, real))
+    return rows
+
+
+def _hole_callout(h):
+    """Build a Creo-style hole callout string (ASCII-safe apart from the Ø glyph,
+    which the drawing font renders fine)."""
+    try:
+        threaded = bool(getattr(h, "Threaded", False))
+        thru = str(getattr(h, "DepthType", "")) == "ThroughAll"
+        try:
+            dia = float(h.Diameter)
+        except Exception:
+            dia = 0.0
+        if threaded:
+            size = str(getattr(h, "ThreadSize", "") or "").strip()
+            head = u"%s TAP" % (size if size else u"Ø%.2f" % dia)
+            if dia:
+                head += u"  (Ø%.2f DRILL)" % dia
+        else:
+            head = u"Ø%.2f DRILL" % dia
+        if thru:
+            head += u" THRU"
+        else:
+            try:
+                head += u"  %.1f DP" % float(h.Depth)
+            except Exception:
+                pass
+        return head
+    except Exception:
+        return h.Label
+
+
+def gather_holes(mdoc):
+    """Return (label, callout, drill_diameter) per Hole feature."""
+    rows = []
+    if mdoc is None:
+        return rows
+    for h in mdoc.Objects:
+        if h.TypeId == "PartDesign::Hole":
+            try:
+                dia = float(h.Diameter)
+            except Exception:
+                dia = 0.0
+            rows.append((h.Label, _hole_callout(h), dia))
+    return rows
+
+
+def gather_datums(mdoc):
+    rows = []
+    if mdoc is None:
+        return rows
+    dtypes = ("PartDesign::Line", "PartDesign::Plane", "PartDesign::Point",
+              "PartDesign::CoordinateSystem")
+    for o in mdoc.Objects:
+        if o.TypeId in dtypes:
+            kind = o.TypeId.split("::")[-1]
+            rows.append((kind, o.Label, ""))
+    rows.append(("Axes", "Hole / arc centre marks", "on target view"))
+    return rows
+
+
+# --------------------------------------------------------------------------- #
+#  placement helpers
+# --------------------------------------------------------------------------- #
+def _add_note(doc, page, lines, x, y, size=2.5):
+    ann = doc.addObject("TechDraw::DrawViewAnnotation", "Annotation")
+    try:
+        ann.Text = [u"%s" % s for s in lines]
+    except Exception:
+        ann.Text = [u"\n".join(lines)]
+    try:
+        ann.TextSize = size
+    except Exception:
+        pass
+    page.addView(ann)
+    try:
+        ann.X = float(x)
+        ann.Y = float(y)
+    except Exception:
+        pass
+    return ann
+
+
+def _place_diameter_dim(doc, page, view, real_value, used):
+    """Find a circle on the view whose real diameter ~ real_value and dimension it."""
+    scale = _scale(view)
+    i = 0
+    while i < 4000:
+        try:
+            edge = view.getEdgeByIndex(i)
+        except Exception:
+            break
+        if edge is None:
+            break
+        try:
+            if edge.Curve.TypeId in ("Part::GeomCircle", "Part::GeomEllipse") and i not in used:
+                r = edge.Curve.Radius if hasattr(edge.Curve, "Radius") else edge.Curve.MajorRadius
+                real_dia = 2.0 * (r / scale)
+                if abs(real_dia - real_value) <= max(0.02 * real_value, 0.05):
+                    dim = doc.addObject("TechDraw::DrawViewDimension", "Dimension")
+                    dim.Type = "Diameter"
+                    try:
+                        dim.MeasureType = "True"
+                    except Exception:
+                        pass
+                    dim.References2D = [(view, ["Edge%d" % i])]
+                    page.addView(dim)
+                    dim.recompute()
+                    used.add(i)
+                    return True
+        except Exception:
+            pass
+        i += 1
+    return False
+
+
+def _place_hole_callout(doc, page, view, callout, drill_dia):
+    """Place ONE leader callout for this hole type. All circles of the matching
+    diameter are counted (deduped by centre, so a hole's concentric tap/drill/thread
+    circles count once); the leader points at the first hole and the text is prefixed
+    'NX' when there are N of them. Returns N (0 if nothing matched)."""
+    scale = _scale(view)
+    centres = []
+    i = 0
+    while i < 4000:
+        try:
+            edge = view.getEdgeByIndex(i)
+        except Exception:
+            break
+        if edge is None:
+            break
+        try:
+            if edge.Curve.TypeId == "Part::GeomCircle":
+                real_dia = 2.0 * edge.Curve.Radius / scale
+                if drill_dia <= 0.0 or abs(real_dia - drill_dia) <= max(0.05 * drill_dia, 0.15):
+                    c = edge.Curve.Center
+                    if all((pc - c).Length > 0.5 for pc in centres):   # skip concentric dupes
+                        centres.append(c)
+        except Exception:
+            pass
+        i += 1
+    if not centres:
+        return 0
+    n = len(centres)
+    first = centres[0]
+    text = (u"%dX %s" % (n, callout)) if n > 1 else callout
+    b = doc.addObject("TechDraw::DrawViewBalloon", "HoleCallout")
+    b.SourceView = view
+    b.Text = text
+    b.OriginX = _mm(first.x)          # arrow tip = hole centre (view-relative)
+    b.OriginY = _mm(first.y)
+    b.X = _mm(first.x + 22.0)         # text sits up-right of the hole
+    b.Y = _mm(first.y + 14.0)
+    for shape in ("None", 1, "Rectangle"):
+        try:
+            b.BubbleShape = shape
+            break
+        except Exception:
+            continue
+    try:
+        b.ViewObject.FontSize = _mm(2.5)
+        b.ViewObject.LineWidth = 0.4
+    except Exception:
+        pass
+    page.addView(b)
+    return n
+
+
+# --------------------------------------------------------------------------- #
+#  dialog
+# --------------------------------------------------------------------------- #
+class AnnDialog(QtWidgets.QDialog):
+    def __init__(self, data, views, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Show Model Annotations")
+        self.setMinimumSize(560, 460)
+        self.data = data
+        self.tables = {}
+        lay = QtWidgets.QVBoxLayout(self)
+
+        top = QtWidgets.QHBoxLayout()
+        top.addWidget(QtWidgets.QLabel("Show on view:"))
+        self.cbView = QtWidgets.QComboBox()
+        for v in views:
+            self.cbView.addItem(v.Label, v.Name)
+        top.addWidget(self.cbView, 1)
+        lay.addLayout(top)
+
+        self.tabs = QtWidgets.QTabWidget()
+        for key, title in (("dims", "Dimensions"), ("params", "Parameters"),
+                           ("holes", "Holes / Threads"), ("datums", "Datums / Axes")):
+            tbl = QtWidgets.QTableWidget(0, 3)
+            tbl.setHorizontalHeaderLabels(["Show", "Type", "Name / Value"])
+            tbl.horizontalHeader().setStretchLastSection(True)
+            tbl.setColumnWidth(0, 46)
+            tbl.setColumnWidth(1, 110)
+            tbl.verticalHeader().setVisible(False)
+            tbl.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+            rows = data.get(key, [])
+            tbl.setRowCount(len(rows))
+            for r, row in enumerate(rows):
+                chk = QtWidgets.QTableWidgetItem()
+                chk.setFlags(QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsEnabled)
+                chk.setCheckState(QtCore.Qt.Unchecked)
+                tbl.setItem(r, 0, chk)
+                tbl.setItem(r, 1, QtWidgets.QTableWidgetItem(u"%s" % row[0]))
+                nm = row[1] if len(row) > 1 else ""
+                vv = row[2] if len(row) > 2 else ""
+                label = (u"%s   =   %s" % (nm, vv)) if vv else u"%s" % nm
+                tbl.setItem(r, 2, QtWidgets.QTableWidgetItem(label))
+            self.tables[key] = tbl
+            wrap = QtWidgets.QWidget()
+            wl = QtWidgets.QVBoxLayout(wrap)
+            wl.setContentsMargins(0, 0, 0, 0)
+            btns = QtWidgets.QHBoxLayout()
+            ball = QtWidgets.QPushButton("Select all")
+            bnone = QtWidgets.QPushButton("Clear")
+            ball.clicked.connect(lambda _c=False, t=tbl: self._set_all(t, True))
+            bnone.clicked.connect(lambda _c=False, t=tbl: self._set_all(t, False))
+            btns.addWidget(ball)
+            btns.addWidget(bnone)
+            btns.addStretch(1)
+            wl.addLayout(btns)
+            wl.addWidget(tbl)
+            self.tabs.addTab(wrap, "%s (%d)" % (title, len(rows)))
+        lay.addWidget(self.tabs)
+
+        bb = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def _set_all(self, tbl, state):
+        st = QtCore.Qt.Checked if state else QtCore.Qt.Unchecked
+        for r in range(tbl.rowCount()):
+            tbl.item(r, 0).setCheckState(st)
+
+    def checked(self, key):
+        tbl = self.tables[key]
+        out = []
+        for r in range(tbl.rowCount()):
+            if tbl.item(r, 0).checkState() == QtCore.Qt.Checked:
+                out.append(r)
+        return out
+
+    def target_view_name(self):
+        return self.cbView.currentData()
+
+
+# --------------------------------------------------------------------------- #
+#  main
+# --------------------------------------------------------------------------- #
+def main():
+    doc = App.ActiveDocument
+    if not doc:
+        QtWidgets.QMessageBox.warning(None, "Model Annotations", "No active document.")
+        return
+    page = _active_page(doc)
+    if not page:
+        QtWidgets.QMessageBox.warning(None, "Model Annotations",
+                                      "No TechDraw page found. Open a drawing page first.")
+        return
+    views = _page_views(page)
+    if not views:
+        QtWidgets.QMessageBox.warning(None, "Model Annotations",
+                                      "The page has no part views.")
+        return
+    model = _source_model(views)
+    mdoc = model.Document if model is not None else doc
+
+    dims = gather_dimensions(mdoc)
+    holes = gather_holes(mdoc)
+    data = {
+        "dims": [(d[0], d[1], d[2]) for d in dims],
+        "params": gather_parameters(model),
+        "holes": [("Hole", h[0], h[1]) for h in holes],
+        "datums": gather_datums(mdoc),
+    }
+
+    dlg = AnnDialog(data, views, Gui.getMainWindow())
+    # default the target view to the one the user has selected
+    sel_view = _selected_view(views)
+    if sel_view is not None:
+        try:
+            dlg.cbView.setCurrentIndex(views.index(sel_view))
+        except Exception:
+            pass
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return
+
+    vname = dlg.target_view_name()
+    view = doc.getObject(vname) or (mdoc.getObject(vname) if mdoc else None)
+    if view is None:
+        view = views[0]
+
+    App.setActiveTransaction("Show model annotations")
+    placed, skipped = [], []
+    try:
+        pw = float(page.Template.Width) if getattr(page, "Template", None) else 297.0
+        ph = float(page.Template.Height) if getattr(page, "Template", None) else 210.0
+    except Exception:
+        pw, ph = 297.0, 210.0
+
+    # ---- Parameters -> one PARAMETERS note block --------------------------- #
+    ci = dlg.checked("params")
+    if ci:
+        lines = ["PARAMETERS"]
+        for r in ci:
+            t, nm, vv = data["params"][r]
+            lines.append(u"%-14s : %s" % (nm, vv))
+        _add_note(doc, page, lines, pw * 0.05, ph * 0.9, size=2.2)
+        placed.append("%d parameter(s) as a note block" % len(ci))
+
+    # ---- Holes / Threads -> leader callouts on the matching hole ----------- #
+    ci = dlg.checked("holes")
+    if ci:
+        # clear any callouts a previous run left, so we never accumulate duplicates
+        for o in list(doc.Objects):
+            if str(getattr(o, "Name", "")).startswith("HoleCallout"):
+                try:
+                    doc.removeObject(o.Name)
+                except Exception:
+                    pass
+        made = 0
+        nomatch = 0
+        y = ph * 0.6
+        for r in ci:
+            label, callout, dia = holes[r]
+            n = _place_hole_callout(doc, page, view, callout, dia)
+            if n:
+                made += 1
+            else:
+                _add_note(doc, page, [callout], pw * 0.72, y, size=2.5)
+                y -= ph * 0.06
+                nomatch += 1
+        if made:
+            placed.append("%d hole callout(s) on %s (one per hole type, NX-counted)"
+                          % (made, view.Label))
+        if nomatch:
+            skipped.append("%d hole type(s) had no matching circle on %s "
+                           "(placed as a note instead)" % (nomatch, view.Label))
+
+    # ---- Dimensions -> match holes to circles on the view ------------------ #
+    ci = dlg.checked("dims")
+    if ci:
+        used = set()
+        made = 0
+        manual = 0
+        for r in ci:
+            dtype = dims[r][3]
+            real = dims[r][4]
+            if dtype in ("Diameter", "Radius"):
+                if _place_diameter_dim(doc, page, view, real if dtype == "Diameter" else 2.0 * real, used):
+                    made += 1
+                else:
+                    manual += 1
+            else:
+                manual += 1
+        if made:
+            placed.append("%d hole/diameter dimension(s) on %s" % (made, view.Label))
+        if manual:
+            skipped.append("%d dimension(s) had no matching circle on %s "
+                           "(place these with Show Dimensions)" % (manual, view.Label))
+
+    # ---- Datums / Axes -> turn on centre marks ----------------------------- #
+    ci = dlg.checked("datums")
+    if ci:
+        try:
+            vp = view.ViewObject
+            vp.ArcCenterMarks = True
+            placed.append("hole/arc centre marks on %s" % view.Label)
+        except Exception:
+            skipped.append("could not enable centre marks on %s" % view.Label)
+
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+    App.setActiveTransaction("")
+    App.closeActiveTransaction()
+
+    msg = "Placed:\n  - " + ("\n  - ".join(placed) if placed else "(nothing)")
+    if skipped:
+        msg += "\n\nNot placed:\n  - " + "\n  - ".join(skipped)
+    App.Console.PrintMessage("ANVIL CAD Show Model Annotations: " + msg.replace("\n", " ") + "\n")
+    QtWidgets.QMessageBox.information(None, "Show Model Annotations", msg)
+
+
+main()

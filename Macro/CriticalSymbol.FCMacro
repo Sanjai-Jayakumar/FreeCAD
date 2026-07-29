@@ -1,0 +1,288 @@
+# -*- coding: utf-8 -*-
+# CriticalSymbol.FCMacro - ANVIL CAD
+#
+# Classification-of-Characteristics symbols for dimensions. Tags a dimension
+# with the EXACT symbol used in the BNC title-block legend (no letters):
+#   Critical / Key Instruction  = filled circle
+#   Major / (None) Minor        = half-filled circle
+#   Applies to Upper Limit      = filled circle with a bar at the bottom
+#   Applies to Lower Limit      = filled circle with a bar at the top
+#   Safety / Regulation         = open (unfilled) triangle
+#   Appearance Item             = open circle
+# (Geometry taken from data/Mod/TechDraw/Templates/*_BNC_Template.svg group g2-1.)
+#
+# HOW TO USE:
+#   1. Open a TechDraw page.
+#   2. Select the DIMENSION you want to tag (click it once).
+#   3. Run this macro, pick the classification, OK.
+#   4. The symbol drops next to the dimension and moves with the view.
+#      Drag it to sit exactly beside the value.
+#   (If no dimension is selected it drops as a free, draggable symbol.)
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide import QtCore, QtGui
+    QtWidgets = QtGui
+except ImportError:
+    from PySide2 import QtCore, QtGui, QtWidgets
+
+# Symbol size scale (DrawViewSymbol.Scale, ScaleType=Custom). Lower = smaller.
+SYMBOL_SCALE = 0.35
+
+# ── classification table: (menu label, shape key) ────────────────────────
+CLASSES = [
+    ("Critical / Key Instruction", "critical"),
+    ("Major",                      "major"),
+    ("Applies to Upper Limit",     "upper"),
+    ("Applies to Lower Limit",     "lower"),
+    ("Safety / Regulation",        "safety"),
+    ("Appearance Item",            "appearance"),
+]
+
+
+def build_symbol_svg(key):
+    """Return (svg, width_mm, height_mm) for the given classification symbol.
+    Shapes mirror the BNC title-block legend (slightly tall ellipse, ry>rx)."""
+    W, H = 15.0, 16.0
+    cx, cy, rx, ry = 7.5, 8.0, 5.0, 6.0
+    lw, barw = 0.6, 0.9
+    K = "#000000"
+    b = []
+
+    def ell(fill):
+        return ('<ellipse cx="%.2f" cy="%.2f" rx="%.2f" ry="%.2f" fill="%s" '
+                'stroke="%s" stroke-width="%.2f"/>' % (cx, cy, rx, ry, fill, K, lw))
+
+    def bar(y):
+        return ('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="%s" '
+                'stroke-width="%.2f"/>' % (cx - rx - 1.2, y, cx + rx + 1.2, y, K, barw))
+
+    if key == "critical":
+        b.append(ell(K))
+    elif key == "major":
+        # left half filled + full outline
+        b.append('<path d="M %.2f %.2f A %.2f %.2f 0 0 0 %.2f %.2f Z" fill="%s"/>'
+                 % (cx, cy - ry, rx, ry, cx, cy + ry, K))
+        b.append(ell("none"))
+    elif key == "upper":
+        b.append(ell(K)); b.append(bar(cy + ry))
+    elif key == "lower":
+        b.append(ell(K)); b.append(bar(cy - ry))
+    elif key == "safety":
+        b.append('<polygon points="%.2f,%.2f %.2f,%.2f %.2f,%.2f" fill="none" '
+                 'stroke="%s" stroke-width="%.2f"/>'
+                 % (cx - rx - 0.5, cy - ry + 1.5, cx + rx + 0.5, cy - ry + 1.5,
+                    cx, cy + ry, K, lw))
+    elif key == "appearance":
+        b.append(ell("none"))
+
+    mm_w, mm_h = 5.6, 6.0
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" version="1.1" '
+           'width="%.2fmm" height="%.2fmm" viewBox="0 0 %.2f %.2f">%s</svg>'
+           % (mm_w, mm_h, W, H, "".join(b)))
+    return svg, mm_w, mm_h
+
+
+def _selected_dim():
+    """Return (dimObj, parentDrawViewPart) if a dimension is selected."""
+    try:
+        for obj in Gui.Selection.getSelection():
+            if obj.TypeId == "TechDraw::DrawViewDimension":
+                view = None
+                try:
+                    view = obj.getViewPart()
+                except Exception:
+                    view = None
+                if view is None:
+                    try:
+                        refs = obj.References2D
+                        if refs:
+                            view = refs[0][0]
+                    except Exception:
+                        view = None
+                return obj, view
+    except Exception:
+        pass
+    return None, None
+
+
+def _selected_attach():
+    """Fallback: a vertex/edge selected on a view -> (view, point in view frame)."""
+    try:
+        for s in Gui.Selection.getSelectionEx():
+            obj = s.Object
+            if obj.TypeId not in ("TechDraw::DrawViewPart",
+                                  "TechDraw::DrawProjGroupItem"):
+                continue
+            for sub in (s.SubElementNames or []):
+                try:
+                    if sub.startswith("Vertex"):
+                        ts = obj.getVertexBySelection(sub)
+                        return obj, ts.Vertexes[0].Point
+                    if sub.startswith("Edge"):
+                        ts = obj.getEdgeBySelection(sub)
+                        vs = ts.Vertexes
+                        if len(vs) >= 2:
+                            return obj, (vs[0].Point + vs[-1].Point) * 0.5
+                        if vs:
+                            return obj, vs[0].Point
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return None, None
+
+
+def _active_page(doc):
+    for obj in Gui.Selection.getSelection():
+        if obj.TypeId == "TechDraw::DrawPage":
+            return obj
+        for p in getattr(obj, "InList", []):
+            if p.TypeId == "TechDraw::DrawPage":
+                return p
+    try:
+        av = Gui.ActiveDocument.ActiveView
+        if av and hasattr(av, "getPage"):
+            p = av.getPage()
+            if p:
+                return p
+    except Exception:
+        pass
+    pages = [o for o in doc.Objects if o.TypeId == "TechDraw::DrawPage"]
+    return pages[0] if pages else None
+
+
+class ClassDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Critical / Classification Symbol")
+        self.setMinimumWidth(340)
+        lay = QtWidgets.QVBoxLayout(self)
+        form = QtWidgets.QFormLayout()
+
+        self.cbClass = QtWidgets.QComboBox()
+        for label, key in CLASSES:
+            self.cbClass.addItem(label)
+        form.addRow("Classification:", self.cbClass)
+
+        self.spRot = QtWidgets.QDoubleSpinBox()
+        self.spRot.setRange(-360.0, 360.0)
+        self.spRot.setSingleStep(15.0)
+        self.spRot.setSuffix(" °")
+        self.spRot.setValue(0.0)
+        form.addRow("Rotation:", self.spRot)
+
+        lay.addLayout(form)
+        hint = QtWidgets.QLabel(
+            "Select a dimension first to tag it. Symbols match the title-block "
+            "'Classification of Characteristics' legend.")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+
+        bb = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def values(self):
+        idx = self.cbClass.currentIndex()
+        label, key = CLASSES[idx]
+        return label, key, self.spRot.value()
+
+
+def main():
+    doc = App.ActiveDocument
+    if not doc:
+        QtWidgets.QMessageBox.warning(None, "Critical Symbol", "No active document.")
+        return
+    page = _active_page(doc)
+    if not page:
+        QtWidgets.QMessageBox.warning(
+            None, "Critical Symbol", "No TechDraw page found. Open a page first.")
+        return
+
+    dlg = ClassDialog(Gui.getMainWindow())
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return
+    label, key, rot = dlg.values()
+
+    svg, w, h = build_symbol_svg(key)
+
+    dim, dimView = _selected_dim()
+    attach_view, attach_pt = (None, None)
+    if dim is None:
+        attach_view, attach_pt = _selected_attach()
+
+    App.setActiveTransaction("Insert classification symbol")
+    view = doc.addObject("TechDraw::DrawViewSymbol", "ClassSymbol")
+    view.Symbol = svg
+    view.Label = "Class_" + key
+    try:
+        view.Rotation = float(rot)
+    except Exception:
+        pass
+    # ANVIL CAD: keep the classification symbol small via a custom scale
+    try:
+        view.ScaleType = u"Custom"
+        view.Scale = float(SYMBOL_SCALE)
+    except Exception:
+        pass
+
+    if dim is not None and dimView is not None:
+        try:
+            view.Owner = dimView
+        except Exception:
+            pass
+        try:
+            view.X = float(dim.X) + (w * SYMBOL_SCALE / 2.0) + 2.0
+            view.Y = float(dim.Y)
+        except Exception:
+            view.X, view.Y = 80.0, 60.0
+        page.addView(view)
+        note = ("'{}' symbol placed next to dimension '{}'. It moves with the "
+                "view - drag it to sit exactly beside the value."
+                .format(label, dim.Label))
+    elif attach_view is not None and attach_pt is not None:
+        try:
+            view.Owner = attach_view
+        except Exception:
+            pass
+        view.X = float(attach_pt.x) + (w * SYMBOL_SCALE / 2.0) + 2.0
+        view.Y = float(attach_pt.y)
+        page.addView(view)
+        note = ("'{}' symbol attached at the selected point on '{}'. Drag to "
+                "fine-tune.".format(label, attach_view.Label))
+    else:
+        try:
+            view.X = float(page.PageWidth) * 0.30
+            view.Y = float(page.PageHeight) * 0.30
+        except Exception:
+            view.X, view.Y = 80.0, 60.0
+        page.addView(view)
+        note = ("'{}' placed as a free symbol. TIP: select a DIMENSION first, "
+                "then run this tool to drop it right next to that dimension."
+                .format(label))
+
+    try:
+        doc.recompute([view, page])
+    except Exception:
+        doc.recompute()
+    App.closeActiveTransaction()
+
+    try:
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(doc.Name, view.Name)
+    except Exception:
+        pass
+    App.Console.PrintMessage(
+        "ANVIL CAD: inserted classification symbol '{}'\n".format(label))
+    try:
+        QtWidgets.QMessageBox.information(None, "Classification Symbol", note)
+    except Exception:
+        pass
+
+
+main()
