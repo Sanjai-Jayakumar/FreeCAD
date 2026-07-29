@@ -8,6 +8,6 @@
   <!-- PDF text -->
   <text x="9" y="18.2" font-family="Arial" font-weight="bold" font-size="4.5" fill="#ffffff" text-anchor="middle">PDF</text>
   <!-- Down arrow -->
-  <line x1="20" y1="9" x2="20" y2="19" stroke="#1a7acc" stroke-width="2" stroke-linecap="round"/>
-  <polyline points="17,16.5 20,20 23,16.5" fill="none" stroke="#1a7acc" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+  <line x1="20" y1="9" x2="20" y2="19" stroke="#17a3a3" stroke-width="2" stroke-linecap="round"/>
+  <polyline points="17,16.5 20,20 23,16.5" fill="none" stroke="#17a3a3" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
 </svg>

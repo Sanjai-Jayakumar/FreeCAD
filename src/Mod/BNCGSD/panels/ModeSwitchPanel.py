@@ -253,6 +253,26 @@ class ModeSwitchPanel(QtWidgets.QDockWidget):
 # ---------------------------------------------------------------------------
 
 def _load_icon(cmd_name: str, pixmap_src: str, fallback_color: str) -> QtGui.QIcon:
+    # 0) BNC recolored (green-theme) override — a static SVG staged by command
+    #    or pixmap name under BNCGSD/icons/recolored/. Loaded once here (no timer)
+    #    so compiled/core icons (e.g. Surface_*) match the theme.
+    try:
+        _rdir = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                             "icons", "recolored")
+        _keys = [cmd_name]
+        if pixmap_src:
+            _keys.append(os.path.splitext(os.path.basename(pixmap_src))[0])
+        for _key in _keys:
+            if not _key:
+                continue
+            _p = os.path.join(_rdir, _key + ".svg")
+            if os.path.isfile(_p):
+                _ic = QtGui.QIcon(_p)
+                if not _ic.isNull():
+                    return _ic
+    except Exception:
+        pass
+
     # 1) Live QAction icon — already resolved by FreeCAD
     try:
         cmd_obj = Gui.Command.get(cmd_name)

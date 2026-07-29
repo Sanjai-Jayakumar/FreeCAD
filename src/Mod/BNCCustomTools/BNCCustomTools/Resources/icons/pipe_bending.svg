@@ -14,13 +14,13 @@
 
   <defs>
     <linearGradient id="protBg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#FFE066"/>
-      <stop offset="100%" stop-color="#FFCC00"/>
+      <stop offset="0%"   stop-color="#ffe066"/>
+      <stop offset="100%" stop-color="#f39c12"/>
     </linearGradient>
     <linearGradient id="pipeBody" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%"   stop-color="#7AB0EE"/>
-      <stop offset="55%"  stop-color="#3A7ED2"/>
-      <stop offset="100%" stop-color="#0F3F8F"/>
+      <stop offset="0%"   stop-color="#4cbcbc"/>
+      <stop offset="55%"  stop-color="#088f8f"/>
+      <stop offset="100%" stop-color="#056b6b"/>
     </linearGradient>
   </defs>
 
@@ -28,13 +28,13 @@
   <!-- Filled semicircle body -->
   <path d="M 1,19 A 11,11 0 0,1 23,19 L 1,19 Z"
         fill="url(#protBg)"
-        stroke="#8A6800" stroke-width="1.0"
+        stroke="#c17d0c" stroke-width="1.0"
         stroke-linejoin="round"/>
 
   <!-- Inner cutout makes it look like a real protractor ring -->
   <path d="M 5,19 A 7,7 0 0,1 19,19 L 5,19 Z"
         fill="#FFFFFF"
-        stroke="#8A6800" stroke-width="0.7"/>
+        stroke="#c17d0c" stroke-width="0.7"/>
 
   <!-- Tick marks around the outer arc (cardinal + 30° intervals) -->
   <!-- 0° (right) -->
@@ -61,16 +61,16 @@
 
   <!-- Highlighted angle wedge (darker amber, upper-left quadrant 90°-180°) -->
   <path d="M 12,19 L 1,19 A 11,11 0 0,1 12,8 Z"
-        fill="#F39C12" opacity="0.35"/>
+        fill="#f39c12" opacity="0.35"/>
 
   <!-- ════════ PIPE (L-bend, lies on protractor) ════════ -->
   <!-- Horizontal leg outer shadow -->
   <line x1="0" y1="19" x2="12" y2="19"
-        stroke="#08254E" stroke-width="6"
+        stroke="#044a4a" stroke-width="6"
         stroke-linecap="butt"/>
   <!-- Vertical leg outer shadow -->
   <line x1="12" y1="19" x2="12" y2="2"
-        stroke="#08254E" stroke-width="6"
+        stroke="#044a4a" stroke-width="6"
         stroke-linecap="butt"/>
 
   <!-- Horizontal leg body -->
@@ -84,15 +84,15 @@
 
   <!-- Pipe highlight stripes -->
   <line x1="0" y1="17.5" x2="12" y2="17.5"
-        stroke="#C8E0F5" stroke-width="0.7" opacity="0.85"/>
+        stroke="#4cbcbc" stroke-width="0.7" opacity="0.85"/>
   <line x1="10.5" y1="2" x2="10.5" y2="17.5"
-        stroke="#C8E0F5" stroke-width="0.7" opacity="0.85"/>
+        stroke="#4cbcbc" stroke-width="0.7" opacity="0.85"/>
 
   <!-- Pipe end caps (tube openings) -->
   <ellipse cx="0" cy="19" rx="0.7" ry="2.2"
-           fill="#08254E"/>
+           fill="#044a4a"/>
   <ellipse cx="12" cy="2" rx="2.2" ry="0.7"
-           fill="#08254E"/>
+           fill="#044a4a"/>
 
   <!-- Pivot dot at bend center -->
   <circle cx="12" cy="19" r="1.3"

@@ -483,14 +483,20 @@ QMenuBar::item {
 }
 
 QMenuBar::item:selected {
-  background-color: transparent;
   border-style: none;
-  background-color: @AccentBackgroundColor;
+  /* BNC: green gradient hover (was blue @AccentBackgroundColor) */
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                    stop:0 #22b8b0, stop:1 #067a75);
+  color: #ffffff;
+  border-radius: 3px;
 }
 
 QMenuBar::item:pressed {
   border-style: none;
-  background-color: @AccentBackgroundColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                    stop:0 #17a3a3, stop:1 #045858);
+  color: #ffffff;
+  border-radius: 3px;
 }
 
 /* QMenu ------------------------------------------------------------------
@@ -521,11 +527,13 @@ QMenu::item {
 }
 
 QMenu::item:selected {
-  background-color: @AccentBackgroundColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22b8b0, stop:1 #067a75);
+  color: #ffffff;
 }
 
 QMenu::item:pressed {
-  background-color: @AccentBackgroundColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22b8b0, stop:1 #067a75);
+  color: #ffffff;
 }
 
 QMenu::icon {
@@ -1221,7 +1229,8 @@ QPushButton:checked:selected {
 }
 
 QPushButton:hover {
-  background-color: @GeneralBackgroundHoverColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(240,253,253,0.92), stop:0.45 rgba(216,245,245,0.60), stop:1 rgba(191,231,231,0.40));
+  border: 1px solid rgba(150,210,210,0.75);
 }
 
 QAbstractButton[flat="true"]:hover {
@@ -1263,8 +1272,9 @@ QToolBar QToolButton {
 }
 
 QDialog QToolButton:hover {
-  background-color: @GeneralBackgroundHoverColor;
-  /* border: 1px solid @AccentColor;*/}
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(240,253,253,0.92), stop:0.45 rgba(216,245,245,0.60), stop:1 rgba(191,231,231,0.40));
+  border: 1px solid rgba(150,210,210,0.75);
+}
 QToolButton:disabled {
   /* padding: 2px; */
   /* background-color: @GeneralDisabledBackgroundColor; */
@@ -1283,8 +1293,8 @@ QToolButton:checked:disabled {
 }
 
 QToolButton:checked:hover {
-  background-color: @GeneralBackgroundHoverColor;
-  border: 1px solid @AccentColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(240,253,253,0.92), stop:0.45 rgba(216,245,245,0.60), stop:1 rgba(191,231,231,0.40));
+  border: 1px solid rgba(150,210,210,0.75);
 }
 
 QToolButton:checked:pressed {
@@ -1297,7 +1307,8 @@ QToolButton:checked:selected {
 }
 
 QToolButton:hover {
-  background-color: @GeneralBackgroundHoverColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(240,253,253,0.92), stop:0.45 rgba(216,245,245,0.60), stop:1 rgba(191,231,231,0.40));
+  border: 1px solid rgba(150,210,210,0.75);
 }
 
 /*
@@ -1306,11 +1317,11 @@ QToolButton:hover {
  * toolbar buttons.
  */
 QToolBar QToolButton:hover {
-    border: 1px solid @ButtonBorderColor;
+    border: 1px solid rgba(150,210,210,0.75);
 }
 
 QToolButton:pressed {
-  background-color: @GeneralBackgroundHoverColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(214,244,244,0.85), stop:1 rgba(168,214,214,0.55));
 }
 
 /*
@@ -1343,12 +1354,12 @@ QToolButton::menu-button:hover {
 }
 
 QToolButton::menu-button:pressed {
-  background-color: @GeneralBackgroundHoverColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(214,244,244,0.85), stop:1 rgba(168,214,214,0.55));
 }
 
 QToolButton::menu-button:checked:hover {
-  border: 1px solid @GeneralBackgroundHoverColor;
-  background-color: @GeneralBackgroundHoverColor;
+  border: 1px solid rgba(150,210,210,0.75);
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(240,253,253,0.92), stop:0.45 rgba(216,245,245,0.60), stop:1 rgba(191,231,231,0.40));
 }
 
 QToolButton::menu-indicator {
@@ -1423,7 +1434,8 @@ QComboBox:editable {
 
 
 QComboBox QAbstractItemView:selected {
-  background-color: @GeneralBackgroundHoverColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22b8b0, stop:1 #067a75);
+  color: #ffffff;
 }
 
 QComboBox QAbstractItemView:alternate {
@@ -1464,7 +1476,8 @@ QComboBox::item:alternate {
 /* Color of the selected list item. */
 QComboBox::item:selected {
   /* border: 1px solid @GeneralBorderColor; */
-  background-color: @GeneralBackgroundHoverColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22b8b0, stop:1 #067a75);
+  color: #ffffff;
 }
 
 QComboBox::item:checked {
@@ -1639,7 +1652,8 @@ QSint--ActionGroup QToolButton#filterButton QListWidget {
 }
 
 QSint--ActionGroup QFrame[class="content"] QToolButton:hover{
-  background-color: @GeneralBackgroundHoverColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(240,253,253,0.92), stop:0.45 rgba(216,245,245,0.60), stop:1 rgba(191,231,231,0.40));
+  border: 1px solid rgba(150,210,210,0.75);
 }
 
 QSint--ActionGroup QFrame[class="content"] QToolButton:focus {
@@ -1659,7 +1673,7 @@ QSint--ActionGroup QFrame[class="content"] QToolButton:disabled:checked {
 }
 
 QSint--ActionGroup QFrame[class="content"] QToolButton:pressed {
-  background-color: @GeneralBackgroundHoverColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(214,244,244,0.85), stop:1 rgba(168,214,214,0.55));
 }
 
 QFrame[class="panel"] QPushButton {
@@ -2234,7 +2248,7 @@ QColumnView {
   /* gridline-color: @GeneralBorderColor; */
   show-decoration-selected: 1;
   alternate-background-color: @GeneralAlternateBackgroundColor;
-  selection-background-color: @AccentBackgroundColor;
+  selection-background-color: #0f8f89;
 }
 
 QListView {
@@ -2242,12 +2256,12 @@ QListView {
   border: 1px solid @GeneralBorderColor;
   show-decoration-selected: 1;
   alternate-background-color: @GeneralAlternateBackgroundColor;
-  selection-background-color: @AccentBackgroundColor;
+  selection-background-color: #0f8f89;
 }
 
 QTreeView {
   show-decoration-selected: 1;
-  selection-background-color: @AccentBackgroundColor;
+  selection-background-color: #0f8f89;
   qproperty-indentation: 12;
 }
 
@@ -2274,33 +2288,36 @@ QColumnView:focus {}
 QListView::item:pressed,
 QTableView::item:pressed,
 QColumnView::item:pressed {
-  background-color: @GeneralBackgroundHoverColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22b8b0, stop:1 #067a75);
 }
 
 QListView::item:selected,
 QTableView::item:selected,
 QTreeView::item:selected,
 QColumnView::item:selected {
-  background-color: @AccentBackgroundColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22b8b0, stop:1 #067a75);
+  color: #ffffff;
 }
 
 QTableView::item:hover,
 QColumnView::item:hover,
 QListView::item:hover {
-  background-color: @AccentHoverColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22b8b0, stop:1 #067a75);
+  color: #ffffff;
 }
 
 /* QTreeView::item:!selected:hover, */
 QListView::item:!selected:hover,
 QTableView::item:!selected:hover,
 QColumnView::item:!selected:hover {
-  background-color: @AccentHoverColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22b8b0, stop:1 #067a75);
+  color: #ffffff;
 }
 
 QTreeView::item:!selected:hover{
   outline: 0;
-  color:@TextForegroundColor;
-  background-color: @AccentHoverColor;
+  color: #ffffff;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22b8b0, stop:1 #067a75);
 }
 
 /* QTreeView::item,
@@ -2333,7 +2350,8 @@ QHeaderView::section {
 }
 
 QHeaderView::section:hover {
-  background-color: @GeneralBackgroundHoverColor;
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22b8b0, stop:1 #067a75);
+  color: #ffffff;
 }
 
 QHeaderView::section::horizontal {
@@ -2655,6 +2673,14 @@ QWidget#thumbnailWidget[state="pressed"] {
  #WbTabBar #WbTabBarMore {
   padding-right: 12px;
  }
+
+/* BNC: green gradient hover on the workbench selector tabs */
+#WbTabBar QTabBar::tab:hover {
+  background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                    stop:0 #22b8b0, stop:1 #067a75);
+  color: #ffffff;
+  border-radius: 4px;
+}
 
 QPushButton[objectName="buttonIFCPropertiesDelete"] {
   min-width: 100px;

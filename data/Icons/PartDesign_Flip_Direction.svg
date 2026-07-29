@@ -34,27 +34,27 @@
       <stop
          id="stop918"
          offset="0.73363429"
-         style="stop-color:#4A8FE5;stop-opacity:1;" />
+         style="stop-color:#088f8f;stop-opacity:1;" />
     </linearGradient>
     <linearGradient
        id="linearGradient3895">
       <stop
          id="stop913"
          offset="0"
-         style="stop-color:#4A8FE5;stop-opacity:1;" />
+         style="stop-color:#088f8f;stop-opacity:1;" />
       <stop
          id="stop915"
          offset="1"
-         style="stop-color:#1F66CC;stop-opacity:1;" />
+         style="stop-color:#056b6b;stop-opacity:1;" />
     </linearGradient>
     <linearGradient
        id="linearGradient4191">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop4193" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:0;"
+         style="stop-color:#088f8f;stop-opacity:0;"
          offset="1"
          id="stop4195" />
     </linearGradient>
@@ -111,7 +111,7 @@
       <stop
          id="stop2701"
          offset="1"
-         style="stop-color:#1F66CC" />
+         style="stop-color:#056b6b" />
     </linearGradient>
     <linearGradient
        id="linearGradient2679"
@@ -546,11 +546,11 @@
     <linearGradient
        id="linearGradient3895-6">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop3897-7" />
       <stop
-         style="stop-color:#1F66CC;stop-opacity:1;"
+         style="stop-color:#056b6b;stop-opacity:1;"
          offset="1"
          id="stop3899-5" />
     </linearGradient>
@@ -571,7 +571,7 @@
          offset="0.24604966"
          id="stop3897-1" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop3899-2" />
     </linearGradient>
@@ -591,11 +591,11 @@
      inkscape:grid-bbox="true"
      inkscape:document-units="px"
      inkscape:grid-points="true"
-     fill="#4A8FE5"
+     fill="#088f8f"
      showguides="false"
      inkscape:guide-bbox="true"
      guidetolerance="1px"
-     stroke="#4A8FE5"
+     stroke="#088f8f"
      inkscape:window-width="1920"
      inkscape:window-height="1009"
      inkscape:window-x="-8"
@@ -607,7 +607,7 @@
      inkscape:snap-bbox="true"
      inkscape:snap-nodes="true"
      inkscape:pagecheckerboard="0"
-     inkscape:deskcolor="#4A8FE5">
+     inkscape:deskcolor="#088f8f">
     <sodipodi:guide
        orientation="horizontal"
        position="38.996647"
@@ -705,7 +705,7 @@
        originy="0"
        spacingx="16"
        spacingy="16"
-       color="#4A8FE5"
+       color="#088f8f"
        empcolor="#F39C12"
        opacity="0.15"
        empopacity="0.38039216"
@@ -808,7 +808,7 @@
          sodipodi:nodetypes="cccccccc"
          id="path3343-2"
          d="M 18.53006,21 25,21 25,-3 35,-3 35,21 41.480619,21 30,41.278892 z"
-         style="fill:none;stroke:#4A8FE5;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none"
+         style="fill:none;stroke:#088f8f;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none"
          inkscape:connector-curvature="0" />
     </g>
     <g

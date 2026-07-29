@@ -27,11 +27,11 @@
        inkscape:collect="always"
        id="linearGradient4062">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop4064" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop4066" />
     </linearGradient>
@@ -39,11 +39,11 @@
        inkscape:collect="always"
        id="linearGradient4054">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop4056" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop4058" />
     </linearGradient>
@@ -74,11 +74,11 @@
     <linearGradient
        id="linearGradient3669">
       <stop
-         style="stop-color:#1F66CC;stop-opacity:1;"
+         style="stop-color:#056b6b;stop-opacity:1;"
          offset="0"
          id="stop3671" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop3673" />
     </linearGradient>
@@ -450,11 +450,11 @@
     <linearGradient
        id="linearGradient3669-2">
       <stop
-         style="stop-color:#1F66CC;stop-opacity:1;"
+         style="stop-color:#056b6b;stop-opacity:1;"
          offset="0"
          id="stop3671-7" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop3673-5" />
     </linearGradient>
@@ -488,11 +488,11 @@
     <linearGradient
        id="linearGradient3669-22">
       <stop
-         style="stop-color:#1F66CC;stop-opacity:1;"
+         style="stop-color:#056b6b;stop-opacity:1;"
          offset="0"
          id="stop3671-8" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop3673-4" />
     </linearGradient>
@@ -516,11 +516,11 @@
     <linearGradient
        id="linearGradient3669-0">
       <stop
-         style="stop-color:#1F66CC;stop-opacity:1;"
+         style="stop-color:#056b6b;stop-opacity:1;"
          offset="0"
          id="stop3671-9" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop3673-1" />
     </linearGradient>
@@ -607,7 +607,7 @@
   <sodipodi:namedview
      id="base"
      pagecolor="#FFFFFF"
-     bordercolor="#4A8FE5"
+     bordercolor="#088f8f"
      borderopacity="1.0"
      inkscape:pageopacity="0.0"
      inkscape:pageshadow="2"
@@ -625,7 +625,7 @@
      inkscape:window-maximized="1"
      inkscape:showpageshadow="2"
      inkscape:pagecheckerboard="0"
-     inkscape:deskcolor="#4A8FE5">
+     inkscape:deskcolor="#088f8f">
     <inkscape:grid
        type="xygrid"
        id="grid3181"
@@ -709,13 +709,13 @@
          inkscape:connector-curvature="0"
          sodipodi:nodetypes="ccccc" />
       <path
-         style="font-size:54.21519089px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;color:#222222;fill:none;stroke:#4A8FE5;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none;stroke-dashoffset:0;marker:none;visibility:visible;display:inline;overflow:visible;enable-background:accumulate;font-family:Arial;-inkscape-font-specification:Arial"
+         style="font-size:54.21519089px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;color:#222222;fill:none;stroke:#088f8f;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none;stroke-dashoffset:0;marker:none;visibility:visible;display:inline;overflow:visible;enable-background:accumulate;font-family:Arial;-inkscape-font-specification:Arial"
          d="m 6.7684048,24.999282 0,10.181145 32.4777042,6.300608 0.0317,-10.147163 z"
          id="path3805"
          inkscape:connector-curvature="0"
          sodipodi:nodetypes="ccccc" />
       <path
-         style="font-size:54.21519089px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;color:#222222;fill:none;stroke:#4A8FE5;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none;stroke-dashoffset:0;marker:none;visibility:visible;display:inline;overflow:visible;enable-background:accumulate;font-family:Arial;-inkscape-font-specification:Arial"
+         style="font-size:54.21519089px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;color:#222222;fill:none;stroke:#088f8f;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none;stroke-dashoffset:0;marker:none;visibility:visible;display:inline;overflow:visible;enable-background:accumulate;font-family:Arial;-inkscape-font-specification:Arial"
          d="m 44.671399,30.995535 -10e-7,9.374454 35.195641,-16.653139 0.01056,-8.117139 z"
          id="path3807"
          inkscape:connector-curvature="0"

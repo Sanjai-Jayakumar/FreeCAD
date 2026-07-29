@@ -24,11 +24,11 @@
        inkscape:collect="always"
        id="linearGradient3854">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop3856" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop3858" />
     </linearGradient>
@@ -48,11 +48,11 @@
       <stop
          id="stop3837"
          offset="0"
-         style="stop-color:#4A8FE5;stop-opacity:1;" />
+         style="stop-color:#088f8f;stop-opacity:1;" />
       <stop
          id="stop3839"
          offset="1"
-         style="stop-color:#4A8FE5;stop-opacity:1;" />
+         style="stop-color:#088f8f;stop-opacity:1;" />
     </linearGradient>
     <linearGradient
        id="linearGradient3827">
@@ -79,11 +79,11 @@
     <linearGradient
        id="linearGradient3593">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop3595" />
       <stop
-         style="stop-color:#1F66CC;stop-opacity:1;"
+         style="stop-color:#056b6b;stop-opacity:1;"
          offset="1"
          id="stop3597" />
     </linearGradient>
@@ -108,11 +108,11 @@
     <linearGradient
        id="linearGradient3593-0">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop3595-2" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop3597-1" />
     </linearGradient>
@@ -183,7 +183,7 @@
   <sodipodi:namedview
      id="base"
      pagecolor="#FFFFFF"
-     bordercolor="#4A8FE5"
+     bordercolor="#088f8f"
      borderopacity="1.0"
      inkscape:pageopacity="0.0"
      inkscape:pageshadow="2"
@@ -201,7 +201,7 @@
      inkscape:window-maximized="1"
      inkscape:showpageshadow="2"
      inkscape:pagecheckerboard="0"
-     inkscape:deskcolor="#4A8FE5">
+     inkscape:deskcolor="#088f8f">
     <inkscape:grid
        type="xygrid"
        id="grid3039"
@@ -278,7 +278,7 @@
          inkscape:connector-curvature="0"
          sodipodi:nodetypes="cccccc" />
       <path
-         style="fill:none;stroke:#4A8FE5;stroke-width:2.4024775;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+         style="fill:none;stroke:#088f8f;stroke-width:2.4024775;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
          d="m 40.166633,55.472142 0,-12.542193 c 0,-15.528428 9.664169,-23.889889 20.838365,-28.070619 l 10.570186,-4.180732 0.302006,28.070621 z"
          id="path3066-3"
          inkscape:connector-curvature="0"

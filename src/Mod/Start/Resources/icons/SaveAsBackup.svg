@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SaveAsBackup.svg — ANVIL CAD "Save As Backup" (Pack and Go) toolbar icon.
+  24 x 24 native size; artwork enlarged and centered to fill the canvas so it
+  matches the size of the New / Open / Save / Save As icons. Blue folder (same
+  palette as the Save As floppy) with a bold yellow "save-into" down-arrow.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><defs><linearGradient id="bncGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1fb5ac"/><stop offset="1" stop-color="#056b6b"/></linearGradient></defs>
+  <defs>
+    <linearGradient id="bkFolder" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#088f8f"/>
+      <stop offset="100%" stop-color="#056b6b"/>
+    </linearGradient>
+  </defs>
+  <!-- folder (large, centered) -->
+  <path d="M 1.6 3.7
+           L 9.3 3.7
+           L 11.4 6.2
+           L 22.4 6.2
+           L 22.4 20.9
+           L 1.6 20.9 Z"
+        fill="url(#bkFolder)" stroke="#056b6b" stroke-width="1.0"
+        stroke-linejoin="round"/>
+  <!-- down arrow = pack / save into the folder -->
+  <g fill="none" stroke="#f39c12" stroke-width="2.8"
+     stroke-linecap="round" stroke-linejoin="round">
+    <line x1="12.0" y1="9.0" x2="12.0" y2="17.4"/>
+    <polyline points="8.1,13.6 12.0,17.9 15.9,13.6"/>
+  </g>
+</svg>

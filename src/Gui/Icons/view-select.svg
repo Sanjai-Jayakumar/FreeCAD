@@ -37,11 +37,11 @@
       <stop
          id="stop3866"
          offset="0"
-         style="stop-color:#71b2f8;stop-opacity:1;" />
+         style="stop-color:#4cbcbc;stop-opacity:1;" />
       <stop
          id="stop3868"
          offset="1"
-         style="stop-color:#002795;stop-opacity:1;" />
+         style="stop-color:#056b6b;stop-opacity:1;" />
     </linearGradient>
     <inkscape:perspective
        sodipodi:type="inkscape:persp3d"

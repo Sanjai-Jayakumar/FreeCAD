@@ -46,3 +46,14 @@ FreeCAD.MeasureManager.addMeasureType(
     QT_TRANSLATE_NOOP("TaskMeasure", "Center of mass"),
     MeasureCOM,
 )
+
+# ANVIL CAD: Diameter measurement (full circle/cylinder -> diameter, arc -> radius)
+try:
+    from MeasureDiameter import MeasureDiameter
+    FreeCAD.MeasureManager.addMeasureType(
+        "DIAMETER",
+        QT_TRANSLATE_NOOP("TaskMeasure", "Diameter"),
+        MeasureDiameter,
+    )
+except Exception as _e:
+    FreeCAD.Console.PrintError("ANVIL CAD: Diameter measure register failed: {0}\n".format(_e))

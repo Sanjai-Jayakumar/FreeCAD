@@ -40,7 +40,12 @@ def set_workbench_selector_style():
         FreeCAD.Console.PrintError("Error refreshing workbench selector: " + str(e) + "\n")
 
 
-_macro_path = os.path.join(FreeCAD.getHomePath(), "Macro", "Version_Save.FCMacro")
+# The toolbar Save button (Std_Save override) must run the SAME save as Ctrl+S
+# (Save.FCMacro) — the single-file save that exports each part as .prt, exports
+# subassemblies as .asm, and uses clean (non-compounding) version names. The old
+# Version_Save.FCMacro compounded filenames ('432.001.001') and did NOT export
+# parts, so pointing here fixes both when the user clicks the Save button.
+_macro_path = os.path.join(FreeCAD.getHomePath(), "Macro", "Save.FCMacro")
 _open_macro_path = os.path.join(FreeCAD.getHomePath(), "Macro", "OPEN_File.FCMacro")
 
 

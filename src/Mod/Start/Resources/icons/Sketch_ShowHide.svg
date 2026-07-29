@@ -14,20 +14,20 @@
 
   <defs>
     <radialGradient id="vertexFill" cx="0.35" cy="0.35" r="0.85">
-      <stop offset="0%"   stop-color="#FFFAD0"/>
-      <stop offset="55%"  stop-color="#FFCC00"/>
-      <stop offset="100%" stop-color="#8A6800"/>
+      <stop offset="0%"   stop-color="#ffe066"/>
+      <stop offset="55%"  stop-color="#f39c12"/>
+      <stop offset="100%" stop-color="#c17d0c"/>
     </radialGradient>
     <radialGradient id="badgeBg" cx="0.35" cy="0.35" r="0.85">
-      <stop offset="0%"   stop-color="#FFEE99"/>
-      <stop offset="55%"  stop-color="#FFCC00"/>
-      <stop offset="100%" stop-color="#8A6800"/>
+      <stop offset="0%"   stop-color="#ffe066"/>
+      <stop offset="55%"  stop-color="#f39c12"/>
+      <stop offset="100%" stop-color="#c17d0c"/>
     </radialGradient>
   </defs>
 
   <!-- ════════ CONSTRUCTION LINE (dashed, inside profile) ════════ -->
   <line x1="1" y1="17" x2="18" y2="1"
-        stroke="#0A2E60" stroke-width="0.9"
+        stroke="#056b6b" stroke-width="0.9"
         stroke-linecap="round"
         stroke-dasharray="2.4 1.8"
         opacity="0.6"/>
@@ -40,7 +40,7 @@
            L 19,18
            Z"
         fill="#E8F1FA"
-        stroke="#0A2E60" stroke-width="1.8"
+        stroke="#056b6b" stroke-width="1.8"
         stroke-linejoin="round"
         stroke-linecap="round"
         fill-opacity="0.55"/>
@@ -48,19 +48,19 @@
   <!-- ════════ SKETCH VERTICES (yellow filled dots at endpoints) ════════ -->
   <circle cx="1" cy="18" r="1.8"
           fill="url(#vertexFill)"
-          stroke="#0A2E60" stroke-width="0.8"/>
+          stroke="#056b6b" stroke-width="0.8"/>
   <circle cx="1" cy="1" r="1.8"
           fill="url(#vertexFill)"
-          stroke="#0A2E60" stroke-width="0.8"/>
+          stroke="#056b6b" stroke-width="0.8"/>
   <circle cx="13" cy="1" r="1.8"
           fill="url(#vertexFill)"
-          stroke="#0A2E60" stroke-width="0.8"/>
+          stroke="#056b6b" stroke-width="0.8"/>
   <circle cx="19" cy="7" r="1.8"
           fill="url(#vertexFill)"
-          stroke="#0A2E60" stroke-width="0.8"/>
+          stroke="#056b6b" stroke-width="0.8"/>
   <circle cx="19" cy="18" r="1.8"
           fill="url(#vertexFill)"
-          stroke="#0A2E60" stroke-width="0.8"/>
+          stroke="#056b6b" stroke-width="0.8"/>
 
   <!-- ════════ EYE / VISIBILITY BADGE (lower-right corner) ════════ -->
   <g transform="translate(19 19.5)">
@@ -77,8 +77,8 @@
           fill="#FFFFFF"
           stroke="#1a1a1a" stroke-width="0.75"
           stroke-linejoin="round"/>
-    <circle r="1.3" fill="#1F66CC"
-            stroke="#0A2E60" stroke-width="0.4"/>
+    <circle r="1.3" fill="#088f8f"
+            stroke="#056b6b" stroke-width="0.4"/>
     <circle r="0.65" fill="#1a1a1a"/>
     <circle cx="-0.5" cy="-0.5" r="0.35"
             fill="#FFFFFF"/>

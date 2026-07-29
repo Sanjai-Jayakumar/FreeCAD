@@ -83,13 +83,17 @@ function Invoke-Sync {
     }
 
     # New BNC modules (full directories)
-    foreach ($mod in @("BNC_Init", "BNCCustomTools", "BNCGlobal", "BNCMCP", "BNCMoldTools", "BNCGSD")) {
+    foreach ($mod in @("BNC_Init", "BNCCustomTools", "BNCGlobal", "BNCMCP", "BNCMoldTools", "BNCGSD", "BNCClassA")) {
         Sync-Dir (Join-Path $repoRoot "src\Mod\$mod") (Join-Path $Target "Mod\$mod")
     }
 
     # Repo-root Mod directories
     Sync-Dir (Join-Path $repoRoot "Mod\BNCTechDraw")   (Join-Path $Target "Mod\BNCTechDraw")
     Sync-Dir (Join-Path $repoRoot "Mod\BNCPartDesign") (Join-Path $Target "Mod\BNCPartDesign")
+
+    # Anvil Mold workbench (thin UI) + headless core library it shells out to
+    Sync-Dir (Join-Path $repoRoot "Mod\anvil-mold\anvil-mold-wb") (Join-Path $Target "Mod\AnvilMold")
+    Sync-Dir (Join-Path $repoRoot "Mod\anvil-mold\anvil-mold-core\anvil_mold_core") (Join-Path $Target "Mod\AnvilMold\anvil_mold_core")
 
     # BNC_MacroSetup.py
     $macroSetup = Join-Path $repoRoot "src\Mod\BNC_MacroSetup.py"

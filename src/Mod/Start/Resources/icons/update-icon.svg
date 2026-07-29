@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
   <!-- Background circle -->
-  <circle cx="32" cy="32" r="28" fill="#0F62FE" stroke="#0A4AB8" stroke-width="2"/>
+  <circle cx="32" cy="32" r="28" fill="#088f8f" stroke="#088f8f" stroke-width="2"/>
   
   <!-- Download arrow -->
   <g fill="white">

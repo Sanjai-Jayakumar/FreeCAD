@@ -33,11 +33,11 @@
     <linearGradient
        id="linearGradient4165">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop3799" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop3801" />
     </linearGradient>
@@ -45,18 +45,18 @@
        id="linearGradient3789"
        osb:paint="gradient">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop3791" />
       <stop
-         style="stop-color:#1F66CC;stop-opacity:1;"
+         style="stop-color:#056b6b;stop-opacity:1;"
          offset="1"
          id="stop3793" />
     </linearGradient>
     <linearGradient
        id="linearGradient3860">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop3862" />
       <stop
@@ -76,7 +76,7 @@
     <linearGradient
        id="linearGradient3860-6">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop3862-4" />
       <stop
@@ -87,7 +87,7 @@
     <linearGradient
        id="linearGradient3797-3">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1"
+         style="stop-color:#088f8f;stop-opacity:1"
          offset="0"
          id="stop3799-6" />
       <stop
@@ -121,11 +121,11 @@
       <stop
          id="stop4735"
          offset="0"
-         style="stop-color:#1F66CC;stop-opacity:1;" />
+         style="stop-color:#056b6b;stop-opacity:1;" />
       <stop
          id="stop4737"
          offset="1"
-         style="stop-color:#4A8FE5;stop-opacity:1" />
+         style="stop-color:#088f8f;stop-opacity:1" />
     </linearGradient>
     <linearGradient
        gradientTransform="matrix(1,0,0,1.0981138,0.14321474,-55.839871)"
@@ -200,7 +200,7 @@
   <sodipodi:namedview
      id="base"
      pagecolor="#FFFFFF"
-     bordercolor="#4A8FE5"
+     bordercolor="#088f8f"
      borderopacity="1.0"
      inkscape:pageopacity="0.0"
      inkscape:pageshadow="2"

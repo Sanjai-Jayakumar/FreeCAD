@@ -34,6 +34,20 @@ def _is_root_assembly(obj):
     return True
 
 
+def _immediate_parent_assembly(obj):
+    """Return the Assembly::AssemblyObject that directly contains obj (the
+    immediate parent -- a sub-assembly when the part lives inside one), or
+    None if obj is only held by the document root. Prefers a true Group
+    containment match before falling back to any assembly in the InList."""
+    for parent in getattr(obj, 'InList', []):
+        if parent.TypeId == 'Assembly::AssemblyObject' and obj in getattr(parent, 'Group', []):
+            return parent
+    for parent in getattr(obj, 'InList', []):
+        if parent.TypeId == 'Assembly::AssemblyObject':
+            return parent
+    return None
+
+
 def apply_info_to_first_body(doc, name, description):
     """Set Label and Description on the first PartDesign::Body or root
     Assembly::AssemblyObject in the document, whichever comes first."""
@@ -44,7 +58,42 @@ def apply_info_to_first_body(doc, name, description):
                 obj.addProperty('App::PropertyString', 'Description',
                                 'Base', 'Description')
             obj.Description = description
+            if hasattr(obj, 'MP_Description'):
+                obj.MP_Description = description
             break  # only the first matching object
+
+
+def _read_obj_description(obj):
+    """Effective description of a Body/Assembly object, matching the priority
+    the Model Parameters macro uses: plain .Description first, then the
+    MP_Description property (Model Parameters stores the value there)."""
+    if hasattr(obj, "Description") and obj.Description:
+        return obj.Description
+    if hasattr(obj, "MP_Description") and obj.MP_Description:
+        return obj.MP_Description
+    return ""
+
+
+def _effective_description(container_doc):
+    """Description to pre-fill in the Rename dialog. Reads the first
+    Body/Assembly object (where Model Parameters writes MP_Description) before
+    falling back to the document-level Description / Comment, so a description
+    entered via Model Parameters shows up here too."""
+    for obj in container_doc.Objects:
+        if obj.TypeId in ('PartDesign::Body', 'Assembly::AssemblyObject'):
+            d = _read_obj_description(obj)
+            if d:
+                return d
+            break  # only the first matching object
+    # Model Parameters stores MP_Description on the DOCUMENT when it is run
+    # with nothing selected (get_target() falls back to App.ActiveDocument).
+    if hasattr(container_doc, "MP_Description") and container_doc.MP_Description:
+        return container_doc.MP_Description
+    if hasattr(container_doc, "Description") and container_doc.Description:
+        return container_doc.Description
+    if hasattr(container_doc, "Comment") and container_doc.Comment:
+        return container_doc.Comment
+    return ""
 
 
 def main():
@@ -114,9 +163,7 @@ def main():
     if rename_mode == "internal":
         # Internal object -- work with Label and Description property
         base_name = selected_obj.Label
-        current_desc = ""
-        if hasattr(selected_obj, "Description"):
-            current_desc = selected_obj.Description if selected_obj.Description else ""
+        current_desc = _read_obj_description(selected_obj)
         logical_ext = None  # not applicable
         file_saved = True   # parent doc is used for save context
 
@@ -142,9 +189,7 @@ def main():
             base_name = target_doc.Name if target_doc.Name else "Untitled"
             logical_ext = "prt"
 
-        current_desc = ""
-        if hasattr(target_doc, "Description"):
-            current_desc = target_doc.Description if target_doc.Description else ""
+        current_desc = _effective_description(target_doc)
 
     else:  # "document"
         file_saved = bool(doc.FileName)
@@ -169,9 +214,7 @@ def main():
             base_name = doc.Name if doc.Name else "Untitled"
             logical_ext = "prt"
 
-        current_desc = ""
-        if hasattr(doc, "Description"):
-            current_desc = doc.Description if doc.Description else ""
+        current_desc = _effective_description(doc)
 
     # ============================================================
     # CREATE PROFESSIONAL DIALOG
@@ -207,7 +250,13 @@ def main():
         _type_text = "Sub Assembly" if selected_obj.TypeId == 'Assembly::AssemblyObject' else selected_obj.TypeId.split("::")[-1]
         type_label = QtGui.QLabel(_type_text)
         info_layout.addRow("Type:", type_label)
-        asm_file = os.path.basename(str(doc.FileName)) if doc.FileName else doc.Name
+        # Show the immediate containing assembly (the sub-assembly when the part
+        # lives inside one), not just the top-level document file.
+        _parent_asm = _immediate_parent_assembly(selected_obj)
+        if _parent_asm is not None:
+            asm_file = _parent_asm.Label
+        else:
+            asm_file = os.path.basename(str(doc.FileName)) if doc.FileName else doc.Name
         info_layout.addRow("Parent Assembly:", QtGui.QLabel(asm_file))
 
     elif rename_mode == "linked":
@@ -327,6 +376,45 @@ def main():
     # ================================================================
     #   MODE: DOCUMENT / LINKED  (file rename on disk)
     # ================================================================
+
+    # ================================================================
+    #   NAME UNCHANGED  ->  DESCRIPTION-ONLY UPDATE (no file rename)
+    # ================================================================
+    # If the user only edited the description (the name is identical to
+    # the current one) there is nothing to rename on disk. Skip the whole
+    # close / os.rename / XML-patch / strip-Group-prefixes / reopen
+    # sequence -- that sequence is only meant for an actual filename
+    # change and is destructive for assemblies (it rewrites the Group
+    # link values and reopens the document, which was dropping the root
+    # Assembly object out of the model tree). Just update the Description
+    # in place and report an update -- not a rename.
+    if new_name == base_name and file_saved:
+        if hasattr(target_doc, "Description"):
+            target_doc.Description = new_desc
+        apply_info_to_first_body(target_doc, new_name, new_desc)
+        if hasattr(target_doc, "MP_PartNumber"):
+            target_doc.MP_PartNumber = new_name
+        if hasattr(target_doc, "MP_Description"):
+            target_doc.MP_Description = new_desc
+
+        target_doc.recompute()
+        target_doc.purgeTouched()
+        try:
+            target_doc.save()
+        except Exception:
+            pass
+
+        if Gui.ActiveDocument and Gui.ActiveDocument.ActiveView:
+            Gui.ActiveDocument.ActiveView.fitAll()
+
+        QtGui.QMessageBox.information(
+            None,
+            "Details Updated",
+            "Description Updated!\n\n"
+            f"Name: {new_name} (unchanged)\n"
+            f"New Description: {new_desc if new_desc else '-'}"
+        )
+        return
 
     # ============================================================
     # HANDLE UNSAVED FILE -- RENAME FIRST, THEN SAVE

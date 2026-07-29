@@ -134,7 +134,11 @@ def get_file_extension(doc):
 
     for obj in doc.Objects:
         obj_type = obj.TypeId
-        if "Assembly" in obj_type or "Link" in obj_type:
+        # App::Part = the container a STEP-imported assembly uses (same signal
+        # AssemblyStepSplitSave._is_part_container relies on); native assemblies
+        # use Assembly::* / App::Link.
+        if ("Assembly" in obj_type or "Link" in obj_type
+                or obj_type == "App::Part"):
             has_assembly = True
         elif "TechDraw" in obj_type or "Drawing" in obj_type:
             has_drawing = True
@@ -154,6 +158,20 @@ def strip_fcstd_suffix(filename):
     if filename.lower().endswith(".fcstd"):
         return filename[:-6]
     return filename
+
+
+def clean_base_version(name):
+    """Strip any '.FCStd', logical ext (.prt/.asm/.drg) and trailing '.NNN'
+    version suffixes REPEATEDLY so a base name can never compound. e.g.
+    '123.001.001' -> '123', '123.001.asm' -> '123', '123' -> '123'."""
+    s = str(name or "").strip()
+    s = re.sub(r"\.FCStd$", "", s, flags=re.IGNORECASE)
+    prev = None
+    while prev != s:
+        prev = s
+        s = re.sub(r"\.(prt|asm|drg)$", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\.\d{3,}$", "", s)
+    return s.strip()
 
 
 def parse_versioned_name(filename):
@@ -275,7 +293,20 @@ def _compute_body_sig(body):
     lines = []
     # Collect the body itself + all child objects
     children = body.OutListRecursive if hasattr(body, 'OutListRecursive') else []
-    objects = sorted([body] + list(children), key=lambda o: o.Name)
+    # Also include the flat-pattern unfold (a sibling that links to this body) so
+    # creating/changing it triggers a re-export of the .prt.
+    extra = []
+    try:
+        for o in body.Document.Objects:
+            if o is body:
+                continue
+            lbl = getattr(o, "Label", "") or ""
+            nm = getattr(o, "Name", "") or ""
+            if lbl.startswith(body.Label + "_Unfold") or nm.startswith(body.Name + "_Unfold"):
+                extra.append(o)
+    except Exception:
+        pass
+    objects = sorted([body] + list(children) + extra, key=lambda o: o.Name)
     lines.append(f"count:{len(objects)}")
 
     for obj in objects:
@@ -357,9 +388,27 @@ def save_embedded_body(doc, body, workdir):
     temp_doc_name = f"_TempSave_{base_name}"
     temp_doc = None
     try:
-        # Create a temporary document, copy the body into it, save, close
+        # Create a temporary document, copy the body into it, save, close.
         temp_doc = App.newDocument(temp_doc_name)
-        temp_doc.copyObject(body, True)  # True = copy with dependencies
+        # Copy the body AND its flat-pattern unfold(s) — a sibling that links to
+        # this body — TOGETHER, so the exported .prt opens WITH the unfold, like a
+        # standalone sheet-metal file. copyObject([...]) remaps the internal link
+        # to the copied body.
+        _to_copy = [body]
+        try:
+            for _o in doc.Objects:
+                if _o is body:
+                    continue
+                _lbl = getattr(_o, "Label", "") or ""
+                _nm = getattr(_o, "Name", "") or ""
+                if _lbl.startswith(body.Label + "_Unfold") or _nm.startswith(body.Name + "_Unfold"):
+                    _to_copy.append(_o)
+        except Exception:
+            pass
+        if len(_to_copy) > 1:
+            temp_doc.copyObject(_to_copy, True)
+        else:
+            temp_doc.copyObject(body, True)  # True = copy with dependencies
         temp_doc.recompute()
 
         # Use saveCopy instead of saveAs — saveCopy does NOT change the
@@ -727,7 +776,7 @@ def save_version():
                     QtGui.QMessageBox.critical(None, "Save",
                                                f"Name '{part_name}' already exists!")
                     return
-                base_name = part_name
+                base_name = clean_base_version(part_name)
                 if not hasattr(doc, "Description"):
                     doc.addProperty("App::PropertyString", "Description",
                                     "Base", "Part description")
@@ -738,8 +787,8 @@ def save_version():
             next_version = 1
         else:
             parsed_base, _, _ = parse_versioned_name(os.path.basename(doc.FileName))
-            base_name = parsed_base if parsed_base else strip_fcstd_suffix(
-                os.path.basename(doc.FileName))
+            base_name = clean_base_version(parsed_base if parsed_base else
+                                           os.path.basename(doc.FileName))
             extension = get_file_extension(doc)
             next_version = get_highest_version(workdir, base_name, extension) + 1
 
@@ -832,7 +881,7 @@ def save_version():
                     QtGui.QMessageBox.critical(None, "Save",
                                                f"Name '{part_name}' already exists!")
                     return
-                base_name = part_name
+                base_name = clean_base_version(part_name)
                 if not hasattr(doc, "Description"):
                     doc.addProperty("App::PropertyString", "Description",
                                     "Base", "Part description")
@@ -854,8 +903,8 @@ def save_version():
         elif asm_changed:
             # ── Assembly structure changed → increment assembly version ─
             parsed_base, _, _ = parse_versioned_name(os.path.basename(doc.FileName))
-            base_name = parsed_base if parsed_base else strip_fcstd_suffix(
-                os.path.basename(doc.FileName))
+            base_name = clean_base_version(parsed_base if parsed_base else
+                                           os.path.basename(doc.FileName))
             extension = get_file_extension(doc)
             highest = get_highest_version(workdir, base_name, extension)
             next_version = highest + 1

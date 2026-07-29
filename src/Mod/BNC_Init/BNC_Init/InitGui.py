@@ -145,3 +145,10 @@ try:
     import BNC_MacroSetup
 except Exception as e:
     FreeCAD.Console.PrintError("ANVIL CAD initialization error: " + str(e) + "\n")
+
+# Round-trip part sync: editing an exported .prt separately updates the embedded
+# part inside the assembly (and vice-versa). Installs its own document observer.
+try:
+    import BNCPartSync  # noqa: F401  (installs the observer on import)
+except Exception as e:
+    FreeCAD.Console.PrintError("ANVIL CAD part-sync init error: " + str(e) + "\n")

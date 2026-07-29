@@ -63,6 +63,44 @@ def clean_doc_name(doc):
 
 
 # ============================================================
+# DESCRIPTION READERS
+# ============================================================
+
+def _read_obj_description(obj):
+    """Effective description that belongs to *this* object only.
+
+    Reads the object's own ``.Description`` first, then its ``MP_Description``
+    (the create-part dialog stores the value there). Deliberately does NOT fall
+    back to the owning document / parent assembly -- otherwise a part with no
+    description of its own would show the parent assembly's description
+    (e.g. a top-down part showing 'dttc' from the main assembly)."""
+    if hasattr(obj, "Description") and obj.Description:
+        return obj.Description
+    if hasattr(obj, "MP_Description") and obj.MP_Description:
+        return obj.MP_Description
+    return ""
+
+
+def _effective_description(container_doc):
+    """Description for a *document* target: first Body/Assembly object, then the
+    document-level MP_Description (Model Parameters writes it there when nothing
+    is selected), then plain Description / Comment."""
+    for obj in container_doc.Objects:
+        if obj.TypeId in ('PartDesign::Body', 'Assembly::AssemblyObject'):
+            d = _read_obj_description(obj)
+            if d:
+                return d
+            break  # only the first matching object
+    if hasattr(container_doc, "MP_Description") and container_doc.MP_Description:
+        return container_doc.MP_Description
+    if hasattr(container_doc, "Description") and container_doc.Description:
+        return container_doc.Description
+    if hasattr(container_doc, "Comment") and container_doc.Comment:
+        return container_doc.Comment
+    return ""
+
+
+# ============================================================
 # MAIN DIALOG
 # ============================================================
 
@@ -109,7 +147,10 @@ class ModelDialog(QtWidgets.QDialog):
 
         self.revision = QtWidgets.QComboBox()
         self.revision.addItems(["NR", "A", "B", "C", "D"])
-        self.revision.setFixedSize(60, h)
+        # Was 60px -- too narrow for the dark-theme combo padding + dropdown
+        # arrow, which squeezed the selected text (e.g. "B") to nothing so the
+        # field looked blank. Widen to comfortably show the current value.
+        self.revision.setFixedSize(90, h)
 
         self.weight = QtWidgets.QLineEdit()
         self.weight.setFixedSize(small_w, h)
@@ -285,10 +326,13 @@ class ModelDialog(QtWidgets.QDialog):
 
         if isinstance(self.target, App.Document):
             current_name = clean_doc_name(self.target)
+            current_desc = _effective_description(self.target)
         else:
             current_name = self.target.Label
-
-        current_desc = getattr(self.target, "Description", "") or ""
+            # Read only THIS object's own description (own .Description or its
+            # MP_Description) -- never the parent assembly's, so a top-down part
+            # shows its own 'part_1', not the main assembly's 'dttc'.
+            current_desc = _read_obj_description(self.target)
 
         # Always use the current file/object name and description as source of truth
         self.partNumber.setText(current_name)

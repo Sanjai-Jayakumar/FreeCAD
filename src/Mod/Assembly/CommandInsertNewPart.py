@@ -58,6 +58,21 @@ class _BNCPartViewProxy:
     def __setstate__(self, state): pass
 
 
+def _strip_version(label):
+    """Strip the versioning/extension suffixes the naming convention appends
+    (`.NNN`, `.asm`/`.prt`/`.drg`, `.FCStd`) so we never compound versions.
+    e.g. '555.001.003' -> '555', '555.001.asm' -> '555'. Repeats until clean."""
+    import re as _re
+    s = (label or "").strip()
+    s = _re.sub(r"\.FCStd$", "", s, flags=_re.I)
+    prev = None
+    while prev != s:
+        prev = s
+        s = _re.sub(r"\.(asm|prt|drg)$", "", s, flags=_re.I)
+        s = _re.sub(r"\.\d{3}$", "", s)
+    return s or "Assembly"
+
+
 def _save_asm_doc_to_work_dir(doc):
     """Save *doc* to the configured Working Directory without showing a file-path dialog.
 
@@ -84,7 +99,9 @@ def _save_asm_doc_to_work_dir(doc):
     if not work_dir or not _os.path.isdir(work_dir):
         return bool(Gui.getDocument(doc).saveAs())
 
-    base_name = (doc.Label or "Assembly").strip()
+    # Version the FILE, but keep the object/doc LABEL clean (no version) so the
+    # tree/tab never shows compounding numbers like '555.001.003'.
+    base_name = _strip_version(doc.Label or "Assembly")
     _name_pat = _re.compile(
         rf"^{_re.escape(base_name)}\.(\d{{3}})\.asm(?:\.FCStd)?$",
         _re.IGNORECASE,
@@ -101,6 +118,12 @@ def _save_asm_doc_to_work_dir(doc):
 
     try:
         doc.saveAs(full_path)
+        # saveAs rewrites the label to the versioned filename stem — reset it to
+        # the clean base so the tab/tree shows '555', not '555.001.asm'.
+        try:
+            doc.Label = base_name
+        except Exception:
+            pass
         return True
     except Exception as exc:
         QtWidgets.QMessageBox.critical(
@@ -574,6 +597,66 @@ class CommandInsertNewAssembly:
         return UtilsAssembly.isAssemblyCommandActive()
 
     def Activated(self):
+        # SINGLE-FILE (Creo) subassembly: create a nested Assembly::AssemblyObject
+        # IN THE SAME DOCUMENT under the active assembly and activate it, so the
+        # next Create Part lands inside it — one tab, fully native. Separate .asm
+        # files are produced by the split-on-save fan-out on save.
+        parent = UtilsAssembly.activeAssembly()
+        if parent is None:
+            try:
+                parent = UtilsAssembly.activePart()
+            except Exception:
+                parent = None
+        if parent is None:
+            QtWidgets.QMessageBox.information(
+                Gui.getMainWindow(),
+                translate("Assembly", "New Subassembly"),
+                translate("Assembly",
+                          "Activate an assembly first (Create Assembly), then "
+                          "add a subassembly inside it."))
+            return
+        _doc = parent.Document
+        _dlg = NewBodyDialog(Gui.getMainWindow())
+        _dlg.setWindowTitle(translate("Assembly", "New Subassembly"))
+        _dlg.setNameLabel(translate("Assembly", "Subassembly name:"))
+        if _dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        _name = _dlg.getName()
+        _description = _dlg.getDescription()
+        if not _name:
+            return
+        App.setActiveTransaction("New Subassembly")
+        try:
+            _sub = parent.newObject("Assembly::AssemblyObject", _name)
+            _sub.Label = _name
+            try:
+                _sub.Type = "Assembly"
+            except Exception:
+                pass
+            _sub.newObject("Assembly::JointGroup", "Joints")
+            try:
+                _ensure_mp_properties(_sub)
+                _sub.MP_PartNumber = _name
+                _sub.MP_Description = _description
+            except Exception:
+                pass
+            _doc.recompute()
+        finally:
+            App.closeActiveTransaction()
+        # Activate the new subassembly IN THIS TAB (reuse the proven activation
+        # path) so the next Create Part lands inside it — native, no tab switch.
+        try:
+            from CommandCreateAssembly import _activate_assembly
+            _activate_assembly(_doc.Name, _sub.Name)
+        except Exception as _e:
+            App.Console.PrintMessage(
+                "[Asm] subassembly activate failed: {}\n".format(_e))
+        App.Console.PrintMessage(
+            "[Asm] Created in-doc subassembly '{}' under '{}' (single-file)\n".format(
+                _name, parent.Label))
+        return
+
+        # ---- Legacy separate-document + AssemblyLink path (unreachable) ----
         assembly = UtilsAssembly.activeAssembly()
         App.Console.PrintMessage(
             "[Asm] InsertNewAssembly: assembly={} doc={}\n".format(
@@ -817,6 +900,13 @@ class CommandInsertNewBodyInline:
         return UtilsAssembly.isAssemblyCommandActive()
 
     def Activated(self):
+        # SINGLE-FILE (Creo): create the part body IN the visible document under
+        # the active (possibly nested) subassembly — native editing, one tab. The
+        # separate .prt file is produced by the split-on-save fan-out on save.
+        # (Legacy separate-doc + App::Link path below is unreachable.)
+        CommandInsertNewPartInAssembly().Activated()
+        return
+
         assembly = UtilsAssembly.activeAssembly()
         if not assembly:
             return
@@ -976,7 +1066,249 @@ class CommandInsertNewBodyInline:
                 pass
 
 
+class CommandInsertNewPartInAssembly:
+    """Create a PartDesign Body DIRECTLY INSIDE the assembly document (no
+    separate .prt file, no App::Link) and activate it for modelling.
+
+    This is the true top-down path: because the body lives in the assembly
+    document itself, New Sketch edits it natively — real, snappable X/Y axes and
+    origin, symmetry, dimensions from the origin, everything the regular Sketcher
+    workbench offers — all while staying in the main assembly tab. (A body behind
+    an App::Link cannot expose snappable axes through the link — a FreeCAD
+    limitation — which is why the linked-part path can't do this.)"""
+
+    def __init__(self):
+        pass
+
+    def GetResources(self):
+        _icon = os.path.normpath(os.path.join(
+            os.path.dirname(__file__), "..", "PartDesign", "Gui", "Resources",
+            "icons", "PartDesignWorkbench.svg"))
+        return {
+            "Pixmap": _icon,
+            "MenuText": QT_TRANSLATE_NOOP(
+                "Assembly_InsertNewPartInAssembly", "Create Part (Top-Down)"),
+            "Accel": "",
+            "ToolTip": QT_TRANSLATE_NOOP(
+                "Assembly_InsertNewPartInAssembly",
+                "Create a part body inside the assembly so it can be sketched "
+                "natively (real axes/origin references) without leaving the "
+                "assembly tab."),
+            "CmdType": "ForEdit",
+        }
+
+    def IsActive(self):
+        return UtilsAssembly.isAssemblyCommandActive()
+
+    def Activated(self):
+        # Create the part in the document of the CURRENTLY VISIBLE TAB — never in
+        # a different file, and never auto-switch tabs. This is what makes the
+        # part editable natively (snappable axes/origin/symmetry) while STAYING
+        # in the tab the user is on.
+        #
+        # Why the active *view's* document, not activeAssembly().Document:
+        # activeAssembly() can be a subassembly whose file is a SEPARATE tab from
+        # the one the user is looking at. Creating the body there would force a
+        # tab switch to edit it natively (the exact thing the user rejected). By
+        # binding the part to the visible tab's document, the part is a real
+        # member of whatever assembly that tab hosts (root OR subassembly), and
+        # it's born and sketched right there. To put a part inside a subassembly,
+        # the user simply opens that subassembly's tab first — then the part is a
+        # true subassembly member, native, staying in that tab.
+        active_doc = App.ActiveDocument
+        gd = Gui.ActiveDocument
+        if active_doc is None or gd is None:
+            return
+
+        # Nest the new body under the ACTIVE (possibly nested) subassembly so it
+        # lands in the right group in single-file / top-down assemblies. Prefer
+        # the activated assembly; then the active App::Part container; finally the
+        # first top-level container in the document. All must live in THIS doc so
+        # editing stays native and in this tab.
+        host_asm = None
+        try:
+            aa = UtilsAssembly.activeAssembly()
+        except Exception:
+            aa = None
+        if aa is not None and aa.Document.Name == active_doc.Name:
+            host_asm = aa
+        if host_asm is None:
+            try:
+                ap = UtilsAssembly.activePart()
+            except Exception:
+                ap = None
+            if ap is not None and ap.Document.Name == active_doc.Name:
+                host_asm = ap
+        if host_asm is None:
+            for o in active_doc.Objects:
+                if getattr(o, "TypeId", "") in ("Assembly::AssemblyObject", "App::Part"):
+                    host_asm = o
+                    break
+
+        dlg = NewBodyDialog(Gui.getMainWindow())
+        dlg.setWindowTitle(translate("Assembly", "New Part (Top-Down)"))
+        dlg.setNameLabel(translate("Assembly", "Part name:"))
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        part_name = dlg.getName()
+        description = dlg.getDescription()
+        if not part_name:
+            return
+
+        App.setActiveTransaction("Create Part (Top-Down)")
+        try:
+            # Body created IN the visible tab's document — the key to native
+            # editing without switching tabs.
+            body = active_doc.addObject("PartDesign::Body", part_name)
+            body.Label = part_name
+            try:
+                _ensure_mp_properties(body)
+                body.MP_PartNumber = part_name
+                body.MP_Description = description
+            except Exception:
+                pass
+            # Nest it under the host assembly so it shows in the assembly tree.
+            if host_asm is not None:
+                try:
+                    host_asm.addObject(body)
+                except Exception:
+                    pass
+            active_doc.recompute()
+        finally:
+            App.closeActiveTransaction()
+
+        # Activate the body in the CURRENT view — no App.setActiveDocument, no
+        # Gui.ActiveDocument reassignment, so the tab never changes.
+        try:
+            if gd.ActiveView is not None:
+                gd.ActiveView.setActiveObject("pdbody", body)
+        except Exception:
+            pass
+        App.Console.PrintMessage(
+            "[Asm] Created top-down part '{}' in visible doc '{}' "
+            "(native sketching, stays in this tab)\n".format(
+                part_name, active_doc.Name))
+
+
+class CommandInsertNewSheetMetalPart:
+    """Create a new part inside the assembly set up for sheet-metal modelling:
+    a PartDesign Body with a base Sketch opened for editing. Draw the flat
+    profile, then use Sheet Metal > Make Base Wall to build the sheet."""
+
+    def __init__(self):
+        pass
+
+    def GetResources(self):
+        _icon = os.path.normpath(os.path.join(
+            App.getHomePath(), "Mod", "SheetMetal", "Resources", "icons",
+            "SheetMetal_AddBase.svg"))
+        if not os.path.isfile(_icon):
+            _icon = os.path.normpath(os.path.join(
+                os.path.dirname(__file__), "..", "PartDesign", "Gui",
+                "Resources", "icons", "PartDesignWorkbench.svg"))
+        return {
+            "Pixmap": _icon,
+            "MenuText": QT_TRANSLATE_NOOP(
+                "Assembly_InsertNewSheetMetalPart", "Create New Sheet Metal Part"),
+            "Accel": "",
+            "ToolTip": QT_TRANSLATE_NOOP(
+                "Assembly_InsertNewSheetMetalPart",
+                "Create a new part in the assembly set up for sheet-metal "
+                "modelling: a body with a base sketch. Draw the flat profile, "
+                "then use Sheet Metal > Make Base Wall."),
+            "CmdType": "ForEdit",
+        }
+
+    def IsActive(self):
+        return UtilsAssembly.isAssemblyCommandActive()
+
+    def Activated(self):
+        active_doc = App.ActiveDocument
+        gd = Gui.ActiveDocument
+        if active_doc is None or gd is None:
+            return
+
+        # Resolve the host assembly/part (same logic as the top-down part cmd).
+        host_asm = None
+        try:
+            aa = UtilsAssembly.activeAssembly()
+        except Exception:
+            aa = None
+        if aa is not None and aa.Document.Name == active_doc.Name:
+            host_asm = aa
+        if host_asm is None:
+            try:
+                ap = UtilsAssembly.activePart()
+            except Exception:
+                ap = None
+            if ap is not None and ap.Document.Name == active_doc.Name:
+                host_asm = ap
+        if host_asm is None:
+            for o in active_doc.Objects:
+                if getattr(o, "TypeId", "") in ("Assembly::AssemblyObject", "App::Part"):
+                    host_asm = o
+                    break
+
+        dlg = NewBodyDialog(Gui.getMainWindow())
+        dlg.setWindowTitle(translate("Assembly", "New Sheet Metal Part"))
+        dlg.setNameLabel(translate("Assembly", "Part name:"))
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        part_name = dlg.getName()
+        description = dlg.getDescription()
+        if not part_name:
+            return
+
+        App.setActiveTransaction("Create Sheet Metal Part")
+        try:
+            # A PartDesign::Body — exactly like a standalone sheet-metal part — so
+            # Part Design edge tools (Fillet / Chamfer) work on it. (An App::Part
+            # container avoids a harmless "still touched" recompute warning but
+            # blocks Part Design's Body-required tools, which users need.)
+            body = active_doc.addObject("PartDesign::Body", part_name)
+            body.Label = part_name
+            try:
+                _ensure_mp_properties(body)
+                body.MP_PartNumber = part_name
+                body.MP_Description = description
+            except Exception:
+                pass
+            if host_asm is not None:
+                try:
+                    host_asm.addObject(body)
+                except Exception:
+                    pass
+            active_doc.recompute()
+        finally:
+            App.closeActiveTransaction()
+
+        # Make the new body the active body so Sheet Metal's base tool builds
+        # INTO it. We deliberately do NOT switch the workbench or reset edit state
+        # from inside this task-panel command — doing that tore down the panel
+        # mid-execution and hung the GUI. Switch to the Sheet Metal workbench
+        # manually, then use Add Base Shape.
+        try:
+            if gd.ActiveView is not None:
+                gd.ActiveView.setActiveObject("pdbody", body)
+            Gui.Selection.clearSelection()
+            Gui.Selection.addSelection(body)
+        except Exception:
+            pass
+
+        App.Console.PrintMessage(
+            "[Asm] Created sheet-metal part '{}' (Body). Switch to the Sheet Metal "
+            "workbench and use Add Base Shape (builds into this body).\n"
+            .format(part_name))
+
+
 if App.GuiUp:
     Gui.addCommand("Assembly_InsertNewBody", CommandInsertNewBody())
     Gui.addCommand("Assembly_InsertNewAssembly", CommandInsertNewAssembly())
     Gui.addCommand("Assembly_InsertNewBodyInline", CommandInsertNewBodyInline())
+    Gui.addCommand("Assembly_InsertNewSheetMetalPart", CommandInsertNewSheetMetalPart())
+    # TRUE top-down (user choice 2026-07-11): the part body lives INSIDE the
+    # assembly document so New Sketch edits it natively — snappable axes/origin,
+    # symmetry, dimensions — while STAYING in the assembly tab and seeing the
+    # other components (Creo/SolidWorks in-context model). Trade-off: not a
+    # separate .prt (can be exported on save if needed).
+    Gui.addCommand("Assembly_InsertNewPartInAssembly", CommandInsertNewPartInAssembly())

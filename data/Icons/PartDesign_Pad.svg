@@ -17,33 +17,33 @@
     <linearGradient
        id="linearGradient3918">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop3920" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1"
+         style="stop-color:#088f8f;stop-opacity:1"
          offset="1"
          id="stop3922" />
     </linearGradient>
     <linearGradient
        id="linearGradient3910">
       <stop
-         style="stop-color:#1F66CC;stop-opacity:1;"
+         style="stop-color:#056b6b;stop-opacity:1;"
          offset="0"
          id="stop3912" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1"
+         style="stop-color:#088f8f;stop-opacity:1"
          offset="1"
          id="stop3914" />
     </linearGradient>
     <linearGradient
        id="linearGradient3669">
       <stop
-         style="stop-color:#1F66CC;stop-opacity:1;"
+         style="stop-color:#056b6b;stop-opacity:1;"
          offset="0"
          id="stop3671" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop3673" />
     </linearGradient>
@@ -175,11 +175,11 @@
     <linearGradient
        id="linearGradient3669-2">
       <stop
-         style="stop-color:#1F66CC;stop-opacity:1;"
+         style="stop-color:#056b6b;stop-opacity:1;"
          offset="0"
          id="stop3671-7" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop3673-5" />
     </linearGradient>
@@ -195,11 +195,11 @@
     <linearGradient
        id="linearGradient3669-22">
       <stop
-         style="stop-color:#1F66CC;stop-opacity:1;"
+         style="stop-color:#056b6b;stop-opacity:1;"
          offset="0"
          id="stop3671-8" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop3673-4" />
     </linearGradient>
@@ -215,11 +215,11 @@
     <linearGradient
        id="linearGradient3669-0">
       <stop
-         style="stop-color:#1F66CC;stop-opacity:1;"
+         style="stop-color:#056b6b;stop-opacity:1;"
          offset="0"
          id="stop3671-9" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop3673-1" />
     </linearGradient>
@@ -310,15 +310,15 @@
          d="m 44.671394,18.46819 35.195646,-8.8647304 0,11.8196414 -35.195646,10.342187 z"
          id="rect3200-8" />
       <path
-         style="color:#222222;fill:#4A8FE5;fill-opacity:1;fill-rule:evenodd;stroke:#222222;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none;stroke-dashoffset:0;marker:none;visibility:visible;display:inline;overflow:visible;enable-background:accumulate"
+         style="color:#222222;fill:#088f8f;fill-opacity:1;fill-rule:evenodd;stroke:#222222;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-opacity:1;stroke-dasharray:none;stroke-dashoffset:0;marker:none;visibility:visible;display:inline;overflow:visible;enable-background:accumulate"
          d="M 43.317714,3.6936385 79.86704,9.6034596 44.671394,18.46819 6.7683938,12.55837 z"
          id="rect3200-5" />
       <path
-         style="fill:none;stroke:#4A8FE5;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+         style="fill:none;stroke:#088f8f;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
          d="m 9.4757504,14.509073 0,10.255617 32.4777136,5.044125 0.0317,-10.220991 z"
          id="path3805" />
       <path
-         style="fill:none;stroke:#4A8FE5;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+         style="fill:none;stroke:#088f8f;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
          d="m 47.378754,19.397371 0,9.892025 29.780926,-8.749306 0.0106,-8.633877 z"
          id="path3807" />
     </g>

@@ -24,11 +24,11 @@
        id="linearGradient5"
        inkscape:collect="always">
       <stop
-         style="stop-color:#c5a202;stop-opacity:1;"
+         style="stop-color:#c17d0c;stop-opacity:1;"
          offset="0"
          id="stop5" />
       <stop
-         style="stop-color:#f6e76f;stop-opacity:1;"
+         style="stop-color:#ffe066;stop-opacity:1;"
          offset="1"
          id="stop6" />
     </linearGradient>
@@ -48,11 +48,11 @@
       <stop
          id="stop3379"
          offset="0"
-         style="stop-color:#faff2b;stop-opacity:1;" />
+         style="stop-color:#f39c12;stop-opacity:1;" />
       <stop
          id="stop3381"
          offset="1"
-         style="stop-color:#ffaa00;stop-opacity:1;" />
+         style="stop-color:#f39c12;stop-opacity:1;" />
     </linearGradient>
     <radialGradient
        inkscape:collect="always"
@@ -87,11 +87,11 @@
        inkscape:collect="always"
        id="linearGradient3801-5">
       <stop
-         style="stop-color:#c4a000;stop-opacity:1"
+         style="stop-color:#c17d0c;stop-opacity:1"
          offset="0"
          id="stop3803-3" />
       <stop
-         style="stop-color:#fce94f;stop-opacity:1"
+         style="stop-color:#ffe066;stop-opacity:1"
          offset="1"
          id="stop3805-5" />
     </linearGradient>
@@ -106,11 +106,11 @@
     <linearGradient
        id="linearGradient3838">
       <stop
-         style="stop-color:#34e0e2;stop-opacity:1"
+         style="stop-color:#088f8f;stop-opacity:1"
          offset="0"
          id="stop3840" />
       <stop
-         style="stop-color:#06989a;stop-opacity:1"
+         style="stop-color:#056b6b;stop-opacity:1"
          offset="1"
          id="stop3842" />
     </linearGradient>
@@ -231,14 +231,14 @@
        inkscape:label="Plane"
        transform="matrix(1.0798517,0,0,1.0798517,-2.5552547,-2.5552547)">
       <rect
-         style="fill:url(#linearGradient6);fill-opacity:1;stroke:#302b00;stroke-width:1.5;stroke-dasharray:none;stroke-opacity:1"
+         style="fill:url(#linearGradient6);fill-opacity:1;stroke:#6e4a0a;stroke-width:1.5;stroke-dasharray:none;stroke-opacity:1"
          id="rect3"
          width="48.50687"
          height="48.50687"
          x="7.7465649"
          y="7.7465649" />
       <rect
-         style="fill:none;fill-opacity:1;stroke:#fce94f;stroke-width:1.41052;stroke-dasharray:none;stroke-opacity:1"
+         style="fill:none;fill-opacity:1;stroke:#ffe066;stroke-width:1.41052;stroke-dasharray:none;stroke-opacity:1"
          id="rect4"
          width="45.613106"
          height="45.613106"

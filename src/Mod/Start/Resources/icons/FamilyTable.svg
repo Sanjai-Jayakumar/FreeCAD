@@ -13,28 +13,28 @@
 
   <defs>
     <linearGradient id="yTop" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#FFEE99"/>
-      <stop offset="100%" stop-color="#FFCC00"/>
+      <stop offset="0%"   stop-color="#ffe066"/>
+      <stop offset="100%" stop-color="#f39c12"/>
     </linearGradient>
     <linearGradient id="yLeft" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#E5B800"/>
-      <stop offset="100%" stop-color="#8A6800"/>
+      <stop offset="0%"   stop-color="#f39c12"/>
+      <stop offset="100%" stop-color="#c17d0c"/>
     </linearGradient>
     <linearGradient id="yRight" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%"   stop-color="#C8A000"/>
-      <stop offset="100%" stop-color="#6A4A00"/>
+      <stop offset="0%"   stop-color="#c17d0c"/>
+      <stop offset="100%" stop-color="#6e4a0a"/>
     </linearGradient>
     <linearGradient id="bTop" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#7AB0EE"/>
-      <stop offset="100%" stop-color="#4A8FE5"/>
+      <stop offset="0%"   stop-color="#4cbcbc"/>
+      <stop offset="100%" stop-color="#088f8f"/>
     </linearGradient>
     <linearGradient id="bLeft" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#4A8FE5"/>
-      <stop offset="100%" stop-color="#0F3F8F"/>
+      <stop offset="0%"   stop-color="#088f8f"/>
+      <stop offset="100%" stop-color="#056b6b"/>
     </linearGradient>
     <linearGradient id="bRight" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%"   stop-color="#1F66CC"/>
-      <stop offset="100%" stop-color="#0A2E60"/>
+      <stop offset="0%"   stop-color="#088f8f"/>
+      <stop offset="100%" stop-color="#056b6b"/>
     </linearGradient>
   </defs>
 
@@ -70,7 +70,7 @@
              stroke="#222222" stroke-width="1.0"
              stroke-linejoin="round"/>
     <polyline points="6,4  12,0.8  18,4"
-              fill="none" stroke="#FFF7CC"
+              fill="none" stroke="#ffe066"
               stroke-width="0.65" stroke-linecap="round"
               opacity="0.95"/>
   </g>

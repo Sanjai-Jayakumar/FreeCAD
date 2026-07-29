@@ -25,13 +25,44 @@ import re
 import os
 import Assembly_rc
 
-# Register recolored icons folder so it overrides the embedded Assembly_rc icons
+# Register recolored (green) icons so they override the embedded (blue) core /
+# Assembly_rc icons. addIconPath alone is not reliable — the embedded resource
+# can win the search order — so we ALSO force-register every icon by name via
+# Gui.addIcon(), which overwrites the BitmapFactory cache unconditionally and is
+# checked before any resource/path lookup. That guarantees the green icons show.
 def _register_recolored_icons():
     try:
         import FreeCADGui as _Gui
         _icons_dir = os.path.join(os.path.dirname(__file__), "Resources", "icons", "recolored")
-        if os.path.isdir(_icons_dir):
-            _Gui.addIconPath(_icons_dir)
+        if not os.path.isdir(_icons_dir):
+            return
+        _Gui.addIconPath(_icons_dir)
+        try:
+            from PySide import QtCore, QtGui
+            try:
+                from PySide import QtSvg
+            except Exception:
+                import PySide6.QtSvg as QtSvg  # noqa
+            for _fn in os.listdir(_icons_dir):
+                if not _fn.lower().endswith(".svg"):
+                    continue
+                _name = _fn[:-4]
+                _path = os.path.join(_icons_dir, _fn)
+                try:
+                    _r = QtSvg.QSvgRenderer(_path)
+                    _img = QtGui.QImage(64, 64, QtGui.QImage.Format_ARGB32)
+                    _img.fill(QtCore.Qt.transparent)
+                    _p = QtGui.QPainter(_img)
+                    _r.render(_p)
+                    _p.end()
+                    _buf = QtCore.QBuffer()
+                    _buf.open(QtCore.QIODevice.WriteOnly)
+                    _img.save(_buf, "PNG")
+                    _Gui.addIcon(_name, bytes(_buf.data()), "PNG")
+                except Exception:
+                    pass
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -121,6 +152,148 @@ except Exception as _e:
     _FC.Console.PrintError(
         "[Assembly] Failed to load AssemblyStepSplitSave: {0}\n".format(_e)
     )
+
+
+def _bnc_selected_body():
+    """Resolve the selected object to a PartDesign::Body (through any link)."""
+    import FreeCADGui as _Gui
+    for sel in _Gui.Selection.getSelectionEx():
+        obj = sel.Object
+        seen = 0
+        while obj is not None and seen < 10:
+            if getattr(obj, "TypeId", "") == "PartDesign::Body":
+                return obj
+            lo = getattr(obj, "LinkedObject", None)
+            if lo is not None and lo is not obj:
+                obj = lo
+                seen += 1
+            else:
+                break
+    return None
+
+
+def _bnc_open_selected_part(*_a):
+    """Open the selected part in a NEW tab: opens the part's standalone .prt
+    file (exported by the Save fan-out). If no .prt exists yet, export the
+    embedded body to a .prt first, then open it. Editing it round-trips back to
+    the assembly via BNCPartSync."""
+    import FreeCADGui as _Gui
+    body = _bnc_selected_body()
+    if body is None:
+        _FC.Console.PrintError("[BNC] Open Part: select a part (body) first.\n")
+        return
+    label = body.Label or "Part"
+    base = re.sub(r"\.\d{3,}$", "",
+                  re.sub(r"\.(prt|asm|drg)$", "", label, flags=re.IGNORECASE))
+    doc = body.Document
+    workdir = os.path.dirname(doc.FileName) if doc.FileName else ""
+    if not workdir:
+        try:
+            workdir = _FC.ParamGet(
+                "User parameter:BaseApp/Preferences/General").GetString(
+                "WorkingDirectory", "").strip()
+        except Exception:
+            workdir = ""
+
+    # find newest <base>.NNN.prt(.FCStd)
+    latest, latest_v = None, -1
+    pat = re.compile(r"^" + re.escape(base) + r"\.(\d{3})\.prt(?:\.FCStd)?$",
+                     re.IGNORECASE)
+    if workdir and os.path.isdir(workdir):
+        for f in os.listdir(workdir):
+            m = pat.match(f)
+            if m and int(m.group(1)) > latest_v:
+                latest_v = int(m.group(1)); latest = os.path.join(workdir, f)
+
+    def _activate(dname):
+        try:
+            _FC.setActiveDocument(dname)
+            _Gui.ActiveDocument = _Gui.getDocument(dname)
+        except Exception:
+            pass
+
+    # already open? just switch to it
+    if latest:
+        for d in list(_FC.listDocuments().values()):
+            if d.FileName and os.path.normcase(d.FileName) == os.path.normcase(latest):
+                _activate(d.Name)
+                return
+        try:
+            nd = _FC.openDocument(latest)
+            _activate(nd.Name)
+            _FC.Console.PrintMessage("[BNC] Opened part '{}' in a new tab.\n".format(base))
+            return
+        except Exception as e:
+            _FC.Console.PrintError("[BNC] Open Part failed: {}\n".format(e))
+            return
+
+    # no .prt yet — create one from the embedded body (this new doc IS the tab)
+    try:
+        nd = _FC.newDocument(base)
+        nd.Label = base
+        nd.copyObject(body, True)
+        nd.recompute()
+        if workdir and os.path.isdir(workdir):
+            try:
+                nd.saveAs(os.path.join(workdir, base + ".001.prt.FCStd"))
+            except Exception:
+                pass
+        _activate(nd.Name)
+        _FC.Console.PrintMessage(
+            "[BNC] Opened part '{}' in a new tab (exported).\n".format(base))
+    except Exception as e:
+        _FC.Console.PrintError("[BNC] Open Part failed: {}\n".format(e))
+
+
+def _bnc_add_open_to_menu(menu):
+    """Insert an 'Open' item directly below the body's activate action
+    ('Active Body' native, or 'Activate Part' after our rename). Called
+    DEFERRED (QTimer) so the menu's actions are populated by the time we run."""
+    try:
+        import FreeCADGui as _Gui
+        # already added to this menu?
+        for a in menu.actions():
+            try:
+                if a.objectName() == "BNC_OpenPart":
+                    return
+            except Exception:
+                pass
+        acts = menu.actions()
+        by_text = {}
+        for a in acts:
+            try:
+                by_text.setdefault(a.text(), a)
+            except Exception:
+                pass
+        activate = None
+        for key in ("Activate Part", "Active Body", "Active body"):
+            if key in by_text:
+                activate = by_text[key]
+                break
+        if activate is None:
+            return  # not a part/body context menu
+        if _bnc_selected_body() is None:
+            return  # nothing resolvable to a body
+        from PySide import QtGui as _QtGui
+        from PySide import QtWidgets as _QtW
+        _QAction = getattr(_QtGui, "QAction", None) or _QtW.QAction
+        act = _QAction("Open", menu)
+        act.setObjectName("BNC_OpenPart")
+        try:
+            act.setToolTip("Open this part in a new tab")
+        except Exception:
+            pass
+        act.triggered.connect(_bnc_open_selected_part)
+        acts = menu.actions()
+        idx = acts.index(activate)
+        before = acts[idx + 1] if idx + 1 < len(acts) else None
+        if before is not None:
+            menu.insertAction(before, act)
+        else:
+            menu.addAction(act)
+        _FC.Console.PrintMessage("[BNC] 'Open' added below '{}'\n".format(activate.text()))
+    except Exception as _e:
+        _FC.Console.PrintError("[BNC] add Open failed: {}\n".format(_e))
 
 
 class AssemblyCommandGroup:
@@ -312,6 +485,176 @@ class AssemblyWorkbench(Workbench):
         try:
             from PySide import QtCore, QtGui
             from PySide.QtWidgets import QMenu
+            import FreeCAD as _FCc
+            import FreeCADGui as _GUIc
+            import os as _osc
+            import re as _rec
+
+            # --- closures (captured lexically by the eventFilter lambda so they
+            #     don't depend on the workbench-InitGui module namespace) -------
+            def _cl_selected_body():
+                for sel in _GUIc.Selection.getSelectionEx():
+                    o = sel.Object
+                    seen = 0
+                    while o is not None and seen < 10:
+                        if getattr(o, "TypeId", "") == "PartDesign::Body":
+                            return o
+                        lo = getattr(o, "LinkedObject", None)
+                        if lo is not None and lo is not o:
+                            o = lo
+                            seen += 1
+                        else:
+                            break
+                return None
+
+            def _cl_selected_subasm():
+                for sel in _GUIc.Selection.getSelectionEx():
+                    o = sel.Object
+                    seen = 0
+                    while o is not None and seen < 10:
+                        try:
+                            if o.isDerivedFrom("Assembly::AssemblyObject") or \
+                                    getattr(o, "TypeId", "") == "Assembly::AssemblyObject":
+                                return o
+                        except Exception:
+                            pass
+                        lo = getattr(o, "LinkedObject", None)
+                        if lo is not None and lo is not o:
+                            o = lo
+                            seen += 1
+                        else:
+                            break
+                return None
+
+            def _cl_open_obj(obj, ext, kind):
+                """Open the export file (<base>.NNN.<ext>) for a body/subassembly
+                in a new tab; export it first if none exists yet."""
+                label = obj.Label or kind
+                base = _rec.sub(r"\.\d{3,}$", "",
+                                _rec.sub(r"\.(prt|asm|drg)$", "", label,
+                                         flags=_rec.IGNORECASE))
+                doc = obj.Document
+                workdir = _osc.path.dirname(doc.FileName) if doc.FileName else ""
+                if not workdir:
+                    try:
+                        workdir = _FCc.ParamGet(
+                            "User parameter:BaseApp/Preferences/General").GetString(
+                            "WorkingDirectory", "").strip()
+                    except Exception:
+                        workdir = ""
+                latest, latest_v = None, -1
+                pat = _rec.compile(
+                    r"^" + _rec.escape(base) + r"\.(\d{3})\." + ext + r"(?:\.FCStd)?$",
+                    _rec.IGNORECASE)
+                if workdir and _osc.path.isdir(workdir):
+                    for f in _osc.listdir(workdir):
+                        m = pat.match(f)
+                        if m and int(m.group(1)) > latest_v:
+                            latest_v = int(m.group(1))
+                            latest = _osc.path.join(workdir, f)
+
+                def _act(dn):
+                    try:
+                        _FCc.setActiveDocument(dn)
+                        _GUIc.ActiveDocument = _GUIc.getDocument(dn)
+                    except Exception:
+                        pass
+
+                if latest:
+                    for d in list(_FCc.listDocuments().values()):
+                        if d.FileName and _osc.path.normcase(d.FileName) == \
+                                _osc.path.normcase(latest):
+                            _act(d.Name)
+                            return
+                    try:
+                        nd = _FCc.openDocument(latest)
+                        _act(nd.Name)
+                        _FCc.Console.PrintMessage(
+                            "[BNC] Opened {} '{}' in a new tab.\n".format(kind, base))
+                        return
+                    except Exception as e:
+                        _FCc.Console.PrintError("[BNC] Open failed: {}\n".format(e))
+                        return
+                try:
+                    nd = _FCc.newDocument(base)
+                    nd.Label = base
+                    nd.copyObject(obj, True)
+                    nd.recompute()
+                    if workdir and _osc.path.isdir(workdir):
+                        try:
+                            nd.saveAs(_osc.path.join(
+                                workdir, base + ".001." + ext + ".FCStd"))
+                        except Exception:
+                            pass
+                    _act(nd.Name)
+                    _FCc.Console.PrintMessage(
+                        "[BNC] Opened {} '{}' in a new tab (exported).\n".format(kind, base))
+                except Exception as e:
+                    _FCc.Console.PrintError("[BNC] Open failed: {}\n".format(e))
+
+            def _cl_open_part(*_a):
+                b = _cl_selected_body()
+                if b is None:
+                    _FCc.Console.PrintError("[BNC] Open: select a part first.\n")
+                    return
+                _cl_open_obj(b, "prt", "part")
+
+            def _cl_open_subasm(*_a):
+                s = _cl_selected_subasm()
+                if s is None:
+                    _FCc.Console.PrintError("[BNC] Open: select a subassembly first.\n")
+                    return
+                _cl_open_obj(s, "asm", "subassembly")
+
+            def _cl_insert_open(menu, after_action, handler):
+                _QA = getattr(QtGui, "QAction", None)
+                if _QA is None:
+                    from PySide import QtWidgets as _QW
+                    _QA = _QW.QAction
+                act = _QA("Open", menu)
+                act.setObjectName("BNC_OpenPart")
+                try:
+                    act.setToolTip("Open in a new tab")
+                except Exception:
+                    pass
+                act.triggered.connect(handler)
+                acts = menu.actions()
+                idx = acts.index(after_action)
+                before = acts[idx + 1] if idx + 1 < len(acts) else None
+                if before is not None:
+                    menu.insertAction(before, act)
+                else:
+                    menu.addAction(act)
+                _FCc.Console.PrintMessage(
+                    "[BNC] 'Open' added below '{}'\n".format(after_action.text()))
+
+            def _cl_add_open(menu):
+                try:
+                    for a in menu.actions():
+                        try:
+                            if a.objectName() == "BNC_OpenPart":
+                                return
+                        except Exception:
+                            pass
+                    by_text = {}
+                    for a in menu.actions():
+                        try:
+                            by_text.setdefault(a.text(), a)
+                        except Exception:
+                            pass
+                    # PART context — 'Open' below Activate Part / Active Body
+                    for key in ("Activate Part", "Active Body", "Active body"):
+                        if key in by_text and _cl_selected_body() is not None:
+                            _cl_insert_open(menu, by_text[key], _cl_open_part)
+                            return
+                    # SUBASSEMBLY context — 'Open' below Activate Subassembly
+                    if "Activate Subassembly" in by_text and \
+                            _cl_selected_subasm() is not None:
+                        _cl_insert_open(menu, by_text["Activate Subassembly"],
+                                        _cl_open_subasm)
+                        return
+                except Exception as e:
+                    _FCc.Console.PrintError("[BNC] add Open failed: {}\n".format(e))
 
             class _MenuRenamer(QtCore.QObject):
                 """Renames FreeCAD's built-in context-menu actions while the
@@ -324,26 +667,68 @@ class AssemblyWorkbench(Workbench):
                     "Active body":   "Activate Part",
                 }
 
+                def _apply_menu_fixups(self, obj):
+                    """Rename native actions, redirect triggers and reorder. Safe
+                    to call multiple times on the same menu (idempotent)."""
+                    try:
+                        if not isinstance(obj, QMenu):
+                            return
+                        for action in obj.actions():
+                            txt = action.text()
+                            new = self._RENAMES.get(txt)
+                            if new is not None:
+                                action.setText(new)
+                            if action.text() == "Activate Main Assembly":
+                                self._redirect_to_main_assembly_cmd(action)
+                            if action.text() == "Activate Part":
+                                self._redirect_to_activate_part_cmd(action)
+                            if action.text() == "Activate Subassembly":
+                                self._mark_subasm_action(action)
+                        # Reorder: 'Activate Subassembly' directly below
+                        # 'Activate Main Assembly'.
+                        try:
+                            acts = obj.actions()
+                            main_a = next(
+                                (a for a in acts
+                                 if a.text() == "Activate Main Assembly"), None)
+                            sub_a = next(
+                                (a for a in acts
+                                 if a.text() == "Activate Subassembly"), None)
+                            if main_a is not None and sub_a is not None:
+                                idx = acts.index(main_a)
+                                after_main = acts[idx + 1] if idx + 1 < len(acts) else None
+                                if after_main is not sub_a:
+                                    obj.removeAction(sub_a)
+                                    if after_main is not None:
+                                        obj.insertAction(after_main, sub_a)
+                                    else:
+                                        obj.addAction(sub_a)
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+
                 def eventFilter(self, obj, event):
                     try:
-                        if event.type() == QtCore.QEvent.Show and isinstance(obj, QMenu):
-                            for action in obj.actions():
-                                txt = action.text()
-                                new = self._RENAMES.get(txt)
-                                if new is not None:
-                                    action.setText(new)
-                                # If we just renamed the native "Active object"
-                                # to "Activate Main Assembly", redirect its
-                                # trigger to our own command so the body gets
-                                # cleared and root is properly activated.
-                                if action.text() == "Activate Main Assembly":
-                                    self._redirect_to_main_assembly_cmd(action)
-                                # Same for Activate Part — use our command that
-                                # doesn't auto-switch workbench
-                                if action.text() == "Activate Part":
-                                    self._redirect_to_activate_part_cmd(action)
-                                if action.text() == "Activate Subassembly":
-                                    self._mark_subasm_action(action)
+                        cls = self.__class__
+                        if (event.type() == QtCore.QEvent.Show
+                                and isinstance(obj, QMenu)
+                                and not getattr(cls, "_in_fixup", False)):
+                            # Rename/reorder SYNCHRONOUSLY while the menu is alive.
+                            # A re-entrancy guard stops the reorder's own re-show
+                            # from cascading (which hung the GUI). No deferred
+                            # timers — a late timer could fire on a closed menu or
+                            # re-trigger Show and pile up.
+                            cls._in_fixup = True
+                            try:
+                                self._apply_menu_fixups(obj)
+                            finally:
+                                cls._in_fixup = False
+                            _m = obj
+                            try:
+                                QtCore.QTimer.singleShot(0, lambda: _cl_add_open(_m))
+                            except Exception:
+                                _cl_add_open(obj)
                     except Exception:
                         pass
                     return False  # do not consume
@@ -389,6 +774,38 @@ class AssemblyWorkbench(Workbench):
                         action._asm_part_redirected = True
                     except Exception:
                         pass
+
+                @staticmethod
+                def _add_open_part_after(menu, activate_action):
+                    """Insert an 'Open' item directly below 'Activate Part' that
+                    opens the selected part in its own tab."""
+                    try:
+                        # avoid duplicate insertion in the same menu
+                        for a in menu.actions():
+                            if a.objectName() == "BNC_OpenPart":
+                                return
+                        from PySide import QtGui as _QtGui
+                        from PySide import QtWidgets as _QtW
+                        _QAction = getattr(_QtGui, "QAction", None) or _QtW.QAction
+                        act = _QAction("Open", menu)
+                        act.setObjectName("BNC_OpenPart")
+                        try:
+                            act.setToolTip("Open this part in a new tab")
+                        except Exception:
+                            pass
+                        act.triggered.connect(_bnc_open_selected_part)
+                        acts = menu.actions()
+                        idx = acts.index(activate_action)
+                        before = acts[idx + 1] if idx + 1 < len(acts) else None
+                        if before is not None:
+                            menu.insertAction(before, act)
+                        else:
+                            menu.addAction(act)
+                        _FC.Console.PrintMessage(
+                            "[BNC] Open item inserted after 'Activate Part'\n")
+                    except Exception as _e:
+                        _FC.Console.PrintError(
+                            "[BNC] add Open item failed: {}\n".format(_e))
 
                 @staticmethod
                 def _mark_subasm_action(action):
@@ -446,7 +863,9 @@ class AssemblyWorkbench(Workbench):
                 def workbenchActivated(self, wb_name):
                     if _WBLock._suppress:
                         return
-                    if wb_name == "AssemblyWorkbench":
+                    # Assembly stays put; SheetMetal is allowed so users can do
+                    # sheet-metal modelling on an assembly part without snap-back.
+                    if wb_name in ("AssemblyWorkbench", "SMWorkbench"):
                         return
                     # Only act when an assembly document is open
                     try:
@@ -486,7 +905,7 @@ class AssemblyWorkbench(Workbench):
             def _check():
                 try:
                     name = FreeCADGui.activeWorkbench().__class__.__name__
-                    if name != "AssemblyWorkbench":
+                    if name not in ("AssemblyWorkbench", "SMWorkbench"):
                         self._wb_lock.workbenchActivated(name)
                 except Exception:
                     pass
@@ -661,6 +1080,7 @@ class AssemblyWorkbench(Workbench):
                 self.commands = [
                     "Assembly_Insert",
                     "Assembly_InsertNewBodyInline",
+                    "Assembly_InsertNewSheetMetalPart",
                     "Assembly_InsertNewAssembly",
                 ]
                 # FreeCAD reads .title at panel-creation time, before shouldShow().
@@ -722,7 +1142,10 @@ class AssemblyWorkbench(Workbench):
             def shouldShow(self):
                 if not super().shouldShow():
                     return False
-                return UtilsAssembly.assembly_has_at_least_n_parts(2)
+                # Show constraints from the FIRST part on, so grounding isn't the
+                # only option — the user can Default/Distance/etc. the first part
+                # to the assembly origin datums instead of being forced to ground.
+                return UtilsAssembly.assembly_has_at_least_n_parts(1)
 
         class AssemblyToolsWatcher(AssemblyBaseWatcher):
             """Shows Joint, View, and BOM tools when there are enough parts."""
@@ -763,6 +1186,9 @@ class AssemblyWorkbench(Workbench):
 
             def __init__(self):
                 self.commands = [
+                    "Assembly_ReferenceAssembly",
+                    "Assembly_ReferenceComponent",
+                    "Separator",
                     "Assembly_BodyNewSketch",
                     "Separator",
                     "Assembly_BodyPad",
@@ -931,7 +1357,17 @@ class AssemblyWorkbench(Workbench):
                 # If a Part Design body has been activated, exit any active
                 # assembly so only one thing is active at a time.
                 try:
-                    if active_view.getActiveObject("pdbody") is not None:
+                    _active_body = active_view.getActiveObject("pdbody")
+                    _active_part = active_view.getActiveObject("part")
+                    # An active App::Part (e.g. a BNC sheet-metal part) supersedes
+                    # the assembly exactly like an active PartDesign body — only one
+                    # thing may read as active. Exclude assembly-type objects so we
+                    # never fight genuine assembly / subassembly activation.
+                    _part_supersedes = (
+                        _active_part is not None
+                        and not _active_part.isDerivedFrom("Assembly::AssemblyObject")
+                        and not _active_part.isDerivedFrom("Assembly::AssemblyLink"))
+                    if _active_body is not None or _part_supersedes:
                         if active_view.getActiveObject("assembly") is not None:
                             active_view.setActiveObject("assembly", None)
                         import UtilsAssembly as _UA0

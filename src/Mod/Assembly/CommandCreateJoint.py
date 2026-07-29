@@ -412,7 +412,11 @@ def createGroundedJoint(obj):
         "assembly = UtilsAssembly.activeAssembly()\n"
         "joint_group = UtilsAssembly.getJointGroup(assembly)\n"
         'ground = joint_group.newObject("App::FeaturePython", "GroundedJoint")\n'
-        "JointObject.GroundedJoint(ground, obj)"
+        "JointObject.GroundedJoint(ground, obj)\n"
+        # BNC: remember the assembled ("home") placement so Regenerate can snap
+        # the part back if it is later moved with Transform.
+        'ground.addProperty("App::PropertyPlacement", "BNC_HomePlacement", "Base", "Assembled (home) placement")\n'
+        "ground.BNC_HomePlacement = obj.Placement"
     )
     Gui.doCommand(commands)
     Gui.doCommandGui("JointObject.ViewProviderGroundedJoint(ground.ViewObject)")

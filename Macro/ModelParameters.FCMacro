@@ -296,7 +296,7 @@ class ModelDialog(QtWidgets.QDialog):
 
         self.revision = QtWidgets.QComboBox()
         self.revision.addItems(["NR", "A", "B", "C", "D"])
-        self.revision.setFixedSize(60, h)
+        self.revision.setFixedSize(90, h)   # was 60 -- too narrow, hid selected text
 
         self.weight = QtWidgets.QLineEdit()
         self.weight.setFixedSize(small_w, h)
@@ -516,22 +516,12 @@ class ModelDialog(QtWidgets.QDialog):
             if not current_desc:
                 current_desc = str(getattr(self.target, 'MP_Description', '') or '').strip()
         else:
-            # Target is a Body/Assembly object
-            # 1) object's own Description
+            # Target is a Body/Assembly object -- show only ITS OWN description
+            # (own .Description, then its MP_Description). Do NOT fall back to the
+            # owning document / parent assembly: a top-down part with no
+            # description of its own must NOT inherit the parent assembly's
+            # description (e.g. 'dttc' from the main assembly).
             current_desc = str(getattr(self.target, 'Description', '') or '').strip()
-            # 2) owning doc sources
-            if not current_desc:
-                owner_doc = getattr(self.target, 'Document', None)
-                if owner_doc:
-                    # first Body or root Assembly in doc
-                    for obj in owner_doc.Objects:
-                        if obj.TypeId in _ROOT_TYPES:
-                            current_desc = str(getattr(obj, 'Description', '') or '').strip()
-                            break
-                    if not current_desc:
-                        current_desc = str(getattr(owner_doc, 'Description', '') or '').strip()
-                    if not current_desc:
-                        current_desc = str(getattr(owner_doc, 'Comment', '') or '').strip()
             if not current_desc:
                 current_desc = str(getattr(self.target, 'MP_Description', '') or '').strip()
 
@@ -630,4 +620,4 @@ class ModelDialog(QtWidgets.QDialog):
 
 if App.ActiveDocument:
     dlg = ModelDialog()
-    dlg.exec_()
+    dlg.exec()

@@ -99,16 +99,23 @@ class CommandCreateAssembly:
         App.setActiveTransaction("New Assembly")
         Gui.addModule("UtilsAssembly")
 
+        # Clean label (strip any '.NNN'/'.asm' version the save added to the doc
+        # label) so the assembly object shows '555', not '555.001'.
+        try:
+            from CommandInsertNewPart import _strip_version as _sv
+            _clean_label = _sv(asm_name if asm_name else App.ActiveDocument.Label)
+        except Exception:
+            _clean_label = asm_name if asm_name else App.ActiveDocument.Label
         if activeAssembly:
             commands = (
                 "activeAssembly = UtilsAssembly.activeAssembly()\n"
                 'assembly = activeAssembly.newObject("Assembly::AssemblyObject", "Assembly")\n'
-                'assembly.Label = App.ActiveDocument.Label\n'
+                'assembly.Label = {!r}\n'.format(_clean_label)
             )
         else:
             commands = (
                 'assembly = App.ActiveDocument.addObject("Assembly::AssemblyObject", "Assembly")\n'
-                'assembly.Label = App.ActiveDocument.Label\n'
+                'assembly.Label = {!r}\n'.format(_clean_label)
             )
 
         commands = commands + 'assembly.Type = "Assembly"\n'
@@ -198,6 +205,19 @@ def _selected_assembly_activation_target():
         except Exception:
             return False
 
+    def _is_activatable_asm(o):
+        """True for an INLINE Assembly::AssemblyObject (single-file subassembly)
+        OR a link whose target is an assembly. Inline assemblies have no
+        LinkedObject, so `_is_asm_link` alone misses them."""
+        try:
+            if o.isDerivedFrom("Assembly::AssemblyObject"):
+                return True
+            if getattr(o, "TypeId", "") == "Assembly::AssemblyObject":
+                return True
+        except Exception:
+            pass
+        return _is_asm_link(o)
+
     # Strategy 1 (PRIMARY): Qt tree widget selected item label.
     # This is the most reliable source: it directly reflects what the user
     # right-clicked, unaffected by FreeCAD's path-based selection model which
@@ -215,25 +235,37 @@ def _selected_assembly_activation_target():
         App.Console.PrintMessage("[Asm] S1 selected_labels={}\n".format(selected_labels))
 
         if selected_labels:
-            # Active assembly's group first — tightest scope
+            # Active assembly's group first — tightest scope. Match inline
+            # subassemblies (AssemblyObject) as well as links.
             try:
                 active_asm = UtilsAssembly.activeAssembly()
                 App.Console.PrintMessage("[Asm] S1 active_asm={}\n".format(
                     getattr(active_asm, "Label", None) if active_asm else None))
                 if active_asm is not None and hasattr(active_asm, "Group"):
                     for obj in active_asm.Group:
-                        if obj.Label in selected_labels and _is_asm_link(obj):
+                        if obj.Label in selected_labels and _is_activatable_asm(obj):
                             App.Console.PrintMessage(
                                 "[Asm] S1 found in active_asm.Group: {}/{}\n".format(
                                     obj.Document.Name, obj.Name))
                             return obj.Document.Name, obj.Name
             except Exception as _e:
                 App.Console.PrintMessage("[Asm] S1 active_asm.Group error: {}\n".format(_e))
-            # All open documents — only link-type objects (never bare AssemblyObjects)
-            for doc in App.listDocuments().values():
+            # Search documents (CURRENT doc first) for an activatable object —
+            # inline AssemblyObject OR link — whose label matches. Current-doc-
+            # first keeps single-file activation unambiguous.
+            _docs = []
+            try:
+                if App.ActiveDocument is not None:
+                    _docs.append(App.ActiveDocument)
+            except Exception:
+                pass
+            for _d in App.listDocuments().values():
+                if _d not in _docs:
+                    _docs.append(_d)
+            for doc in _docs:
                 for obj in doc.Objects:
                     try:
-                        if obj.Label in selected_labels and _is_asm_link(obj):
+                        if obj.Label in selected_labels and _is_activatable_asm(obj):
                             App.Console.PrintMessage(
                                 "[Asm] S1 found in doc {}: {}/{}\n".format(
                                     doc.Name, obj.Document.Name, obj.Name))
@@ -336,6 +368,33 @@ def _activate_assembly(doc_name, obj_name):
         )
     )
 
+    # Exit any in-progress edit (a body/sketch/part being edited) and clear the
+    # active part BEFORE switching activation. FreeCAD allows only ONE object in
+    # edit mode at a time, so when a PART is active/being edited, setEdit() on the
+    # target subassembly is silently blocked and the subassembly never becomes
+    # active. Resetting first makes "Activate Subassembly" work regardless of
+    # whether a part, the main assembly, or another subassembly was active.
+    try:
+        _cur_gd = Gui.ActiveDocument
+        if _cur_gd is not None:
+            try:
+                _cur_gd.resetEdit()
+            except Exception:
+                pass
+            try:
+                if _cur_gd.ActiveView is not None:
+                    _cur_gd.ActiveView.setActiveObject("pdbody", None)
+                    # Also release an active App::Part (e.g. a sheet-metal part)
+                    # so activating an assembly leaves ONLY the assembly active
+                    # (mirror of the pdbody release; skip assembly-type objects).
+                    _ap = _cur_gd.ActiveView.getActiveObject("part")
+                    if _ap is not None and not _ap.isDerivedFrom("Assembly::AssemblyObject"):
+                        _cur_gd.ActiveView.setActiveObject("part", None)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     if _is_asm_link_type(obj) and linked and linked.isDerivedFrom("Assembly::AssemblyObject"):
         # Assembly::AssemblyLink — activate in-context, no tab switch.
         # The cache (_active_asm_link_target) is the authoritative source.
@@ -437,17 +496,40 @@ def _activate_assembly(doc_name, obj_name):
             pass
         return
 
-    # App::Link or inline AssemblyObject: must switch to the owning document tab.
+    # App::Link or inline AssemblyObject: activate in the owning document.
     App.setActiveDocument(doc_name)
     gui_doc = Gui.getDocument(doc_name)
     Gui.ActiveDocument = gui_doc
-    gui_doc.setEdit(obj_name)
-    if linked and linked.isDerivedFrom("Assembly::AssemblyObject"):
+    # setEdit MUST succeed for an inline AssemblyObject: activeAssembly() only
+    # returns it when its ViewObject.isInEditMode() is True (UtilsAssembly ~116).
+    try:
+        gui_doc.setEdit(obj_name)
+    except Exception as _e:
+        App.Console.PrintMessage(
+            "[Asm] _activate_assembly: setEdit('{}') failed: {}\n".format(obj_name, _e))
+    # Mark it the active assembly so activeAssembly() (and every Insert command)
+    # resolves it. For an INLINE nested AssemblyObject there is NO LinkedObject —
+    # obj itself IS the assembly, so the old `linked and ...` guard skipped it and
+    # activation silently failed. Handle both: inline AssemblyObject OR a link
+    # whose target is an assembly.
+    is_inline_asm = False
+    try:
+        is_inline_asm = obj.isDerivedFrom("Assembly::AssemblyObject")
+    except Exception:
+        is_inline_asm = getattr(obj, "TypeId", "") == "Assembly::AssemblyObject"
+    if is_inline_asm or (linked and linked.isDerivedFrom("Assembly::AssemblyObject")):
         try:
             if gui_doc and gui_doc.ActiveView:
                 gui_doc.ActiveView.setActiveObject("assembly", obj)
         except Exception:
             pass
+    try:
+        _ime = obj.ViewObject.isInEditMode()
+        App.Console.PrintMessage(
+            "[Asm] _activate_assembly: '{}' active set, isInEditMode={}\n".format(
+                getattr(obj, "Label", obj_name), _ime))
+    except Exception:
+        pass
 
 
 def _find_activatable_assemblies(doc):
@@ -707,16 +789,73 @@ def _get_active_body_in_view():
         return None
 
 
+def _doc_is_assembly(doc):
+    """True if the document itself hosts an Assembly (top assembly OR a
+    subassembly — each subassembly is its own document/file)."""
+    try:
+        return any(getattr(o, "TypeId", "") == "Assembly::AssemblyObject"
+                   for o in doc.Objects)
+    except Exception:
+        return False
+
+
+def _frame_origin_planes(body, delay_ms=0):
+    """Make the body's origin planes visible and frame them (isometric + fitAll)
+    so the native sketch attachment dialog shows them clearly — like Part Design
+    — instead of tiny and edge-on (the default TOP view shows XZ/YZ as a thin
+    line). Optionally deferred so it runs after the attachment dialog opens."""
+    try:
+        from PySide import QtCore
+    except Exception:
+        QtCore = None
+
+    def _do():
+        try:
+            origin = getattr(body, "Origin", None)
+            if origin is not None:
+                try:
+                    origin.Visibility = True
+                except Exception:
+                    pass
+                for ref in getattr(origin, "OutList", []):
+                    try:
+                        ref.Visibility = True
+                    except Exception:
+                        pass
+            v = Gui.ActiveDocument.ActiveView if Gui.ActiveDocument else None
+            if v is not None:
+                try:
+                    v.viewIsometric()
+                except Exception:
+                    pass
+                try:
+                    v.fitAll()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    if QtCore is not None and delay_ms > 0:
+        QtCore.QTimer.singleShot(delay_ms, _do)
+    else:
+        _do()
+
+
 def _pick_sketch_plane(body):
-    """Modal plane picker for top-down sketch creation. Lists the body's base
-    planes (XY/XZ/YZ) and any datum planes. Returns the chosen plane object
-    or None if cancelled."""
+    """Interactive, NON-MODAL plane/face picker for top-down sketch creation.
+
+    Unlike a modal dialog, this keeps the 3D view live so the user can click a
+    base plane or a flat face directly in the workspace (Part Design style),
+    then press OK. A list of base/datum planes is offered as a fallback.
+
+    Returns (object, subelement) suitable for Sketch.AttachmentSupport, or None
+    if cancelled."""
     try:
         from PySide import QtWidgets, QtCore
     except Exception:
         return None
 
-    # Collect available planes from the body's Origin and any datum planes
+    # Collect base/datum planes for the fallback list
     options = []  # list of (label, plane_obj)
     try:
         origin = body.Origin
@@ -737,26 +876,36 @@ def _pick_sketch_plane(body):
     except Exception:
         pass
 
-    if not options:
-        QtWidgets.QMessageBox.warning(
-            Gui.getMainWindow(),
-            "New Sketch",
-            "No attachment planes found on the active body.",
-        )
-        return None
+    # Make the body's base planes visible so they can be clicked in the 3D view.
+    _restore_vis = []
+    try:
+        origin = body.Origin
+        try:
+            _restore_vis.append((origin, origin.Visibility))
+            origin.Visibility = True
+        except Exception:
+            pass
+        for ref in origin.OutList:
+            try:
+                _restore_vis.append((ref, ref.Visibility))
+                ref.Visibility = True
+            except Exception:
+                pass
+    except Exception:
+        pass
 
     dlg = QtWidgets.QDialog(Gui.getMainWindow())
     dlg.setWindowTitle("Select Sketch Plane")
-    dlg.setModal(True)
-    dlg.setMinimumWidth(420)
-    dlg.setMinimumHeight(300)
-    dlg.setWindowFlags(dlg.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
+    dlg.setModal(False)   # NON-modal so the 3D view stays interactive
+    dlg.setMinimumWidth(430)
+    dlg.setWindowFlags(
+        dlg.windowFlags() | QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.Tool)
 
     lay = QtWidgets.QVBoxLayout(dlg)
     header = QtWidgets.QLabel(
         "<b>Choose the attachment plane</b><br>"
-        "<span style='color:gray'>Select a base plane to sketch on. "
-        "The sketch will be added to the active body.</span>"
+        "<span style='color:gray'>Click a base plane or a flat face in the 3D "
+        "view, then press OK — or pick a base plane from the list below.</span>"
     )
     header.setWordWrap(True)
     lay.addWidget(header)
@@ -764,12 +913,17 @@ def _pick_sketch_plane(body):
     lst = QtWidgets.QListWidget()
     for label, _ in options:
         item = QtWidgets.QListWidgetItem(label)
-        item.setSizeHint(QtCore.QSize(0, 30))
+        item.setSizeHint(QtCore.QSize(0, 28))
         lst.addItem(item)
-    lst.setCurrentRow(0)
-    # Double-click selects and accepts
+    if options:
+        lst.setCurrentRow(0)
     lst.itemDoubleClicked.connect(lambda _it: dlg.accept())
     lay.addWidget(lst, 1)
+
+    status = QtWidgets.QLabel("")
+    status.setStyleSheet("color:#22aa77;")
+    status.setWordWrap(True)
+    lay.addWidget(status)
 
     btns = QtWidgets.QDialogButtonBox(
         QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
@@ -778,12 +932,143 @@ def _pick_sketch_plane(body):
     btns.rejected.connect(dlg.reject)
     lay.addWidget(btns)
 
-    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+    # Poll the 3D selection so the status reflects what the user clicked. When
+    # something valid is picked in the view it takes priority over the list.
+    def _refresh_status():
+        try:
+            ref = _selected_sketch_ref(body)
+            if ref is not None:
+                obj, sub = ref
+                status.setText("Picked in view: {}{}".format(
+                    getattr(obj, "Label", getattr(obj, "Name", "?")),
+                    (" · " + sub) if sub else ""))
+            else:
+                status.setText("")
+        except Exception:
+            status.setText("")
+
+    timer = QtCore.QTimer(dlg)
+    timer.setInterval(200)
+    timer.timeout.connect(_refresh_status)
+    timer.start()
+
+    # Frame the base planes so they read large and centred (like Part Design)
+    # instead of tiny in a corner. Clear any stale selection first so the
+    # picker starts empty and the view fit isn't biased.
+    try:
+        Gui.Selection.clearSelection()
+    except Exception:
+        pass
+
+    def _frame_planes():
+        try:
+            v = Gui.ActiveDocument.ActiveView
+            if v is None:
+                return
+            try:
+                v.viewIsometric()
+            except Exception:
+                pass
+            v.fitAll()
+        except Exception:
+            pass
+
+    QtCore.QTimer.singleShot(80, _frame_planes)
+
+    # Local event loop: blocks this function until the dialog closes, but the
+    # main window (and 3D view) keep processing events because the dialog is
+    # non-modal — that is what lets the user click a plane/face in the view.
+    dlg.show()
+    dlg.raise_()
+    loop = QtCore.QEventLoop()
+    dlg.finished.connect(lambda _r: loop.quit())
+    loop.exec_()
+    timer.stop()
+    accepted = dlg.result() == QtWidgets.QDialog.Accepted
+
+    # Restore original base-plane visibility
+    for obj, vis in _restore_vis:
+        try:
+            obj.Visibility = vis
+        except Exception:
+            pass
+
+    if not accepted:
         return None
+
+    # Prefer whatever the user clicked in the 3D view; else the highlighted row.
+    ref = _selected_sketch_ref(body)
+    if ref is not None:
+        return ref
     idx = lst.currentRow()
-    if idx < 0 or idx >= len(options):
+    if 0 <= idx < len(options):
+        return (options[idx][1], "")
+    return None
+
+
+def _selected_sketch_ref(body):
+    """If the user pre-selected a base/datum plane or a planar face belonging
+    to the active body, return (object, subelement) suitable for
+    Sketch.AttachmentSupport — so New Sketch behaves like Part Design and skips
+    the plane-picker dialog. Returns None when nothing usable is selected.
+
+    Resolves through the assembly's link chain down to the real object in the
+    body's OWN document (the sketch must attach to objects in that document)."""
+    try:
+        body_doc = body.Document
+    except Exception:
         return None
-    return options[idx][1]
+
+    _PLANE_TYPES = ("App::Plane", "PartDesign::Plane")
+
+    try:
+        sels = Gui.Selection.getSelectionEx("", 0)   # resolve=0 → keep link subnames
+    except Exception:
+        try:
+            sels = Gui.Selection.getSelectionEx()
+        except Exception:
+            return None
+
+    for sel in sels or []:
+        top = getattr(sel, "Object", None)
+        if top is None:
+            continue
+        for sub in (list(getattr(sel, "SubElementNames", None) or []) or [""]):
+            # Resolve the dotted link path to the tail object in body_doc.
+            tail = top
+            try:
+                chain = top.getSubObjectList(sub) if sub else [top]
+                if chain:
+                    tail = chain[-1]
+            except Exception:
+                tail = top
+            # Follow any remaining LinkedObject indirection into body_doc.
+            seen = 0
+            while (tail is not None
+                   and getattr(tail, "Document", None) is not body_doc
+                   and seen < 10):
+                lo = getattr(tail, "LinkedObject", None)
+                if lo is None or lo is tail:
+                    break
+                tail = lo
+                seen += 1
+            if tail is None or getattr(tail, "Document", None) is not body_doc:
+                continue
+
+            # Case 1: a base plane (XY/XZ/YZ) or a datum plane, picked directly.
+            if getattr(tail, "TypeId", "") in _PLANE_TYPES:
+                return (tail, "")
+
+            # Case 2: a planar face on a solid feature of the body.
+            elem = sub.split(".")[-1] if sub else ""
+            if elem.startswith("Face"):
+                try:
+                    face = tail.Shape.getElement(elem)
+                    if face.Surface.__class__.__name__ == "Plane":
+                        return (tail, elem)
+                except Exception:
+                    pass
+    return None
 
 
 def _find_doc_with_direct_link_to(body_doc, asm_doc):
@@ -918,6 +1203,17 @@ def _add_sketch_overlay(view, sketch, link, body):
         sep = coin.SoSeparator()
         sep.setName("AsmInplaceSketchOverlay")
 
+        # CRITICAL: make the whole overlay UNPICKABLE. These reference lines are
+        # drawn on top of the sketch's REAL (snappable) X/Y axes + origin. If the
+        # overlay stayed pickable, Coin would intercept the click/hover on the
+        # visible line and the Sketcher could not snap/constrain to the real axis
+        # behind it — which is exactly the "unable to take reference" problem.
+        # An UNPICKABLE overlay is purely visual and lets picks pass through to
+        # the real axes.
+        _pick = coin.SoPickStyle()
+        _pick.style.setValue(coin.SoPickStyle.UNPICKABLE)
+        sep.addChild(_pick)
+
         # Draw an axis line as a separator: SoBaseColor + SoLineSet on coords
         def _axis(start, end, color):
             grp = coin.SoSeparator()
@@ -993,6 +1289,128 @@ class _InplaceCleanupObserver:
             pass
 
 
+def _discover_link_subname(link, target, tails=None, max_depth=12):
+    """Discover the EXACT subname (relative to `link`) whose resolution is
+    `target`, validated with link.getSubObject(...) — the SAME resolver setEdit
+    uses — so a returned subname is guaranteed accepted by setEdit (no guessing).
+
+    Two mechanisms, because App::Link/AssemblyLink hides the deep hierarchy:
+      1. Walk getSubObjects() where available.
+      2. At EVERY node also probe explicit `tails` (e.g. '<body>.Sketch.',
+         'Sketch.'). This is essential: through a link, getSubObjects() often
+         returns [] for the nested part, yet an explicit path still resolves.
+    This is what lets us open a sketch nested several links deep (main asm →
+    subasm → part) while STAYING in the root tab. Returns the subname, or None."""
+    tgt_name = getattr(target, "Name", None)
+    tgt_doc = getattr(target, "Document", None)
+    tails = tails or []
+
+    def _same(o):
+        if o is target:
+            return True
+        try:
+            return (getattr(o, "Name", None) == tgt_name
+                    and getattr(o, "Document", None) is tgt_doc)
+        except Exception:
+            return False
+
+    def _resolve(subname):
+        try:
+            return link.getSubObject(subname, 1) if subname else link
+        except Exception:
+            return None
+
+    seen = set()
+
+    def rec(prefix, depth):
+        if depth > max_depth:
+            return None
+        cur = _resolve(prefix)
+        if cur is None:
+            return None
+        # (1) Probe explicit tails at this node — handles links whose
+        #     getSubObjects() is empty but explicit deep paths still resolve.
+        for t in tails:
+            full = prefix + t
+            obj = _resolve(full)
+            if obj is not None and _same(obj):
+                return full
+        # (2) Walk enumerated children.
+        try:
+            kids = cur.getSubObjects()
+        except Exception:
+            kids = None
+        for c in (kids or []):
+            full = prefix + c
+            if full in seen:
+                continue
+            seen.add(full)
+            obj = _resolve(full)
+            if obj is None:
+                continue
+            if _same(obj):
+                return full
+            r = rec(full, depth + 1)
+            if r:
+                return r
+        return None
+
+    return rec("", 0)
+
+
+def _dump_link_subtree(link, max_items=40):
+    """Log the immediate sub-object graph under `link` (2 levels) — diagnostic
+    used when subname discovery fails, so we can see the real child names."""
+    try:
+        kids = link.getSubObjects() or []
+        App.Console.PrintMessage("[Asm] subtree: '{}' children={}\n".format(
+            getattr(link, "Name", "?"), list(kids)[:max_items]))
+        for c in list(kids)[:max_items]:
+            try:
+                obj = link.getSubObject(c, 1)
+                gkids = obj.getSubObjects() if obj is not None else []
+                App.Console.PrintMessage("[Asm] subtree:   {} -> {} :: {}\n".format(
+                    c, getattr(obj, "Name", "?"), list(gkids or [])[:max_items]))
+            except Exception as _e:
+                App.Console.PrintMessage("[Asm] subtree:   {} -> <err {}>\n".format(c, _e))
+    except Exception as e:
+        App.Console.PrintMessage("[Asm] subtree: dump failed: {}\n".format(e))
+
+
+def _add_reference_axes(sketch, doc, length=50.0):
+    """Add two construction lines lying on the sketch's local X and Y axes,
+    anchored symmetric about the origin. Because they are ordinary sketch
+    geometry (unlike the native axes) they remain SELECTABLE when the sketch is
+    edited through a link — enabling symmetry/reference against the axes while
+    staying in the assembly tab. Returns (gx, gy) GeoIds or None."""
+    try:
+        import Sketcher
+        import Part
+    except Exception as e:
+        App.Console.PrintMessage("[Asm] ref-axes: import failed: {}\n".format(e))
+        return None
+    try:
+        L = float(length)
+        gx = sketch.addGeometry(
+            Part.LineSegment(App.Vector(-L, 0, 0), App.Vector(L, 0, 0)), True)
+        gy = sketch.addGeometry(
+            Part.LineSegment(App.Vector(0, -L, 0), App.Vector(0, L, 0)), True)
+        # Lie on the axes: horizontal / vertical, and centred on the origin
+        # (RootPoint = GeoId -1, PointPos 1) so each line passes through it.
+        sketch.addConstraint(Sketcher.Constraint('Horizontal', gx))
+        sketch.addConstraint(Sketcher.Constraint('Vertical', gy))
+        sketch.addConstraint(Sketcher.Constraint('Symmetric', gx, 1, gx, 2, -1, 1))
+        sketch.addConstraint(Sketcher.Constraint('Symmetric', gy, 1, gy, 2, -1, 1))
+        doc.recompute()
+        App.Console.PrintMessage(
+            "[Asm] ref-axes: added pickable X/Y construction axes (gx={}, gy={})\n".format(
+                gx, gy))
+        return (gx, gy)
+    except Exception as e:
+        App.Console.PrintMessage("[Asm] ref-axes: add failed: {}\n".format(e))
+        return None
+
+
 def _new_sketch_in_active_body_inplace():
     """Top-down sketch creation: ask for a plane, create the Sketch on the
     active body (in its document), and try to enter edit mode in the
@@ -1012,16 +1430,26 @@ def _new_sketch_in_active_body_inplace():
         body_doc = body.Document
         asm_doc = App.ActiveDocument
 
-        # Ask the user which plane to attach to
-        App.Console.PrintMessage("[Asm] inplace: showing plane picker dialog\n")
-        plane = _pick_sketch_plane(body)
-        if plane is None:
-            App.Console.PrintMessage("[Asm] inplace: plane picker cancelled\n")
-            return
+        # Prefer a plane / planar face the user pre-selected (Part Design
+        # behaviour). Only fall back to the modal picker when nothing usable
+        # is selected.
+        ref = _selected_sketch_ref(body)
+        if ref is not None:
+            plane, plane_sub = ref
+            App.Console.PrintMessage(
+                "[Asm] inplace: using pre-selected attachment '{}.{}'\n".format(
+                    getattr(plane, "Name", "?"), plane_sub))
+        else:
+            App.Console.PrintMessage("[Asm] inplace: showing interactive plane picker\n")
+            picked = _pick_sketch_plane(body)
+            if picked is None:
+                App.Console.PrintMessage("[Asm] inplace: plane picker cancelled\n")
+                return
+            plane, plane_sub = picked
 
         App.setActiveTransaction("Create sketch")
         sketch = body_doc.addObject("Sketcher::SketchObject", "Sketch")
-        sketch.AttachmentSupport = [(plane, "")]
+        sketch.AttachmentSupport = [(plane, plane_sub)]
         sketch.MapMode = "FlatFace"
         body.addObject(sketch)
         body_doc.recompute()
@@ -1101,17 +1529,25 @@ def _new_sketch_in_active_body_inplace():
             except Exception:
                 pass
 
-        # Strategy 0: when the body lives via a multi-level link chain
-        # (main asm → subasm → body), FreeCAD's setEdit-via-link cannot
-        # traverse the chain. Fall back to the LEVEL that has a direct link
-        # to the body — typically the subasm document. Switch active doc to
-        # the subasm doc and use the same in-place technique that works for
-        # the direct case. Auto-return to the original (main asm) tab when
-        # the sketch closes.
-        direct_link_doc = _find_doc_with_direct_link_to(body_doc, asm_doc)
-        if direct_link_doc is not None and direct_link_doc is not asm_doc:
+        # NOTE: an earlier revision made the PRIMARY path switch to the part's
+        # OWN document for a native Sketcher edit (real snappable axes). That
+        # broke the top-down workflow — the user must stay in the MAIN ASSEMBLY
+        # tab to model a part in assembly context. So we keep the in-place
+        # through-link strategies below (Strategy 0/1) as the primary path and
+        # never switch tabs for a direct part.
+
+        # Subassembly-level FALLBACK — defined here but CALLED ONLY AFTER the
+        # stay-in-tab root strategy (Strategy 1) below fails. The user's rule is
+        # to stay in the CURRENT (root) tab, so a tab switch is a last resort.
+        # For a multi-level chain (main asm → subasm → body), if FreeCAD's root
+        # setEdit can't traverse the chain, this switches to the subasm doc (with
+        # auto-return) so at least the sketch opens.
+        def _subasm_switch_fallback():
+            direct_link_doc = _find_doc_with_direct_link_to(body_doc, asm_doc)
+            if direct_link_doc is None or direct_link_doc is asm_doc:
+                return False
             App.Console.PrintMessage(
-                "[Asm] inplace: using subasm-level in-place edit (doc='{}')\n".format(
+                "[Asm] inplace: FALLBACK subasm-level in-place edit (doc='{}')\n".format(
                     direct_link_doc.Name))
             try:
                 inner_link, _ = _find_link_to_body_doc(direct_link_doc, body_doc)
@@ -1147,13 +1583,15 @@ def _new_sketch_in_active_body_inplace():
                         except Exception:
                             pass
                         _fit_view_to_sketch()
-                        return
+                        return True
                     else:
                         App.Console.PrintMessage("[Asm] inplace: subasm-level returned False\n")
             except Exception as e:
                 App.Console.PrintMessage("[Asm] inplace: subasm-level raised: {}\n".format(e))
+            return False
 
-        # Strategy 1: edit the sketch through a link in the assembly doc.
+        # Strategy 1 (PRIMARY, stay-in-tab): edit the sketch through a link in
+        # the CURRENT assembly doc — this keeps the user in the root tab.
         # This is how FreeCAD edits objects in linked documents in-place.
         if asm_doc is not body_doc:
             link, sub_prefix = _find_link_to_body_doc(asm_doc, body_doc)
@@ -1188,6 +1626,50 @@ def _new_sketch_in_active_body_inplace():
                     cleaned = ".".join(p.lstrip("_") for p in pfx_no_trail.split(".")) + "."
                     if cleaned != sub_prefix:
                         candidates.append(cleaned + bn + "." + sn + ".")
+                # The tail of the subname (path from the deepest link down to the
+                # sketch). Through a link, the body appears under its own Name,
+                # so '<bodyName>.Sketch.' is the shape that resolves (proven by
+                # the subasm-level case using '_443.Sketch.').
+                tails = [
+                    bn + "." + sn + ".",
+                    sn + ".",
+                    bn.lstrip("_") + "." + sn + ".",
+                    lbl_body + "." + lbl_sketch + ".",
+                ]
+                # CRITICAL: from the root, the inner link is exposed under a
+                # DIFFERENT name than in its own doc (the subtree dump showed
+                # 'Link001', not 'Link'). So build candidates from the OUTER
+                # link's ACTUAL enumerated child names + each tail — this is the
+                # segment every earlier guess got wrong.
+                try:
+                    real_children = list(link.getSubObjects() or [])
+                except Exception:
+                    real_children = []
+                graph_cands = []
+                for ch in real_children:
+                    for t in tails:
+                        graph_cands.append(ch + t)
+                # Prepend real-child candidates (most likely correct).
+                for gc in reversed(graph_cands):
+                    candidates.insert(0, gc)
+                # BEST: ask FreeCAD's own resolver for the exact subname (no
+                # guessing), probing explicit tails at every node. Try it FIRST —
+                # it is guaranteed valid.
+                discovered = None
+                try:
+                    discovered = _discover_link_subname(link, sketch, tails=tails)
+                except Exception as _e:
+                    App.Console.PrintMessage(
+                        "[Asm] inplace: subname discovery raised: {}\n".format(_e))
+                if discovered:
+                    App.Console.PrintMessage(
+                        "[Asm] inplace: DISCOVERED exact subname '{}'\n".format(discovered))
+                    candidates.insert(0, discovered)
+                else:
+                    App.Console.PrintMessage(
+                        "[Asm] inplace: subname discovery found no path to sketch; "
+                        "dumping subtree for diagnosis\n")
+                    _dump_link_subtree(link)
                 App.Console.PrintMessage(
                     "[Asm] inplace: body.Name='{}' sketch.Name='{}' sub_prefix='{}'\n".format(
                         body.Name, sketch.Name, sub_prefix))
@@ -1226,6 +1708,11 @@ def _new_sketch_in_active_body_inplace():
                 return
         except Exception as e:
             App.Console.PrintMessage("[Asm] inplace: direct setEdit raised: {}\n".format(e))
+
+        # Root strategies couldn't open the sketch in this tab. Only NOW do we
+        # allow the subassembly-level tab switch (last-resort fallback).
+        if _subasm_switch_fallback():
+            return
 
         # Strategy 3 (fallback): switch to body's doc tab and open sketcher there.
         # Install auto-return observer so we come back to the assembly tab on close.
@@ -1466,35 +1953,38 @@ def _new_sketch_with_auto_return():
             App.Console.PrintMessage("[Asm] auto-return: no active body\n")
             return
         body_doc = body.Document
-        asm_doc_name = App.ActiveDocument.Name
+        cur_doc_name = App.ActiveDocument.Name
 
-        # If we're already in the body's doc, no need for auto-return
-        if body_doc.Name == asm_doc_name:
+        # A top-down part lives INSIDE an assembly document — the top assembly
+        # OR a subassembly (each subassembly is its own file). In that case we
+        # edit natively in that document's tab and STAY there: no auto-return.
+        # A linked separate-.prt body (Create New Part) is NOT an assembly doc,
+        # so it keeps the switch-and-return behaviour.
+        body_doc_is_assembly = _doc_is_assembly(body_doc)
+
+        # If the body lives in the VISIBLE tab's document, edit it natively in
+        # place — full snappable axes/origin/symmetry, staying in this tab.
+        # (With top-down parts now born in the visible tab, this is the path.)
+        if body_doc.Name == cur_doc_name:
+            _frame_origin_planes(body)
             Gui.runCommand("PartDesign_NewSketch")
+            _frame_origin_planes(body, delay_ms=150)
             return
 
-        # Install the observer BEFORE switching docs and starting edit
-        observer = _AutoReturnObserver(asm_doc_name)
-        try:
-            Gui.addDocumentObserver(observer)
-        except Exception as e:
-            App.Console.PrintMessage("[Asm] addDocumentObserver failed: {}\n".format(e))
-
-        # Switch to body doc and re-assert active body
-        App.setActiveDocument(body_doc.Name)
-        try:
-            Gui.ActiveDocument = Gui.getDocument(body_doc.Name)
-        except Exception:
-            pass
-        try:
-            bd_gui = Gui.getDocument(body_doc.Name)
-            if bd_gui and bd_gui.ActiveView:
-                bd_gui.ActiveView.setActiveObject("pdbody", body)
-        except Exception:
-            pass
-
-        # Run the native PartDesign_NewSketch — full UX (plane picker, axes, etc.)
-        Gui.runCommand("PartDesign_NewSketch")
+        # The active body lives in a DIFFERENT file than the visible tab (e.g. a
+        # linked separate-.prt part activated from the assembly). The user's rule
+        # is: NEVER auto-switch tabs. So we do NOT jump to the body's document.
+        # Instead we edit the sketch THROUGH THE LINK, staying in the current
+        # tab. (Note: a sketch edited through a link cannot natively snap its own
+        # X/Y axes — that's a hard FreeCAD limit — so for axis-referenced
+        # symmetry the part must be created top-down in this tab, or opened in
+        # its own tab. But we honour the stay-in-tab rule as asked.)
+        _ = body_doc_is_assembly  # (kept for clarity; no longer drives a switch)
+        App.Console.PrintMessage(
+            "[Asm] New Sketch: body '{}' is in another file ('{}'); editing "
+            "through the link, staying in tab '{}'\n".format(
+                body.Name, body_doc.Name, cur_doc_name))
+        _new_sketch_in_active_body_inplace()
     except Exception as e:
         App.Console.PrintMessage("[Asm] _new_sketch_with_auto_return failed: {}\n".format(e))
 
@@ -1580,6 +2070,76 @@ def _run_pd_cmd_in_body_doc(part_design_cmd):
             part_design_cmd, e))
 
 
+_BNC_PD_ICON_STEMS = (
+    "PartDesign_Pad", "PartDesign_Pocket", "PartDesign_Revolution",
+    "PartDesign_Hole", "PartDesign_SubShapeBinder",
+)
+_bnc_registered_icons = {}
+
+
+def _register_bnc_pd_icons():
+    """Register the custom 3D PartDesign icons under NEW cache names ("BNC_<x>")
+    so the Part Tools panel can request them and get the same icons the Part
+    Design toolbar shows. Uses BitmapFactory's cache (checked first), avoiding
+    the standard registered icon. Safe to call repeatedly."""
+    # Wrapped whole-body so this can NEVER break the Assembly module import.
+    try:
+        import FreeCADGui as _Gui
+        try:
+            from PySide import QtGui, QtCore, QtSvg
+        except Exception:
+            from PySide2 import QtGui, QtCore, QtSvg
+        icons_dir = os.path.join(App.getHomePath(), "data", "Mod", "PartDesign",
+                                 "Resources", "icons")
+        for stem in _BNC_PD_ICON_STEMS:
+            reg_name = "BNC_" + stem
+            path = os.path.join(icons_dir, stem + ".svg")
+            if not os.path.exists(path):
+                continue
+            try:
+                cached = False
+                try:
+                    cached = bool(_Gui.isIconCached(reg_name))
+                except Exception:
+                    cached = False
+                if not cached:
+                    # Render SVG -> PNG bytes (reliable) and register that.
+                    img = QtGui.QImage(64, 64, QtGui.QImage.Format_ARGB32)
+                    img.fill(QtCore.Qt.transparent)
+                    rnd = QtSvg.QSvgRenderer(path)
+                    pnt = QtGui.QPainter(img)
+                    rnd.render(pnt)
+                    pnt.end()
+                    buf = QtCore.QBuffer()
+                    buf.open(QtCore.QIODevice.WriteOnly)
+                    img.save(buf, "PNG")
+                    _Gui.addIcon(reg_name, bytes(buf.data()), "PNG")
+                _bnc_registered_icons[stem] = reg_name
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _resolve_pd_pixmap(name):
+    """Return the custom-icon pixmap for a PartDesign command name: the
+    registered "BNC_<name>" cache entry if available, else the absolute path to
+    the custom SVG, else the plain name."""
+    if not _bnc_registered_icons:
+        _register_bnc_pd_icons()   # lazy: GUI may not have been ready at import
+    if name in _bnc_registered_icons:
+        return _bnc_registered_icons[name]
+    try:
+        if name:
+            p = os.path.join(App.getHomePath(), "data", "Mod", "PartDesign",
+                             "Resources", "icons", str(name) + ".svg")
+            if os.path.exists(p):
+                return p
+    except Exception:
+        pass
+    return name
+
+
 class _BaseBodyCmd:
     """Base for body-context wrapper commands."""
     _PD_CMD = ""
@@ -1589,7 +2149,7 @@ class _BaseBodyCmd:
 
     def GetResources(self):
         return {
-            "Pixmap": self._PIXMAP,
+            "Pixmap": _resolve_pd_pixmap(self._PIXMAP),
             "MenuText": self._MENU,
             "ToolTip": self._TOOLTIP,
         }
@@ -1611,10 +2171,501 @@ class CommandBodyNewSketch(_BaseBodyCmd):
     _PD_CMD = "PartDesign_NewSketch"
     _MENU = "New Sketch"
     _PIXMAP = "Sketcher_NewSketch"
-    _TOOLTIP = "Create a new sketch on the active body (top-down, stays in assembly tab)."
+    _TOOLTIP = "Create a new sketch on the active body (opens the part with the full Part Design sketcher)."
 
     def Activated(self):
-        _new_sketch_in_active_body_inplace()
+        # HARD FreeCAD limit: a sketch edited THROUGH a link (staying in the
+        # assembly tab) cannot select/snap its own X/Y axes or origin — so
+        # symmetry/dimension-from-origin is impossible there. The ONLY way to
+        # get those native references is a native edit in the part's own doc.
+        # So we switch to the part's tab, run the real Sketcher, and auto-return
+        # to the assembly when the sketch closes. Assembly-level references are
+        # available via "Reference Assembly" (cross-doc SubShapeBinders), so the
+        # part tab loses nothing.
+        _new_sketch_with_auto_return()
+
+
+# ============================================================================
+# PHASE 1 — Creo-style "Copy Geometry" for top-down design.
+#
+# Imports the assembly's datums (origin planes/axes/point) into the active part
+# as associative PartDesign::SubShapeBinders. A SubShapeBinder is FreeCAD's only
+# sanctioned cross-part / cross-document reference (the Sketcher explicitly
+# refuses direct cross-part refs and says "should be done via shapebinders").
+# Once imported, a sketch in the part can project these via Sketcher 'External
+# geometry' and constrain/dimension to them; BindMode=Synchronized keeps them
+# associative so they follow the assembly when it changes.
+# ============================================================================
+
+def _assembly_of_body(body):
+    """Return the Assembly / App::Part that owns the assembly-level datums for
+    this body (active assembly first, else nearest App::Part ancestor)."""
+    try:
+        asm = UtilsAssembly.activeAssembly()
+        if asm is not None:
+            return asm
+    except Exception:
+        pass
+    seen = set()
+    stack = list(getattr(body, "InList", []))
+    while stack:
+        o = stack.pop()
+        if o is None or getattr(o, "Name", None) in seen:
+            continue
+        seen.add(o.Name)
+        if getattr(o, "TypeId", "") in ("Assembly::AssemblyObject", "App::Part"):
+            return o
+        stack.extend(getattr(o, "InList", []))
+    return None
+
+
+def _assembly_datums(asm, selected_only=False):
+    """Origin datum objects (App::Plane/Line/Point) of the assembly. When
+    selected_only, return just the ones the user pre-selected (or [])."""
+    try:
+        all_datums = [o for o in asm.Origin.OutList
+                      if getattr(o, "TypeId", "") in
+                      ("App::Plane", "App::Line", "App::Point")]
+    except Exception:
+        all_datums = []
+    if selected_only:
+        try:
+            names = {s.Name for s in Gui.Selection.getSelection()}
+            return [d for d in all_datums if d.Name in names]
+        except Exception:
+            return []
+    return all_datums
+
+
+def _reference_assembly_geometry():
+    """Import the assembly datums into the active part body as Synchronized
+    SubShapeBinders so sketches can reference the assembly coordinate frame."""
+    try:
+        body = _get_active_body_in_view()
+        if body is None:
+            QtWidgets.QMessageBox.information(
+                Gui.getMainWindow(), "Reference Assembly",
+                "Activate a part first (no active body in the view).")
+            return
+        asm = _assembly_of_body(body)
+        if asm is None:
+            QtWidgets.QMessageBox.warning(
+                Gui.getMainWindow(), "Reference Assembly",
+                "No assembly found for the active part.")
+            return
+
+        datums = _assembly_datums(asm, selected_only=True)
+        if not datums:
+            datums = _assembly_datums(asm, selected_only=False)
+        if not datums:
+            QtWidgets.QMessageBox.warning(
+                Gui.getMainWindow(), "Reference Assembly",
+                "The assembly has no origin datums to reference.")
+            return
+
+        existing = {getattr(b, "Label", ""): b for b in getattr(body, "Group", [])
+                    if getattr(b, "TypeId", "") == "PartDesign::SubShapeBinder"}
+        made = []
+        App.setActiveTransaction("Reference Assembly Geometry")
+        try:
+            for d in datums:
+                role = getattr(d, "Role", "") or d.Name
+                label = "Asm_" + role
+                if label in existing:
+                    continue
+                binder = body.newObject("PartDesign::SubShapeBinder", "AsmRef")
+                binder.Label = label
+                try:
+                    binder.Support = [(d, [""])]
+                except Exception:
+                    binder.Support = [(d, "")]
+                for prop, val in (("BindMode", "Synchronized"), ("Relative", True)):
+                    try:
+                        setattr(binder, prop, val)
+                    except Exception:
+                        pass
+                made.append(label)
+            body.Document.recompute()
+        finally:
+            App.closeActiveTransaction()
+
+        App.Console.PrintMessage(
+            "[Asm] Reference Assembly: imported {} binder(s) into '{}': {}\n"
+            .format(len(made), body.Label, ", ".join(made)))
+        QtWidgets.QMessageBox.information(
+            Gui.getMainWindow(), "Reference Assembly",
+            "Imported {} assembly reference(s) into '{}':\n  {}\n\n"
+            "Next: inside a sketch on this part, click Sketcher → "
+            "'External geometry' and pick these imported axes / planes / origin "
+            "to project them into the sketch. You can then dimension and "
+            "constrain to them, and they update when the assembly moves."
+            .format(len(made), body.Label,
+                    ", ".join(made) if made else "(all already present)"))
+    except Exception as e:
+        try:
+            App.closeActiveTransaction()
+        except Exception:
+            pass
+        App.Console.PrintError("[Asm] Reference Assembly failed: {}\n".format(e))
+
+
+# ----------------------------------------------------------------------------
+# PHASE 2 — Copy Geometry from ANOTHER COMPONENT (part/sub-assembly edges/faces)
+#
+# FreeCAD's Sketcher hard-blocks external geometry across parts/bodies/docs
+# (isExternalAllowed rejects rlOtherBody/rlOtherPart/rlOtherDoc) — the only
+# sanctioned cross-part reference is a SubShapeBinder. This imports the
+# pre-selected edges/faces of OTHER components into the active body as
+# associative binders, so a sketch on the active part can then project them via
+# Sketcher 'External geometry' and constrain/dimension to them.
+# ----------------------------------------------------------------------------
+
+def _reference_component_geometry():
+    """Copy Geometry: import the pre-selected edges/faces of other components
+    into the active body as Synchronized SubShapeBinders."""
+    try:
+        body = _get_active_body_in_view()
+        if body is None:
+            QtWidgets.QMessageBox.information(
+                Gui.getMainWindow(), "Reference Part",
+                "Activate the part you are designing first (no active body in "
+                "the view).")
+            return
+        asm = _assembly_of_body(body)
+
+        # Collect (sourceComponent, relativeSub) picks from the current selection.
+        picks = []          # ordered list of (component, subname)
+        try:
+            sel_ex = Gui.Selection.getSelectionEx()
+        except Exception:
+            sel_ex = []
+        for s in sel_ex:
+            root = s.Object
+            for sub in (getattr(s, "SubElementNames", []) or []):
+                if not sub:
+                    continue
+                leaf = sub.split(".")[-1]
+                if not (leaf.startswith("Edge") or leaf.startswith("Face")
+                        or leaf.startswith("Vertex")):
+                    continue
+                comp, relsub = None, ""
+                if asm is not None:
+                    try:
+                        comp, relsub = UtilsAssembly.getComponentReference(
+                            asm, root, sub)
+                    except Exception:
+                        comp, relsub = None, ""
+                if comp is None:
+                    # Same-document body (no assembly-relative path) — reference
+                    # the picked object/sub directly.
+                    comp, relsub = root, sub
+                # Nothing to copy from the active body itself.
+                if comp is body:
+                    continue
+                picks.append((comp, relsub))
+
+        if not picks:
+            QtWidgets.QMessageBox.information(
+                Gui.getMainWindow(), "Reference Part",
+                "Select one or more edges / faces on ANOTHER part first, then "
+                "run Reference Part.\n\nExternal projection cannot cross parts "
+                "directly — this copies the picked geometry into the active "
+                "part as an associative reference so a sketch can project it.")
+            return
+
+        # Group picks by source component so each binder carries one part's subs.
+        groups = {}         # comp.Name -> [comp, [subs]]
+        order = []
+        for comp, relsub in picks:
+            key = comp.Name
+            if key not in groups:
+                groups[key] = [comp, []]
+                order.append(key)
+            if relsub not in groups[key][1]:
+                groups[key][1].append(relsub)
+
+        made = []
+        App.setActiveTransaction("Reference Part Geometry")
+        try:
+            for key in order:
+                comp, subs = groups[key]
+                binder = body.newObject("PartDesign::SubShapeBinder", "PartRef")
+                binder.Label = "Ref_" + (getattr(comp, "Label", "") or comp.Name)
+                try:
+                    binder.Support = [(comp, subs)]
+                except Exception:
+                    binder.Support = [(comp, subs[0])]
+                for prop, val in (("BindMode", "Synchronized"), ("Relative", True)):
+                    try:
+                        setattr(binder, prop, val)
+                    except Exception:
+                        pass
+                if asm is not None:
+                    try:
+                        binder.Context = asm
+                    except Exception:
+                        pass
+                # Make the binder visible so the Sketcher 'External geometry'
+                # tool can pick its edges/faces inside a sketch (an invisible
+                # binder cannot be clicked to project).
+                try:
+                    if binder.ViewObject is not None:
+                        binder.ViewObject.Visibility = True
+                except Exception:
+                    pass
+                made.append(binder.Label)
+            body.Document.recompute()
+        finally:
+            App.closeActiveTransaction()
+
+        App.Console.PrintMessage(
+            "[Asm] Reference Part: imported {} binder(s) into '{}': {}\n"
+            .format(len(made), body.Label, ", ".join(made)))
+        QtWidgets.QMessageBox.information(
+            Gui.getMainWindow(), "Reference Part",
+            "Imported {} part reference(s) into '{}':\n  {}\n\n"
+            "Next: inside a sketch on this part, click Sketcher → "
+            "'External geometry' (G, X) and pick the imported edges/faces to "
+            "project them. They update when the source part changes."
+            .format(len(made), body.Label, ", ".join(made)))
+    except Exception as e:
+        try:
+            App.closeActiveTransaction()
+        except Exception:
+            pass
+        App.Console.PrintError("[Asm] Reference Part failed: {}\n".format(e))
+
+
+class CommandReferenceAssembly:
+    """Creo-style Copy Geometry: import assembly datums into the active part as
+    associative references so sketches can constrain to the assembly frame."""
+
+    def GetResources(self):
+        return {
+            "Pixmap": _resolve_pd_pixmap("PartDesign_SubShapeBinder"),
+            "MenuText": "Reference Assembly",
+            "ToolTip": "Import the assembly's origin/datums into the active part "
+                       "as associative references (Copy Geometry), so sketches "
+                       "can constrain to the assembly frame. Pre-select specific "
+                       "assembly datums, or run with none selected to import all.",
+        }
+
+    def IsActive(self):
+        try:
+            gd = Gui.ActiveDocument
+            return bool(gd and gd.ActiveView
+                        and gd.ActiveView.getActiveObject("pdbody"))
+        except Exception:
+            return False
+
+    def Activated(self):
+        _reference_assembly_geometry()
+
+
+class CommandReferenceComponent:
+    """Creo-style Copy Geometry from another part: import pre-selected edges/
+    faces of other components into the active part as associative references so
+    a sketch can project them (External geometry)."""
+
+    def GetResources(self):
+        return {
+            "Pixmap": _resolve_pd_pixmap("PartDesign_SubShapeBinder"),
+            "MenuText": "Reference Part",
+            "ToolTip": "Copy Geometry: import the selected edges/faces of "
+                       "ANOTHER part into the active part as associative "
+                       "references, so a sketch can project (External geometry) "
+                       "and constrain to them. Pre-select edges/faces on the "
+                       "other part, then run this.",
+        }
+
+    def IsActive(self):
+        try:
+            gd = Gui.ActiveDocument
+            return bool(gd and gd.ActiveView
+                        and gd.ActiveView.getActiveObject("pdbody"))
+        except Exception:
+            return False
+
+    def Activated(self):
+        _reference_component_geometry()
+
+
+def _sketch_in_edit():
+    """Return the Sketcher::SketchObject currently open for editing, else None."""
+    try:
+        vp = Gui.ActiveDocument.getInEdit()
+        obj = getattr(vp, "Object", None) if vp is not None else None
+        if obj is not None and getattr(obj, "TypeId", "") == "Sketcher::SketchObject":
+            return obj
+    except Exception:
+        pass
+    # Fallback: a single selected sketch (not being edited yet).
+    try:
+        for s in Gui.Selection.getSelection():
+            if getattr(s, "TypeId", "") == "Sketcher::SketchObject":
+                return s
+    except Exception:
+        pass
+    return None
+
+
+def _body_of_sketch(sketch):
+    for p in getattr(sketch, "InList", []):
+        if getattr(p, "TypeId", "") == "PartDesign::Body":
+            return p
+    return _get_active_body_in_view()
+
+
+def _project_external_into_current_sketch():
+    """Creo-style 'project': copy the pre-selected edges/faces of OTHER parts
+    into the sketch's body as SubShapeBinders AND immediately project them into
+    the currently-edited sketch as external geometry. One click, inside the
+    sketch, since FreeCAD forbids projecting another part's geometry directly."""
+    try:
+        sketch = _sketch_in_edit()
+        if sketch is None:
+            QtWidgets.QMessageBox.information(
+                Gui.getMainWindow(), "Project External Part",
+                "Open a sketch for editing first, then (in the 3D view) select "
+                "edges/faces on ANOTHER part and click Project External Part.")
+            return
+        body = _body_of_sketch(sketch)
+        if body is None:
+            QtWidgets.QMessageBox.warning(
+                Gui.getMainWindow(), "Project External Part",
+                "Could not find the part body that owns this sketch.")
+            return
+        asm = _assembly_of_body(body)
+
+        picks = []
+        try:
+            sel_ex = Gui.Selection.getSelectionEx()
+        except Exception:
+            sel_ex = []
+        for s in sel_ex:
+            root = s.Object
+            if root is sketch:
+                continue
+            for sub in (getattr(s, "SubElementNames", []) or []):
+                if not sub:
+                    continue
+                leaf = sub.split(".")[-1]
+                if not (leaf.startswith("Edge") or leaf.startswith("Face")
+                        or leaf.startswith("Vertex")):
+                    continue
+                comp, relsub = None, ""
+                if asm is not None:
+                    try:
+                        comp, relsub = UtilsAssembly.getComponentReference(
+                            asm, root, sub)
+                    except Exception:
+                        comp, relsub = None, ""
+                if comp is None:
+                    comp, relsub = root, sub
+                if comp is body:
+                    continue
+                picks.append((comp, relsub))
+
+        if not picks:
+            QtWidgets.QMessageBox.information(
+                Gui.getMainWindow(), "Project External Part",
+                "Select one or more edges / faces on ANOTHER part in the 3D "
+                "view first, then click Project External Part.\n\n(FreeCAD can't "
+                "project another part directly — this copies the picked geometry "
+                "into this part and projects it into the sketch.)")
+            return
+
+        groups, order = {}, []
+        for comp, relsub in picks:
+            key = comp.Name
+            if key not in groups:
+                groups[key] = [comp, []]
+                order.append(key)
+            if relsub not in groups[key][1]:
+                groups[key][1].append(relsub)
+
+        total = 0
+        App.setActiveTransaction("Project External Part")
+        try:
+            for key in order:
+                comp, subs = groups[key]
+                binder = body.newObject("PartDesign::SubShapeBinder", "PartRef")
+                binder.Label = "Ref_" + (getattr(comp, "Label", "") or comp.Name)
+                try:
+                    binder.Support = [(comp, subs)]
+                except Exception:
+                    binder.Support = [(comp, subs[0])]
+                for prop, val in (("BindMode", "Synchronized"), ("Relative", True)):
+                    try:
+                        setattr(binder, prop, val)
+                    except Exception:
+                        pass
+                if asm is not None:
+                    try:
+                        binder.Context = asm
+                    except Exception:
+                        pass
+                try:
+                    if binder.ViewObject is not None:
+                        binder.ViewObject.Visibility = True
+                except Exception:
+                    pass
+                body.Document.recompute()
+                # Project every edge of the imported geometry into the sketch.
+                nedges = len(binder.Shape.Edges) if binder.Shape else 0
+                for i in range(nedges):
+                    try:
+                        sketch.addExternal(binder.Name, "Edge%d" % (i + 1))
+                        total += 1
+                    except Exception:
+                        pass
+            body.Document.recompute()
+        finally:
+            App.closeActiveTransaction()
+
+        try:
+            if Gui.ActiveDocument and Gui.ActiveDocument.ActiveView:
+                Gui.ActiveDocument.ActiveView.redraw()
+        except Exception:
+            pass
+        App.Console.PrintMessage(
+            "[Asm] Project External Part: projected {} edge(s) into '{}'.\n"
+            .format(total, sketch.Label))
+        if total == 0:
+            QtWidgets.QMessageBox.information(
+                Gui.getMainWindow(), "Project External Part",
+                "Created the reference but could not auto-project. Use Sketcher "
+                "'External geometry' (G, X) and click the new 'Ref_...' edges.")
+    except Exception as e:
+        try:
+            App.closeActiveTransaction()
+        except Exception:
+            pass
+        App.Console.PrintError("[Asm] Project External Part failed: {}\n".format(e))
+
+
+class CommandProjectExternalPart:
+    """Creo-style project: while editing a sketch, project the pre-selected
+    edges/faces of another part into the sketch (via an associative binder)."""
+
+    def GetResources(self):
+        return {
+            "Pixmap": _resolve_pd_pixmap("PartDesign_SubShapeBinder"),
+            "MenuText": "Project External Part",
+            "ToolTip": "While editing a sketch, project the selected edges/faces "
+                       "of ANOTHER part into the current sketch as external "
+                       "geometry (Creo-style Project). Select the other part's "
+                       "edges/faces in the 3D view first.",
+        }
+
+    def IsActive(self):
+        try:
+            return _sketch_in_edit() is not None
+        except Exception:
+            return False
+
+    def Activated(self):
+        _project_external_into_current_sketch()
 
 
 class CommandBodyPad(_BaseBodyCmd):
@@ -1723,6 +2774,9 @@ if App.GuiUp:
     Gui.addCommand("Assembly_ActivateObject", CommandActivateObject())
     Gui.addCommand("Assembly_ActivateMainAssembly", CommandActivateMainAssembly())
     Gui.addCommand("Assembly_ActivatePart", CommandActivatePart())
+    Gui.addCommand("Assembly_ReferenceAssembly", CommandReferenceAssembly())
+    Gui.addCommand("Assembly_ReferenceComponent", CommandReferenceComponent())
+    Gui.addCommand("Assembly_ProjectExternalPart", CommandProjectExternalPart())
     Gui.addCommand("Assembly_BodyNewSketch",  CommandBodyNewSketch())
     Gui.addCommand("Assembly_BodyPad",        CommandBodyPad())
     Gui.addCommand("Assembly_BodyPocket",     CommandBodyPocket())

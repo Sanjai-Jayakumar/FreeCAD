@@ -184,10 +184,17 @@ def number_of_components_in(assembly):
             i = i + obj.ElementCount
             continue
 
-        if obj.isDerivedFrom("Assembly::AssemblyObject") or obj.isDerivedFrom(
-            "Assembly::AssemblyLink"
-        ):
+        if obj.isDerivedFrom("Assembly::AssemblyLink"):
+            # A linked subassembly: keep the existing (C++-matching) recursion.
             i = i + number_of_components_in(obj)
+            continue
+
+        if obj.isDerivedFrom("Assembly::AssemblyObject"):
+            # A NESTED (single-file) subassembly is ONE rigid component that can
+            # be jointed as a unit in the parent. Count it as 1 — do NOT recurse
+            # into its internal parts, else an EMPTY subassembly counts as 0 and
+            # wrongly disables the joint/constraint commands in the parent.
+            i = i + 1
             continue
 
         if obj.isDerivedFrom("App::Link"):

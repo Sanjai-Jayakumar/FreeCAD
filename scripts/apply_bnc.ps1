@@ -64,7 +64,7 @@ Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 
 # ── 1. Copy NEW BNC modules (entire directories) ──────────────────────────────
-$newModules = @("BNC_Init", "BNCCustomTools", "BNCGlobal", "BNCMCP")
+$newModules = @("BNC_Init", "BNCCustomTools", "BNCGlobal", "BNCMCP", "BNCClassA")
 foreach ($mod in $newModules) {
     $srcMod = Join-Path $overlayDir "Mod\$mod"
     $dstMod = Join-Path $FreeCADTarget "Mod\$mod"

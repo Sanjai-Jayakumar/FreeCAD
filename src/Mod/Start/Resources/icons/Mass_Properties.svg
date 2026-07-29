@@ -6,13 +6,13 @@
   Concept: a classic balance / scale (weighing mass) overlaid with a
            3D solid block on one pan and a data readout panel on the
            other — instantly communicates "weigh this part & show results".
-  Palette: #2f5a8a / #1f3a5f / #14253d   (block – blue steel)
-           #5D9BC8 / #1F5187             (block highlight)
-           #9A7818 / #5A4210 / #D9B040   (brass scale arm & pivot)
+  Palette: #088f8f / #056b6b / #044a4a   (block – blue steel)
+           #088f8f / #056b6b             (block highlight)
+           #c17d0c / #6e4a0a / #f39c12   (brass scale arm & pivot)
            #c8d0d8 / #5a6268             (pan / plate – steel)
            #f0f4fa / #c8d0da             (readout panel)
            #0E6A2E                        (positive / green value)
-           #1a2530                        (deep outlines)
+           #044a4a                        (deep outlines)
 -->
 <svg xmlns="http://www.w3.org/2000/svg"
      width="64" height="64"
@@ -21,25 +21,25 @@
   <defs>
     <!-- Block top face -->
     <linearGradient id="blkTop" x1="0.2" y1="0" x2="0.8" y2="1">
-      <stop offset="0%"   stop-color="#5D9BC8"/>
-      <stop offset="100%" stop-color="#1F5187"/>
+      <stop offset="0%"   stop-color="#088f8f"/>
+      <stop offset="100%" stop-color="#056b6b"/>
     </linearGradient>
     <!-- Block left face -->
     <linearGradient id="blkLeft" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#1A4670"/>
-      <stop offset="100%" stop-color="#0A2545"/>
+      <stop offset="0%"   stop-color="#056b6b"/>
+      <stop offset="100%" stop-color="#044a4a"/>
     </linearGradient>
     <!-- Block right face -->
     <linearGradient id="blkRight" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%"   stop-color="#143258"/>
-      <stop offset="100%" stop-color="#0e2040"/>
+      <stop offset="0%"   stop-color="#056b6b"/>
+      <stop offset="100%" stop-color="#044a4a"/>
     </linearGradient>
 
     <!-- Scale arm (brass) -->
     <linearGradient id="brass" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#D9B040"/>
-      <stop offset="50%"  stop-color="#9A7818"/>
-      <stop offset="100%" stop-color="#3A2400"/>
+      <stop offset="0%"   stop-color="#f39c12"/>
+      <stop offset="50%"  stop-color="#c17d0c"/>
+      <stop offset="100%" stop-color="#6e4a0a"/>
     </linearGradient>
 
     <!-- Pan surface (steel disc) -->
@@ -52,20 +52,20 @@
     <!-- Readout panel background -->
     <linearGradient id="readout" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%"   stop-color="#ffffff"/>
-      <stop offset="100%" stop-color="#8E9AAA"/>
+      <stop offset="100%" stop-color="#088f8f"/>
     </linearGradient>
 
     <!-- Readout header -->
     <linearGradient id="rdHdr" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#1A4670"/>
-      <stop offset="100%" stop-color="#1f3a5f"/>
+      <stop offset="0%"   stop-color="#056b6b"/>
+      <stop offset="100%" stop-color="#056b6b"/>
     </linearGradient>
 
     <!-- Centre pivot sphere -->
     <radialGradient id="pivot" cx="0.35" cy="0.3" r="0.8">
-      <stop offset="0%"   stop-color="#D9BA50"/>
-      <stop offset="55%"  stop-color="#9A7818"/>
-      <stop offset="100%" stop-color="#241800"/>
+      <stop offset="0%"   stop-color="#f39c12"/>
+      <stop offset="55%"  stop-color="#c17d0c"/>
+      <stop offset="100%" stop-color="#6e4a0a"/>
     </radialGradient>
 
     <!-- Block shadow -->
@@ -90,7 +90,7 @@
        ══════════════════════════════════════════════════ -->
   <!-- Base plate -->
   <ellipse cx="32" cy="61" rx="14" ry="3.0"
-           fill="#3a4248" stroke="#1a2530" stroke-width="0.8"/>
+           fill="#3a4248" stroke="#044a4a" stroke-width="0.8"/>
   <ellipse cx="32" cy="61" rx="14" ry="3.0"
            fill="url(#pan)" opacity="0.5"/>
 
@@ -98,10 +98,10 @@
   <rect x="30.5" y="28" width="3" height="33"
         rx="1.0"
         fill="url(#brass)"
-        stroke="#1a2530" stroke-width="0.7"/>
+        stroke="#044a4a" stroke-width="0.7"/>
   <!-- Post highlight line -->
   <line x1="31.2" y1="29" x2="31.2" y2="60"
-        stroke="#D9BA50" stroke-width="0.5" opacity="0.6"
+        stroke="#f39c12" stroke-width="0.5" opacity="0.6"
         stroke-linecap="round"/>
 
   <!-- ═══════════════════════════════════════════════════
@@ -109,7 +109,7 @@
        ══════════════════════════════════════════════════ -->
   <circle cx="32" cy="28" r="4.2"
           fill="url(#pivot)"
-          stroke="#1a2530" stroke-width="0.9"
+          stroke="#044a4a" stroke-width="0.9"
           filter="url(#softShadow)"/>
   <!-- pivot specular -->
   <ellipse cx="30.5" cy="26.5" rx="1.8" ry="1.0"
@@ -126,7 +126,7 @@
         filter="url(#softShadow)"/>
   <!-- Arm top highlight -->
   <line x1="8" y1="29.3" x2="56" y2="25.3"
-        stroke="#D9BA50" stroke-width="0.7"
+        stroke="#f39c12" stroke-width="0.7"
         opacity="0.65" stroke-linecap="round"/>
 
   <!-- ═══════════════════════════════════════════════════
@@ -134,14 +134,14 @@
        (block side — pan at y≈44 because arm is lower)
        ══════════════════════════════════════════════════ -->
   <line x1="8"  y1="30" x2="5"  y2="44"
-        stroke="#6A5018" stroke-width="0.8" stroke-linecap="round"/>
+        stroke="#c17d0c" stroke-width="0.8" stroke-linecap="round"/>
   <line x1="8"  y1="30" x2="11" y2="44"
-        stroke="#6A5018" stroke-width="0.8" stroke-linecap="round"/>
+        stroke="#c17d0c" stroke-width="0.8" stroke-linecap="round"/>
 
   <!-- Pan disc (left) -->
   <ellipse cx="8" cy="44" rx="8.5" ry="2.2"
            fill="url(#pan)"
-           stroke="#1a2530" stroke-width="0.9"
+           stroke="#044a4a" stroke-width="0.9"
            filter="url(#softShadow)"/>
   <!-- Pan rim highlight -->
   <ellipse cx="8" cy="43.5" rx="6.5" ry="1.2"
@@ -159,21 +159,21 @@
     <!-- Right face -->
     <polygon points="14,37  14,43  8,46  8,40"
              fill="url(#blkRight)"
-             stroke="#0e2040" stroke-width="0.8"
+             stroke="#044a4a" stroke-width="0.8"
              stroke-linejoin="round"/>
     <!-- Left face -->
     <polygon points="2,37  2,43  8,46  8,40"
              fill="url(#blkLeft)"
-             stroke="#0e2040" stroke-width="0.8"
+             stroke="#044a4a" stroke-width="0.8"
              stroke-linejoin="round"/>
     <!-- Top face -->
     <polygon points="2,37  8,34  14,37  8,40"
              fill="url(#blkTop)"
-             stroke="#0e2040" stroke-width="0.8"
+             stroke="#044a4a" stroke-width="0.8"
              stroke-linejoin="round"/>
     <!-- Top rim highlight -->
     <polyline points="2.5,37  8,34.5  13.5,37"
-              fill="none" stroke="#b8d4ee"
+              fill="none" stroke="#4cbcbc"
               stroke-width="0.55" stroke-linecap="round"
               opacity="0.75"/>
   </g>
@@ -182,14 +182,14 @@
        RIGHT PAN SUSPENSION + PAN (readout side — higher)
        ══════════════════════════════════════════════════ -->
   <line x1="56" y1="26" x2="53" y2="38"
-        stroke="#6A5018" stroke-width="0.8" stroke-linecap="round"/>
+        stroke="#c17d0c" stroke-width="0.8" stroke-linecap="round"/>
   <line x1="56" y1="26" x2="59" y2="38"
-        stroke="#6A5018" stroke-width="0.8" stroke-linecap="round"/>
+        stroke="#c17d0c" stroke-width="0.8" stroke-linecap="round"/>
 
   <!-- Pan disc (right) -->
   <ellipse cx="56" cy="38" rx="8.5" ry="2.2"
            fill="url(#pan)"
-           stroke="#1a2530" stroke-width="0.9"
+           stroke="#044a4a" stroke-width="0.9"
            filter="url(#softShadow)"/>
   <ellipse cx="56" cy="37.5" rx="6.5" ry="1.2"
            fill="none" stroke="#e8edf4"
@@ -202,16 +202,16 @@
   <g filter="url(#softShadow)">
     <!-- Card side wall (depth) -->
     <rect x="64" y="16" width="1.5" height="23"
-          fill="#8a9aaa"/>
+          fill="#088f8f"/>
     <!-- Card bottom lip -->
     <rect x="48" y="38" width="17" height="1.5"
-          fill="#8a9aaa"/>
+          fill="#088f8f"/>
 
     <!-- Card face -->
     <rect x="48" y="16" width="16" height="23"
           rx="1.0"
           fill="url(#readout)"
-          stroke="#1a2530" stroke-width="0.9"/>
+          stroke="#044a4a" stroke-width="0.9"/>
 
     <!-- Header bar -->
     <rect x="48" y="16" width="16" height="6"
@@ -225,7 +225,7 @@
 
     <!-- Separator -->
     <line x1="48" y1="22" x2="64" y2="22"
-          stroke="#1a3a5f" stroke-width="0.7"/>
+          stroke="#056b6b" stroke-width="0.7"/>
 
     <!-- Mass value row -->
     <text x="56" y="29"
@@ -236,16 +236,16 @@
     <!-- Unit label -->
     <text x="56" y="35"
           font-family="Arial, sans-serif" font-size="3.8"
-          fill="#546e7a" text-anchor="middle">kg</text>
+          fill="#088f8f" text-anchor="middle">kg</text>
 
     <!-- Separator -->
     <line x1="50" y1="36" x2="62" y2="36"
-          stroke="#c0ccd8" stroke-width="0.6"/>
+          stroke="#4cbcbc" stroke-width="0.6"/>
 
     <!-- Density sub-line -->
     <text x="56" y="39.5"
           font-family="Arial, sans-serif" font-size="3.2"
-          fill="#8a9aaa" text-anchor="middle">2720 kg/m³</text>
+          fill="#088f8f" text-anchor="middle">2720 kg/m³</text>
   </g>
 
 </svg>

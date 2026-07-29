@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Rename_flat.svg — ANVIL CAD "Rename" toolbar icon.
+  24 x 24 flat icon matching the blue floppy/folder palette of the other File
+  toolbar icons: a blue name-card with white text lines and a yellow pencil
+  (edit the name), same blue+yellow theme as the Save As icon.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><defs><linearGradient id="bncGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1fb5ac"/><stop offset="1" stop-color="#056b6b"/></linearGradient></defs>
+  <defs>
+    <linearGradient id="rnCard" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#088f8f"/>
+      <stop offset="100%" stop-color="#056b6b"/>
+    </linearGradient>
+  </defs>
+  <!-- name card (fills the canvas) -->
+  <rect x="1.4" y="3.9" width="21.2" height="16.2" rx="2.2"
+        fill="url(#rnCard)" stroke="#056b6b" stroke-width="1.0"/>
+  <!-- text lines (the name) -->
+  <g stroke="#FFFFFF" stroke-width="1.9" stroke-linecap="round">
+    <line x1="4.6" y1="8.6"  x2="15.5" y2="8.6"/>
+    <line x1="4.6" y1="12.0" x2="12.5" y2="12.0"/>
+    <line x1="4.6" y1="15.4" x2="14.0" y2="15.4"/>
+  </g>
+  <!-- yellow pencil badge (edit / rename) -->
+  <g transform="translate(17.6 13.2) rotate(45)">
+    <rect x="-1.35" y="-5.4" width="2.7" height="1.7" rx="0.3"
+          fill="#E8ECF0" stroke="#6e4a0a" stroke-width="0.4"/>
+    <rect x="-1.35" y="-3.7" width="2.7" height="7.4"
+          fill="#f39c12" stroke="#6e4a0a" stroke-width="0.4"/>
+    <polygon points="-1.35,3.7 1.35,3.7 0,6.0" fill="#6e4a0a"/>
+  </g>
+</svg>

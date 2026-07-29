@@ -35,8 +35,8 @@ class SketcherWorkbench(Workbench):
         self.__class__.Icon = (
             FreeCAD.getResourceDir() + "Mod/Sketcher/Resources/icons/SketcherWorkbench.svg"
         )
-        self.__class__.MenuText = "Sketcher"
-        self.__class__.ToolTip = "Sketcher workbench"
+        self.__class__.MenuText = "Sketch"
+        self.__class__.ToolTip = "Sketch workbench"
 
     def Initialize(self):
         # load the module

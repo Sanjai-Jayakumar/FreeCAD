@@ -1,0 +1,156 @@
+# -*- coding: utf-8 -*-
+# ANVIL CAD — Save As Backup ("Pack and Go")
+# Copies the active assembly (or part) AND all of its dependent files
+# (component parts / sub-assemblies) to a user-chosen folder, so the whole
+# assembly can be archived or moved together.
+#
+# Dependency discovery covers both architectures used in this project:
+#   * LINKED assemblies  -> follow App::Link / OutList to other open documents
+#     and copy their files.
+#   * TOP-DOWN / embedded assemblies -> the components are bodies / sub-assemblies
+#     inside the document, exported to same-named .prt/.asm files in the working
+#     directory; match each component's Label to the latest matching file there.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+from PySide import QtGui
+import os
+import re
+import shutil
+
+_VER_RE = re.compile(r"^(.+?)\.(\d{3})\.(prt|asm|drg)\.FCStd$", re.IGNORECASE)
+
+
+def _clean_base(name):
+    """Strip .FCStd, logical ext (.prt/.asm/.drg) and version suffixes from a
+    file name or object label, leaving the clean base name."""
+    b = os.path.basename(str(name or ""))
+    b = re.sub(r"\.FCStd$", "", b, flags=re.IGNORECASE)
+    prev = None
+    while prev != b:
+        prev = b
+        b = re.sub(r"\.(prt|asm|drg)$", "", b, flags=re.IGNORECASE)
+        b = re.sub(r"\.\d{3,}$", "", b)
+    return b.strip()
+
+
+def _latest_match(workdir, base):
+    """Newest <base>.NNN.(prt|asm|drg).FCStd in workdir, or None."""
+    best, best_v = None, -1
+    try:
+        entries = os.listdir(workdir)
+    except Exception:
+        return None
+    pat = re.compile(r"^" + re.escape(base) + r"\.(\d{3})\.(prt|asm|drg)\.FCStd$",
+                     re.IGNORECASE)
+    for f in entries:
+        m = pat.match(f)
+        if m and int(m.group(1)) > best_v:
+            best_v = int(m.group(1))
+            best = os.path.join(workdir, f)
+    return best
+
+
+def main():
+    doc = App.ActiveDocument
+    if not doc or not doc.FileName:
+        QtGui.QMessageBox.warning(
+            None, "Save As Backup",
+            "Save the assembly first, then run Save As Backup.")
+        return
+
+    asm_file = os.path.abspath(str(doc.FileName))
+    workdir = os.path.dirname(asm_file)
+    asm_base = _clean_base(asm_file)
+
+    # --- 1. Save the active document so the backup captures the current state ---
+    try:
+        doc.save()
+    except Exception:
+        pass
+
+    # --- 2. Collect all open documents reachable via links (linked assemblies) --
+    docs = {}
+
+    def _walk(d):
+        if d is None or d.Name in docs:
+            return
+        docs[d.Name] = d
+        for o in d.Objects:
+            lo = getattr(o, "LinkedObject", None)
+            if lo is not None:
+                lod = getattr(lo, "Document", None)
+                if lod is not None and lod.Name != d.Name:
+                    _walk(lod)
+            for out in getattr(o, "OutList", []):
+                od = getattr(out, "Document", None)
+                if od is not None and od.Name != d.Name:
+                    _walk(od)
+
+    _walk(doc)
+
+    # --- 3. Build the file set ------------------------------------------------
+    files = {}   # normcased abs path -> real path
+
+    def _add(path):
+        if path and os.path.exists(path):
+            files[os.path.normcase(os.path.abspath(path))] = os.path.abspath(path)
+
+    # every reachable open document's own file
+    for d in docs.values():
+        if d.FileName:
+            _add(str(d.FileName))
+
+    # component (Body / sub-assembly) files matched by label in the working dir
+    for d in docs.values():
+        for o in d.Objects:
+            if o.TypeId not in ("PartDesign::Body", "Assembly::AssemblyObject"):
+                continue
+            base = _clean_base(o.Label)
+            if not base or base.lower() == asm_base.lower():
+                continue   # skip the root assembly itself (already added)
+            mf = _latest_match(workdir, base)
+            if mf:
+                _add(mf)
+
+    if not files:
+        QtGui.QMessageBox.warning(
+            None, "Save As Backup", "No files found to back up.")
+        return
+
+    # --- 4. Ask for the destination folder -----------------------------------
+    parent = QtGui.QFileDialog.getExistingDirectory(
+        None, "Select Backup Location", os.path.expanduser("~"))
+    if not parent:
+        return
+
+    dest = os.path.join(parent, asm_base + "_Backup")
+    try:
+        os.makedirs(dest, exist_ok=True)
+    except Exception as e:
+        QtGui.QMessageBox.critical(
+            None, "Save As Backup", "Cannot create backup folder:\n{}".format(e))
+        return
+
+    # --- 5. Copy everything ---------------------------------------------------
+    copied, failed = [], []
+    for src in files.values():
+        try:
+            dst = os.path.join(dest, os.path.basename(src))
+            if os.path.normcase(os.path.abspath(src)) == os.path.normcase(os.path.abspath(dst)):
+                continue  # never copy a file onto itself
+            shutil.copy2(src, dst)
+            copied.append(os.path.basename(src))
+        except Exception as e:
+            failed.append("{}: {}".format(os.path.basename(src), e))
+
+    msg = "Backed up {} file(s) to:\n{}\n\n".format(len(copied), dest)
+    msg += "\n".join("  • " + c for c in sorted(copied))
+    if failed:
+        msg += "\n\nFailed:\n" + "\n".join("  • " + f for f in failed)
+    QtGui.QMessageBox.information(None, "Save As Backup", msg)
+    App.Console.PrintMessage(
+        "[Backup] {} file(s) -> {}\n".format(len(copied), dest))
+
+
+main()

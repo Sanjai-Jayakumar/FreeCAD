@@ -23,11 +23,11 @@
        inkscape:collect="always"
        id="linearGradient4">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop3" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop4" />
     </linearGradient>
@@ -35,11 +35,11 @@
        inkscape:collect="always"
        id="linearGradient2">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop1" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop2" />
     </linearGradient>
@@ -47,11 +47,11 @@
        inkscape:collect="always"
        id="linearGradient4393">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop4395" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="1"
          id="stop4397" />
     </linearGradient>
@@ -59,11 +59,11 @@
        inkscape:collect="always"
        id="linearGradient4383">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1"
+         style="stop-color:#088f8f;stop-opacity:1"
          offset="0"
          id="stop4385" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1"
+         style="stop-color:#088f8f;stop-opacity:1"
          offset="1"
          id="stop4387" />
     </linearGradient>
@@ -101,11 +101,11 @@
        inkscape:collect="always"
        id="linearGradient4383-3">
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1"
+         style="stop-color:#088f8f;stop-opacity:1"
          offset="0"
          id="stop4385-1" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1"
+         style="stop-color:#088f8f;stop-opacity:1"
          offset="1"
          id="stop4387-2" />
     </linearGradient>
@@ -123,11 +123,11 @@
        inkscape:collect="always"
        id="linearGradient4393-9">
       <stop
-         style="stop-color:#1F66CC;stop-opacity:1"
+         style="stop-color:#056b6b;stop-opacity:1"
          offset="0"
          id="stop4395-8" />
       <stop
-         style="stop-color:#4A8FE5;stop-opacity:1"
+         style="stop-color:#088f8f;stop-opacity:1"
          offset="1"
          id="stop4397-1" />
     </linearGradient>
@@ -155,7 +155,7 @@
   <sodipodi:namedview
      id="base"
      pagecolor="#FFFFFF"
-     bordercolor="#4A8FE5"
+     bordercolor="#088f8f"
      borderopacity="1.0"
      inkscape:pageopacity="0.0"
      inkscape:pageshadow="2"
@@ -174,7 +174,7 @@
      inkscape:snap-global="true"
      inkscape:showpageshadow="2"
      inkscape:pagecheckerboard="0"
-     inkscape:deskcolor="#4A8FE5">
+     inkscape:deskcolor="#088f8f">
     <inkscape:grid
        type="xygrid"
        id="grid3007"
@@ -243,13 +243,13 @@
        inkscape:connector-curvature="0"
        sodipodi:nodetypes="ccccc" />
     <path
-       style="fill:none;stroke:#4A8FE5;stroke-width:2;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
+       style="fill:none;stroke:#088f8f;stroke-width:2;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
        d="M 11.008035,47.60627 11,24 l 10,4 0,13 14,5 0.0081,10.184812 z"
        id="path4381-7"
        inkscape:connector-curvature="0"
        sodipodi:nodetypes="ccccccc" />
     <path
-       style="fill:none;stroke:#4A8FE5;stroke-width:2;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
+       style="fill:none;stroke:#088f8f;stroke-width:2;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
        d="M 39.005041,54.16825 39,46 53,33 l 0.0021,7.176847 z"
        id="path4391-0"
        inkscape:connector-curvature="0"
@@ -271,7 +271,7 @@
        inkscape:connector-curvature="0"
        id="path69044"
        d="m 25,36 0,-9 15,-13 0,8 z"
-       style="fill:none;stroke:#4A8FE5;stroke-width:2;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1" />
+       style="fill:none;stroke:#088f8f;stroke-width:2;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1" />
   </g>
   <g
      inkscape:groupmode="layer"

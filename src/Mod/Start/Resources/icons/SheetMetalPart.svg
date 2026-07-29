@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Sheet-metal PART tree icon: an isometric bent (L-profile) thin sheet, clearly
+     distinct from a solid Part Design body. Green theme + gold fold line. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="smpTop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4cbcbc"/>
+      <stop offset="1" stop-color="#088f8f"/>
+    </linearGradient>
+    <linearGradient id="smpFlange" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#17a3a3"/>
+      <stop offset="1" stop-color="#056b6b"/>
+    </linearGradient>
+  </defs>
+  <!-- ground shadow -->
+  <ellipse cx="34" cy="56" rx="26" ry="3.5" fill="#000000" opacity="0.12"/>
+
+  <!-- vertical flange (bent-up back wall), thin -->
+  <polygon points="10,20 24,13 24,33 10,40"
+           fill="url(#smpFlange)" stroke="#04302f" stroke-width="1.6" stroke-linejoin="round"/>
+  <!-- flange thickness (top edge) -->
+  <polygon points="10,20 24,13 27,15 13,22"
+           fill="#7ad0d0" stroke="#04302f" stroke-width="1.2" stroke-linejoin="round"/>
+
+  <!-- horizontal base plate, thin -->
+  <polygon points="10,40 24,33 55,45 41,52"
+           fill="url(#smpTop)" stroke="#04302f" stroke-width="1.6" stroke-linejoin="round"/>
+  <!-- base plate thickness (front edge) -->
+  <polygon points="10,40 41,52 41,56 10,44"
+           fill="#056b6b" stroke="#04302f" stroke-width="1.4" stroke-linejoin="round"/>
+  <polygon points="41,52 55,45 55,49 41,56"
+           fill="#045858" stroke="#04302f" stroke-width="1.4" stroke-linejoin="round"/>
+
+  <!-- gold bend line at the fold -->
+  <line x1="10" y1="40" x2="24" y2="33" stroke="#f39c12" stroke-width="2.2" stroke-linecap="round"/>
+</svg>

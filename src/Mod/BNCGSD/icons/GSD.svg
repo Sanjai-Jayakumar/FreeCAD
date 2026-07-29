@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GSD workbench icon: a 3D freeform surface patch (4 corners, curved edges,
+     in perspective) with u/v iso-curves - generative surface design. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="gsdPatch" x1="0.25" y1="0" x2="0.7" y2="1">
+      <stop offset="0%"   stop-color="#AEEEE7"/>
+      <stop offset="55%"  stop-color="#3E8FB0"/>
+      <stop offset="100%" stop-color="#173A52"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="34" cy="58" rx="27" ry="3.6" fill="#000000" opacity="0.13"/>
+  <!-- bilinear surface patch: corners A(6,26) B(54,14) C(60,40) D(14,54) -->
+  <path d="M6 26
+           C 22 18, 38 10, 54 14
+           C 58 22, 60 32, 60 40
+           C 44 50, 30 58, 14 54
+           C 10 44, 8 34, 6 26 Z"
+        fill="url(#gsdPatch)" stroke="#0F2E44" stroke-width="1.7"
+        stroke-linejoin="round"/>
+  <!-- u iso-curves -->
+  <g fill="none" stroke="#EAFBF8" stroke-width="1.3" opacity="0.72">
+    <path d="M7 33 C 22 26, 40 20, 57 25"/>
+    <path d="M9 43 C 24 37, 42 32, 59 33"/>
+  </g>
+  <!-- v iso-curves -->
+  <g fill="none" stroke="#EAFBF8" stroke-width="1.3" opacity="0.62">
+    <path d="M25 15 C 22 30, 21 42, 20 52"/>
+    <path d="M41 13 C 44 28, 44 40, 45 50"/>
+  </g>
+  <!-- crest highlight -->
+  <path d="M16 26 C 28 19, 40 15, 52 18" fill="none" stroke="#FFFFFF"
+        stroke-width="1.4" opacity="0.4" stroke-linecap="round"/>
+</svg>

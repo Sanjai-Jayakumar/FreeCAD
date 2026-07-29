@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <!-- BNC: Origin to Assembly Constraint - crosshair/origin with lock -->
+  <!-- Origin crosshair circle -->
+  <circle cx="30" cy="32" r="18" fill="none" stroke="#4e9a06" stroke-width="3"/>
+  <circle cx="30" cy="32" r="4" fill="#73d216" stroke="#4e9a06" stroke-width="2"/>
+  <!-- Horizontal crosshair line -->
+  <line x1="6" y1="32" x2="54" y2="32" stroke="#4e9a06" stroke-width="2" stroke-dasharray="4,3"/>
+  <!-- Vertical crosshair line -->
+  <line x1="30" y1="8" x2="30" y2="56" stroke="#4e9a06" stroke-width="2" stroke-dasharray="4,3"/>
+  <!-- Small anchor/pin indicator at center -->
+  <circle cx="30" cy="32" r="8" fill="none" stroke="#73d216" stroke-width="1.5"/>
+  <!-- Lock badge bottom-right -->
+  <rect x="44" y="44" width="16" height="12" rx="2" fill="#f57900" stroke="#ce5c00" stroke-width="1.5"/>
+  <path d="M48,44 L48,40 A4,4 0 0,1 56,40 L56,44" fill="none" stroke="#ce5c00" stroke-width="2"/>
+  <circle cx="52" cy="50" r="1.5" fill="#ce5c00"/>
+</svg>

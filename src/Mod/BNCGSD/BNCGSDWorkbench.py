@@ -98,9 +98,9 @@ MODES: dict[str, list[str]] = {
 
 class BNCGSDWorkbench(Gui.Workbench):
 
-    MenuText = "BNC GSD"
-    ToolTip  = "BNC Generative Surface Design — Combined Surface Modeling"
-    Icon     = os.path.join(_ICON_DIR, "BNCGSD.svg")
+    MenuText = "GSD"
+    ToolTip  = "Generative Surface Design — Combined Surface Modeling"
+    Icon     = os.path.join(_ICON_DIR, "GSD.svg")
 
     # ------------------------------------------------------------------ init
 
@@ -121,10 +121,10 @@ class BNCGSDWorkbench(Gui.Workbench):
 
         # No bulk toolbars — the dockable tab panel (bottom) is the primary UI.
         # We expose only the menu so keyboard users can still reach every command.
-        self.appendMenu(["&BNC GSD", "Surface"],        avail(SURFACE_CMDS))
-        self.appendMenu(["&BNC GSD", "Curves"],         avail(CURVES_CMDS))
-        self.appendMenu(["&BNC GSD", "Curved Shapes"],  avail(CURVED_SHAPES_CMDS))
-        self.appendMenu(["&BNC GSD", "Analysis"],       avail(ANALYSIS_CMDS))
+        self.appendMenu(["&GSD", "Surface"],        avail(SURFACE_CMDS))
+        self.appendMenu(["&GSD", "Curves"],         avail(CURVES_CMDS))
+        self.appendMenu(["&GSD", "Curved Shapes"],  avail(CURVED_SHAPES_CMDS))
+        self.appendMenu(["&GSD", "Analysis"],       avail(ANALYSIS_CMDS))
 
         App.Console.PrintLog("BNC GSD Workbench: initialized.\n")
 

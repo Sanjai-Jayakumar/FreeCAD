@@ -132,36 +132,8 @@ def create_persistent_toolbar():
             os.path.join(FreeCAD.getHomePath(), "Mod", "Assembly", "Resources", "icons")
         ]
 
-        # =========================================
-        # Button 5: Rename
-        # =========================================
-        action_rename = QtGui.QAction(mw)
-        action_rename.setToolTip('Rename model and update all versions\nKeyboard: F2')
-        action_rename.setObjectName("BNC_Rename_Action")
-
-        # Load Rename icon
-        for base_path in icon_base_paths:
-            icon_path = os.path.join(base_path, "Rename.svg")
-            if os.path.exists(icon_path):
-                action_rename.setIcon(QtGui.QIcon(icon_path))
-                break
-
-        # Connect directly to rename function (avoids command registration timing issues)
-        def run_rename():
-            import sys
-            rename_mod_path = os.path.join(FreeCAD.getHomePath(), "Mod", "BNCGlobal", "BNCGlobal", "Gui")
-            if rename_mod_path not in sys.path:
-                sys.path.insert(0, rename_mod_path)
-            try:
-                from CommandStdVersionRename import main as rename_main
-                rename_main()
-            except Exception as e:
-                FreeCAD.Console.PrintError("BNC Rename error: " + str(e) + "\n")
-
-        action_rename.triggered.connect(run_rename)
-
-        # Add to toolbar
-        toolbar.addAction(action_rename)
+        # (Rename lives on the native File toolbar — see
+        #  _add_setwd_to_file_toolbar — not on this BNC toolbar.)
 
         # =========================================
         # Button 6: Apply Material
@@ -250,6 +222,9 @@ def create_persistent_toolbar():
 
         # Add to toolbar
         toolbar.addAction(action_model_params)
+
+        # (Save As Backup lives on the native File toolbar — see
+        #  _add_setwd_to_file_toolbar — not on this BNC toolbar.)
 
         # =========================================
         # Button 9: Plane Display (Toggle Datum Planes)
@@ -802,6 +777,16 @@ def _find_file_toolbar(mw):
     return None
 
 
+def _run_bnc_save():
+    """Run the BNC Save macro (same action Ctrl+S is bound to)."""
+    mp = os.path.join(FreeCAD.getHomePath(), "Macro", "Save.FCMacro")
+    if os.path.exists(mp):
+        try:
+            exec(open(mp, encoding="utf-8").read(), {"__name__": "__main__"})
+        except Exception as e:
+            FreeCAD.Console.PrintError("BNC Save error: " + str(e) + "\n")
+
+
 def _add_setwd_to_file_toolbar():
     """Inject Set Working Directory button into FreeCAD's built-in File toolbar."""
     try:
@@ -873,6 +858,126 @@ def _add_setwd_to_file_toolbar():
         else:
             file_toolbar.addAction(action_saveas)
         FreeCAD.Console.PrintLog("ANVIL CAD: Save As added to File toolbar next to Save\n")
+
+        # --- Save As Backup button (right after Save As) ---
+        for act in file_toolbar.actions():
+            if act.objectName() == "BNC_SaveAsBackup_FT_Action":
+                return
+
+        action_backup = QtGui.QAction(mw)
+        action_backup.setToolTip(
+            'Save As Backup — copy the active assembly and ALL its dependent '
+            'part / sub-assembly files to a folder you choose.')
+        action_backup.setObjectName("BNC_SaveAsBackup_FT_Action")
+
+        for base_path in icon_base_paths:
+            icon_path = os.path.join(base_path, "SaveAsBackup.svg")
+            if os.path.exists(icon_path):
+                action_backup.setIcon(QtGui.QIcon(icon_path))
+                break
+
+        def _run_backup_ft():
+            mp = os.path.join(FreeCAD.getHomePath(), "Macro", "SaveAsBackup.FCMacro")
+            if os.path.exists(mp):
+                try:
+                    exec(open(mp, encoding="utf-8").read(), {"__name__": "__main__"})
+                except Exception as e:
+                    FreeCAD.Console.PrintError(
+                        "BNC Save As Backup error: " + str(e) + "\n")
+
+        action_backup.triggered.connect(_run_backup_ft)
+
+        actions = file_toolbar.actions()
+        saveas_idx = next((i for i, a in enumerate(actions)
+                           if a.objectName() == "BNC_SaveAs_Action"), None)
+        if saveas_idx is not None and saveas_idx + 1 < len(actions):
+            file_toolbar.insertAction(actions[saveas_idx + 1], action_backup)
+        else:
+            file_toolbar.addAction(action_backup)
+        FreeCAD.Console.PrintLog("ANVIL CAD: Save As Backup added to File toolbar\n")
+
+        # --- Rename button (right after Save As Backup) ---
+        for act in file_toolbar.actions():
+            if act.objectName() == "BNC_Rename_FT_Action":
+                return
+
+        action_rename = QtGui.QAction(mw)
+        action_rename.setToolTip('Rename model and update all versions\nKeyboard: F2')
+        action_rename.setObjectName("BNC_Rename_FT_Action")
+
+        _rename_icon = None
+        for base_path in icon_base_paths:
+            ip = os.path.join(base_path, "Rename_flat.svg")   # flat blue icon
+            if os.path.exists(ip):
+                _rename_icon = ip
+                break
+        if _rename_icon is None:
+            ip = os.path.join(FreeCAD.getHomePath(), "Mod", "BNCGlobal",
+                              "BNCGlobal", "Gui", "Resources", "icons", "Rename.svg")
+            if os.path.exists(ip):
+                _rename_icon = ip
+        if _rename_icon:
+            action_rename.setIcon(QtGui.QIcon(_rename_icon))
+
+        def _run_rename_ft():
+            import sys
+            rename_mod_path = os.path.join(
+                FreeCAD.getHomePath(), "Mod", "BNCGlobal", "BNCGlobal", "Gui")
+            if rename_mod_path not in sys.path:
+                sys.path.insert(0, rename_mod_path)
+            try:
+                from CommandStdVersionRename import main as rename_main
+                rename_main()
+            except Exception as e:
+                FreeCAD.Console.PrintError("BNC Rename error: " + str(e) + "\n")
+
+        action_rename.triggered.connect(_run_rename_ft)
+
+        actions = file_toolbar.actions()
+        bk_idx = next((i for i, a in enumerate(actions)
+                       if a.objectName() == "BNC_SaveAsBackup_FT_Action"), None)
+        if bk_idx is not None and bk_idx + 1 < len(actions):
+            file_toolbar.insertAction(actions[bk_idx + 1], action_rename)
+        else:
+            file_toolbar.addAction(action_rename)
+        FreeCAD.Console.PrintLog("ANVIL CAD: Rename added to File toolbar\n")
+
+        # --- Recolor the native Save button to the blue palette ---
+        _save_icon = None
+        for base_path in icon_base_paths:
+            ip = os.path.join(base_path, "Save_blue.svg")
+            if os.path.exists(ip):
+                _save_icon = ip
+                break
+        if _save_icon:
+            for a in file_toolbar.actions():
+                if a.objectName() == "Std_Save":
+                    a.setIcon(QtGui.QIcon(_save_icon))
+                    # Make the Save button do the same as the Ctrl+S shortcut
+                    # (the BNC Save macro) and show Ctrl+S in its tooltip. We do
+                    # NOT call a.setShortcut(Ctrl+S) — Ctrl+S is already owned by
+                    # the ApplicationShortcut QAction in BNC_MacroSetup, and a
+                    # second binding would clash (ambiguous shortcut).
+                    a.setToolTip("Save\nKeyboard: Ctrl+S")
+                    try:
+                        a.triggered.disconnect()
+                    except Exception:
+                        pass
+                    a.triggered.connect(_run_bnc_save)
+                    break
+
+        # --- Recolor the native Open button (folder -> green, arrow -> gold) ---
+        _open_icon = None
+        for base_path in icon_base_paths:
+            ip = os.path.join(base_path, "Open_green.svg")
+            if os.path.exists(ip):
+                _open_icon = ip
+                break
+        if _open_icon:
+            for a in file_toolbar.actions():
+                if a.objectName() == "Std_Open":
+                    a.setIcon(QtGui.QIcon(_open_icon))
+                    break
     except Exception as e:
         FreeCAD.Console.PrintError(f"ANVIL CAD: Failed to add SetWD to File toolbar: {e}\n")
 
@@ -900,18 +1005,123 @@ class _TaskPanelRenamer(QtCore.QObject):
             QtCore.QTimer.singleShot(50, self._rename)
         return False
 
+    @staticmethod
+    def _active_has_body():
+        """True when the active document already has a PartDesign Body.
+
+        When it does, the 'Start Part' panel should offer 'New Sketch'
+        (to start the next feature) instead of 'New Part'."""
+        try:
+            doc = FreeCAD.ActiveDocument
+            if doc is None:
+                return False
+            return any(getattr(o, "TypeId", "") == "PartDesign::Body"
+                       for o in doc.Objects)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _in_toolbar(w):
+        """True when the widget lives inside a QToolBar (or menu bar).
+
+        The 'New Part' text also appears on toolbar command buttons; we must
+        only touch the one that lives in the Start Part *task panel*, never a
+        toolbar button (that injected an overlapping button into the toolbar)."""
+        p = w.parentWidget()
+        depth = 0
+        while p is not None and depth < 30:
+            if isinstance(p, (QtWidgets.QToolBar, QtWidgets.QMenuBar, QtWidgets.QMenu)):
+                return True
+            try:
+                cn = p.metaObject().className()
+            except Exception:
+                cn = ""
+            if "ToolBar" in cn or "MenuBar" in cn:
+                return True
+            p = p.parentWidget()
+            depth += 1
+        return False
+
+    def _run_new_sketch(self, *_):
+        try:
+            FreeCADGui.runCommand("PartDesign_NewSketch", 0)
+        except Exception:
+            try:
+                FreeCADGui.runCommand("Sketcher_NewSketch", 0)
+            except Exception:
+                pass
+
+    def _ensure_new_sketch_button(self, mw, part_btn, has_body):
+        """Add a 'New Sketch' button next to 'New Part' in the Start Part panel.
+
+        Uses a *fresh* QAction (never the shared New Body action) so the New
+        Body command is left untouched. When a Body exists the 'New Part'
+        button is hidden and 'New Sketch' is shown, and vice-versa."""
+        parent = part_btn.parentWidget()
+        if parent is None:
+            return
+        sketch_btn = parent.findChild(QtWidgets.QToolButton, "BNC_NewSketchTaskBtn")
+        if sketch_btn is None:
+            # Reuse the real (green) sketch command icon if we can find it.
+            icon = None
+            try:
+                for a in mw.findChildren(QtGui.QAction):
+                    if a.objectName() == "PartDesign_NewSketch":
+                        icon = a.icon()
+                        break
+            except Exception:
+                icon = None
+            act = QtGui.QAction("New Sketch", parent)
+            if icon is not None and not icon.isNull():
+                act.setIcon(icon)
+            act.triggered.connect(self._run_new_sketch)
+            sketch_btn = QtWidgets.QToolButton(parent)
+            sketch_btn.setObjectName("BNC_NewSketchTaskBtn")
+            sketch_btn.setDefaultAction(act)
+            sketch_btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+            sketch_btn.setAutoRaise(True)
+            try:
+                sketch_btn.setSizePolicy(part_btn.sizePolicy())
+            except Exception:
+                pass
+            sketch_btn._bnc_act = act  # keep a ref so the QAction is not GC'd
+            lay = parent.layout()
+            if lay is not None:
+                lay.addWidget(sketch_btn)
+        sketch_btn.setVisible(bool(has_body))
+        part_btn.setVisible(not has_body)
+
     def _rename(self):
         try:
             mw = FreeCADGui.getMainWindow()
             if not mw:
                 return
+            _icon_path = os.path.join(FreeCAD.getHomePath(), "Mod", "BNC_Init",
+                                      "BNC_Init", "icons", "PartDesign_Body.svg")
+            _green = QtGui.QIcon(_icon_path) if os.path.isfile(_icon_path) else None
+            _has_body = self._active_has_body()
             for widget in mw.findChildren(QtWidgets.QWidget):
-                if not widget.isVisible():
-                    continue
                 if isinstance(widget, (QtWidgets.QPushButton, QtWidgets.QCommandLinkButton,
                                        QtWidgets.QAbstractButton, QtWidgets.QLabel)):
-                    if widget.text() == "New Body":
+                    # Match both the native "New Body" and our renamed "New Part"
+                    # so the green icon is applied even after the text is changed.
+                    # (No visibility guard here: we must still find the button
+                    # after we have hidden it, to re-show it in an empty doc.)
+                    if widget.text() in ("New Body", "New Part"):
+                        # Only the Start Part *task panel* button — never a
+                        # toolbar/menu command button with the same text.
+                        if self._in_toolbar(widget):
+                            continue
                         widget.setText("New Part")
+                        if _green is not None and hasattr(widget, "setIcon"):
+                            try:
+                                widget.setIcon(_green)
+                            except Exception:
+                                pass
+                        try:
+                            self._ensure_new_sketch_button(mw, widget, _has_body)
+                        except Exception:
+                            pass
         except Exception:
             pass
 
@@ -1046,6 +1256,334 @@ def _apply_partdesign_icons_on_wb():
     except Exception:
         pass
 
+
+def _apply_assembly_icons():
+    """Force-replace Assembly toolbar / task-panel icons with the green versions
+    by directly setting QIcon on each action. The embedded (blue) Assembly icons
+    otherwise win the BitmapFactory lookup, so setting the QIcon directly on the
+    widgets is the only reliable override (same approach as PartDesign)."""
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if not mw:
+            QtCore.QTimer.singleShot(500, _apply_assembly_icons)
+            return
+
+        icons_dir = os.path.join(FreeCAD.getHomePath(), "Mod", "Assembly",
+                                 "Resources", "icons", "recolored")
+        if not os.path.isdir(icons_dir):
+            return
+
+        icon_map = {}
+        for fname in os.listdir(icons_dir):
+            if fname.lower().endswith(".svg"):
+                icon_map[os.path.splitext(fname)[0]] = os.path.join(icons_dir, fname)
+
+        # command objectName -> icon-file stem (only where they differ)
+        alias = {
+            "Assembly_CreateAssembly":      "Geoassembly",
+            "Assembly_Insert":              "Assembly_InsertLink",
+            "Assembly_InsertNewAssembly":   "Subassembly",
+            "Assembly_InsertNewBodyInline": "PartDesignWorkbench",
+            "Assembly_InsertNewBody":       "PartDesign_Body",
+            "Assembly_InsertNewPart":       "Geofeaturegroup",
+            "Assembly_InsertNewPartInAssembly": "Geofeaturegroup",
+            "Assembly_CreateView":          "Assembly_ExplodedView",
+            "Assembly_CreateBom":           "Assembly_BillOfMaterials",
+            "Assembly_CreateJointGearBelt": "Assembly_CreateJointGears",
+            "Assembly_CreateJointBelt":     "Assembly_CreateJointGears",
+        }
+        for cmd, stem in alias.items():
+            if stem in icon_map:
+                icon_map[cmd] = icon_map[stem]
+
+        # Only touch Assembly commands (+ the two shared Geo* used by its toolbar)
+        def _match(name):
+            return name and (name.startswith("Assembly_")
+                             or name in ("Geoassembly", "Geofeaturegroup"))
+
+        replaced = 0
+        for tb in mw.findChildren(QtGui.QToolBar):
+            for action in tb.actions():
+                nm = action.objectName()
+                if _match(nm) and nm in icon_map:
+                    action.setIcon(QtGui.QIcon(icon_map[nm])); replaced += 1
+
+        for btn in mw.findChildren(QtWidgets.QToolButton):
+            action = btn.defaultAction()
+            if action:
+                nm = action.objectName()
+                if _match(nm) and nm in icon_map:
+                    btn.setIcon(QtGui.QIcon(icon_map[nm])); replaced += 1
+            menu = btn.menu()
+            if menu:
+                for ma in menu.actions():
+                    nm = ma.objectName()
+                    if _match(nm) and nm in icon_map:
+                        ma.setIcon(QtGui.QIcon(icon_map[nm])); replaced += 1
+
+        FreeCAD.Console.PrintLog(f"ANVIL CAD: Force-replaced {replaced} Assembly icons\n")
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"ANVIL CAD: _apply_assembly_icons error: {e}\n")
+
+
+def _apply_assembly_icons_on_wb():
+    """Re-apply Assembly icons whenever the workbench changes (toolbars/panels
+    rebuild), and shortly after selection changes (task-panel watchers swap)."""
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if mw:
+            mw.workbenchActivated.connect(
+                lambda: QtCore.QTimer.singleShot(400, _apply_assembly_icons)
+            )
+    except Exception:
+        pass
+
+
+# command objectName -> recolored view-icon file stem
+_VIEW_ICON_ALIAS = {
+    "Std_ViewFitAll": "zoom-all",
+    "Std_ViewFitSelection": "zoom-selection",
+    "Std_ViewZoomIn": "zoom-in",
+    "Std_ViewZoomOut": "zoom-out",
+    "Std_ViewBoxZoom": "zoom-border",
+    "Std_ViewIsometric": "view-axonometric",
+    "Std_ViewAxonometric": "view-axonometric",
+    "Std_ViewAxo": "view-axonometric",
+    "Std_ViewFront": "view-front",
+    "Std_ViewTop": "view-top",
+    "Std_ViewRight": "view-right",
+    "Std_ViewRear": "view-rear",
+    "Std_ViewBottom": "view-bottom",
+    "Std_ViewLeft": "view-left",
+    "Std_ViewRotateLeft": "view-rotate-left",
+    "Std_ViewRotateRight": "view-rotate-right",
+    "Std_ViewHome": "Std_ViewHome",
+    "Std_ViewDimetric": "Std_ViewDimetric",
+    "Std_ViewTrimetric": "Std_ViewTrimetric",
+    "Std_ViewScreenShot": "Std_ViewScreenShot",
+    "Std_ViewFullScreen": "view-fullscreen",
+    "Std_ViewPerspective": "view-perspective",
+    "Std_ViewMeasureDistance": "view-measurement",
+    "Std_ViewMeasureClear": "view-measurement-cross",
+    "Std_DrawStyle": "view-select",
+    # New Group (Create group) uses the core "folder" icon
+    "Std_Group": "folder",
+    "Std_LinkMakeGroup": "Group",
+}
+
+
+def _apply_view_icons():
+    """Recolor the standard View toolbar icons (orientation / zoom) to the green
+    theme by setting the recolored QIcon directly on each action — the core view
+    icons are compiled into the binary, so setIcon on the widget is the only
+    runtime override."""
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if not mw:
+            QtCore.QTimer.singleShot(500, _apply_view_icons)
+            return
+        vdir = os.path.join(FreeCAD.getHomePath(), "Mod", "Start",
+                            "Resources", "icons", "view")
+        if not os.path.isdir(vdir):
+            return
+        stems = {}
+        for f in os.listdir(vdir):
+            if f.lower().endswith(".svg"):
+                stems[os.path.splitext(f)[0]] = os.path.join(vdir, f)
+
+        def _icon_for(name):
+            stem = _VIEW_ICON_ALIAS.get(name)
+            if stem and stem in stems:
+                return stems[stem]
+            return None
+
+        replaced = 0
+        for tb in mw.findChildren(QtGui.QToolBar):
+            for a in tb.actions():
+                p = _icon_for(a.objectName())
+                if p:
+                    a.setIcon(QtGui.QIcon(p)); replaced += 1
+        for btn in mw.findChildren(QtWidgets.QToolButton):
+            act = btn.defaultAction()
+            if act:
+                p = _icon_for(act.objectName())
+                if p:
+                    btn.setIcon(QtGui.QIcon(p)); replaced += 1
+            menu = btn.menu()
+            if menu:
+                for ma in menu.actions():
+                    p = _icon_for(ma.objectName())
+                    if p:
+                        ma.setIcon(QtGui.QIcon(p)); replaced += 1
+        FreeCAD.Console.PrintLog(f"ANVIL CAD: Recolored {replaced} View icons\n")
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"ANVIL CAD: _apply_view_icons error: {e}\n")
+
+
+def _apply_view_icons_on_wb():
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if mw:
+            mw.workbenchActivated.connect(
+                lambda: QtCore.QTimer.singleShot(400, _apply_view_icons)
+            )
+    except Exception:
+        pass
+
+
+def _apply_part_icons():
+    """Recolor the Part workbench toolbar icons (primitives, booleans, etc.) to
+    the green theme. Part command objectNames match their icon filenames, so a
+    direct name->file match works; setIcon on the widget overrides the compiled
+    core icons at runtime."""
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if not mw:
+            QtCore.QTimer.singleShot(500, _apply_part_icons)
+            return
+        pdir = os.path.join(FreeCAD.getHomePath(), "Mod", "Start",
+                            "Resources", "icons", "part")
+        if not os.path.isdir(pdir):
+            return
+        stems = {}
+        for f in os.listdir(pdir):
+            if f.lower().endswith(".svg"):
+                stems[os.path.splitext(f)[0]] = os.path.join(pdir, f)
+
+        # primitive commands use the "_Parametric" icon files
+        part_alias = {
+            "Part_Box": "Part_Box_Parametric",
+            "Part_Cylinder": "Part_Cylinder_Parametric",
+            "Part_Sphere": "Part_Sphere_Parametric",
+            "Part_Cone": "Part_Cone_Parametric",
+            "Part_Torus": "Part_Torus_Parametric",
+            "Part_Prism": "Part_Prism_Parametric",
+            "Part_Wedge": "Part_Wedge_Parametric",
+            "Part_Ellipsoid": "Part_Ellipsoid_Parametric",
+            "Part_Tube": "Part_Tube_Parametric",
+            "Part_Helix": "Part_Helix_Parametric",
+            "Part_Spiral": "Part_Spiral_Parametric",
+            # boolean / dropdown-group commands
+            "Part_Boolean": "Part_Booleans",
+            "Part_CompJoinFeatures": "Part_JoinConnect",
+            "Part_JoinFeatures": "Part_JoinConnect",
+            "Part_CompSplitFeatures": "Part_BooleanFragments",
+            "Part_SplitFeatures": "Part_BooleanFragments",
+            "Part_CompCompoundTools": "Part_Compound",
+            "Part_CompoundTools": "Part_Compound",
+            "Part_CompOffset": "Part_Offset",
+            # command name differs from icon-file name
+            "Part_Builder": "Part_Shapebuilder",
+        }
+
+        def _path_for(nm):
+            stem = part_alias.get(nm, nm)
+            return stems.get(stem)
+
+        replaced = 0
+        for tb in mw.findChildren(QtGui.QToolBar):
+            for a in tb.actions():
+                p = _path_for(a.objectName())
+                if p:
+                    a.setIcon(QtGui.QIcon(p)); replaced += 1
+        for btn in mw.findChildren(QtWidgets.QToolButton):
+            act = btn.defaultAction()
+            if act:
+                p = _path_for(act.objectName())
+                if p:
+                    btn.setIcon(QtGui.QIcon(p)); replaced += 1
+            menu = btn.menu()
+            if menu:
+                for ma in menu.actions():
+                    p = _path_for(ma.objectName())
+                    if p:
+                        ma.setIcon(QtGui.QIcon(p)); replaced += 1
+
+        # Catch menu-only Part commands (e.g. Shape Builder). The same QAction is
+        # shared by toolbar + menu, so setting it here updates it everywhere.
+        _QAction = getattr(QtGui, "QAction", None) or QtWidgets.QAction
+        for a in mw.findChildren(_QAction):
+            p = _path_for(a.objectName())
+            if p:
+                a.setIcon(QtGui.QIcon(p)); replaced += 1
+
+        # --- Part workbench TAB icon (the workbench selector shows tabs) ---
+        pw = stems.get("PartWorkbench")
+        if pw:
+            for tabbar in mw.findChildren(QtWidgets.QTabBar):
+                for i in range(tabbar.count()):
+                    if tabbar.tabText(i).replace("&", "").strip() == "Part":
+                        tabbar.setTabIcon(i, QtGui.QIcon(pw)); replaced += 1
+            # combo-box style selector fallback
+            for combo in mw.findChildren(QtWidgets.QComboBox):
+                for i in range(combo.count()):
+                    if combo.itemText(i).replace("&", "").strip() == "Part":
+                        combo.setItemIcon(i, QtGui.QIcon(pw)); replaced += 1
+
+        FreeCAD.Console.PrintLog(f"ANVIL CAD: Recolored {replaced} Part icons\n")
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"ANVIL CAD: _apply_part_icons error: {e}\n")
+
+
+def _apply_part_icons_on_wb():
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if mw:
+            mw.workbenchActivated.connect(
+                lambda: QtCore.QTimer.singleShot(400, _apply_part_icons)
+            )
+    except Exception:
+        pass
+
+
+def _apply_drawing_icons():
+    """Recolor the Drawing (TechDraw) workbench toolbar/menu icons to the green
+    theme. TechDraw command objectNames match their icon filenames, so a direct
+    match works; the shared QAction is set so it updates toolbar + menu."""
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if not mw:
+            QtCore.QTimer.singleShot(500, _apply_drawing_icons)
+            return
+        ddir = os.path.join(FreeCAD.getHomePath(), "Mod", "Start",
+                            "Resources", "icons", "drawing")
+        if not os.path.isdir(ddir):
+            return
+        stems = {}
+        for f in os.listdir(ddir):
+            if f.lower().endswith(".svg"):
+                stems[os.path.splitext(f)[0]] = os.path.join(ddir, f)
+
+        _QAction = getattr(QtGui, "QAction", None) or QtWidgets.QAction
+        replaced = 0
+        for a in mw.findChildren(_QAction):
+            nm = a.objectName()
+            if nm in stems:
+                a.setIcon(QtGui.QIcon(stems[nm])); replaced += 1
+        for btn in mw.findChildren(QtWidgets.QToolButton):
+            act = btn.defaultAction()
+            if act and act.objectName() in stems:
+                btn.setIcon(QtGui.QIcon(stems[act.objectName()])); replaced += 1
+            menu = btn.menu()
+            if menu:
+                for ma in menu.actions():
+                    if ma.objectName() in stems:
+                        ma.setIcon(QtGui.QIcon(stems[ma.objectName()])); replaced += 1
+        FreeCAD.Console.PrintLog(f"ANVIL CAD: Recolored {replaced} Drawing icons\n")
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"ANVIL CAD: _apply_drawing_icons error: {e}\n")
+
+
+def _apply_drawing_icons_on_wb():
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if mw:
+            mw.workbenchActivated.connect(
+                lambda: QtCore.QTimer.singleShot(400, _apply_drawing_icons)
+            )
+    except Exception:
+        pass
+
 def _remap_file_menu_saveas():
     """Remap File > Save As... to call the BNC version save-as macro instead of Std_SaveAs."""
     try:
@@ -1089,15 +1627,445 @@ def _remap_file_menu_saveas():
         FreeCAD.Console.PrintError(f"ANVIL CAD: _remap_file_menu_saveas error: {e}\n")
 
 
+def _add_backup_to_file_menu():
+    """Insert a 'Save As Backup' entry into the File menu, right after Save As."""
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if not mw:
+            QtCore.QTimer.singleShot(500, _add_backup_to_file_menu)
+            return
+
+        file_menu = None
+        for action in mw.menuBar().actions():
+            if action.text().replace("&", "").strip().lower() == "file":
+                file_menu = action.menu()
+                break
+        if file_menu is None:
+            return
+
+        # Already added?
+        for act in file_menu.actions():
+            if act.objectName() == "BNC_SaveAsBackup_Menu":
+                return
+
+        # Find Save As, insert right after it.
+        acts = file_menu.actions()
+        insert_before = None
+        for i, act in enumerate(acts):
+            name = act.objectName()
+            text = act.text().replace("&", "").strip().lower()
+            if name == "Std_SaveAs" or text in ("save as...", "save as"):
+                if i + 1 < len(acts):
+                    insert_before = acts[i + 1]
+                break
+
+        backup_action = QtGui.QAction(mw)
+        backup_action.setText("Save As Backup")
+        backup_action.setToolTip(
+            "Copy the active assembly and all its dependent part / "
+            "sub-assembly files to a folder you choose.")
+        backup_action.setObjectName("BNC_SaveAsBackup_Menu")
+        try:
+            ip = os.path.join(FreeCAD.getHomePath(), "Mod", "Start",
+                              "Resources", "icons", "SaveAsBackup.svg")
+            if os.path.exists(ip):
+                backup_action.setIcon(QtGui.QIcon(ip))
+        except Exception:
+            pass
+
+        def _run_backup():
+            mp = os.path.join(FreeCAD.getHomePath(), "Macro", "SaveAsBackup.FCMacro")
+            if os.path.exists(mp):
+                try:
+                    exec(open(mp, encoding="utf-8").read(), {"__name__": "__main__"})
+                except Exception as e:
+                    FreeCAD.Console.PrintError(
+                        "BNC Save As Backup error: " + str(e) + "\n")
+
+        backup_action.triggered.connect(_run_backup)
+        if insert_before is not None:
+            file_menu.insertAction(insert_before, backup_action)
+        else:
+            file_menu.addAction(backup_action)
+        FreeCAD.Console.PrintLog("ANVIL CAD: 'Save As Backup' added to File menu\n")
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"ANVIL CAD: _add_backup_to_file_menu error: {e}\n")
+
+
+# ---------------------------------------------------------------------------
+# Make the Assembly "Part Tools" panel icons match the Part Design workbench.
+# The panel buttons use each command's shared action icon, so we swap the icon
+# on those actions directly (via an event filter) whenever the buttons appear.
+# ---------------------------------------------------------------------------
+_BODY_TOOL_ICONS = {
+    "Assembly_BodyPad":            "PartDesign_Pad",
+    "Assembly_BodyPocket":         "PartDesign_Pocket",
+    "Assembly_BodyRevolution":     "PartDesign_Revolution",
+    "Assembly_BodyHole":           "PartDesign_Hole",
+    "Assembly_ReferenceAssembly":  "PartDesign_SubShapeBinder",
+    "Assembly_ReferenceComponent": "PartDesign_SubShapeBinder",
+}
+_body_icon_cache = {}
+
+
+def _get_body_tool_icon(stem):
+    if stem in _body_icon_cache:
+        return _body_icon_cache[stem]
+    icon = None
+    try:
+        p = os.path.join(FreeCAD.getHomePath(), "data", "Mod", "PartDesign",
+                         "Resources", "icons", stem + ".svg")
+        if os.path.exists(p):
+            try:
+                from PySide import QtSvg
+            except Exception:
+                from PySide2 import QtSvg
+            img = QtGui.QImage(64, 64, QtGui.QImage.Format_ARGB32)
+            img.fill(QtCore.Qt.transparent)
+            r = QtSvg.QSvgRenderer(p)
+            pnt = QtGui.QPainter(img)
+            r.render(pnt)
+            pnt.end()
+            icon = QtGui.QIcon(QtGui.QPixmap.fromImage(img))
+    except Exception:
+        icon = None
+    _body_icon_cache[stem] = icon
+    return icon
+
+
+class _BodyToolIconFilter(QtCore.QObject):
+    """When a Part Tools button appears, replace its icon with the custom
+    PartDesign icon so the panel matches the Part Design workbench."""
+
+    def eventFilter(self, obj, event):
+        try:
+            if event.type() in (QtCore.QEvent.Show, QtCore.QEvent.Polish):
+                if isinstance(obj, QtWidgets.QToolButton):
+                    act = obj.defaultAction()
+                    if act is not None:
+                        stem = _BODY_TOOL_ICONS.get(act.objectName())
+                        if stem:
+                            icon = _get_body_tool_icon(stem)
+                            if icon is not None:
+                                act.setIcon(icon)
+        except Exception:
+            pass
+        return False
+
+
+def _install_body_tool_icon_filter():
+    if getattr(FreeCAD, "_bnc_body_icon_filter_installed", False):
+        return
+    try:
+        app = QtWidgets.QApplication.instance()
+        if app is None:
+            QtCore.QTimer.singleShot(1000, _install_body_tool_icon_filter)
+            return
+        FreeCAD._bnc_body_icon_filter = _BodyToolIconFilter()
+        app.installEventFilter(FreeCAD._bnc_body_icon_filter)
+        FreeCAD._bnc_body_icon_filter_installed = True
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"ANVIL CAD: body-tool icon filter failed: {e}\n")
+
+
+class _PrefGroupRenamer(QtCore.QObject):
+    """Rename preference-dialog group labels that we can't change in C++.
+
+    The 'Sketcher' group is registered in C++ (QT_TRANSLATE_NOOP), so we
+    relabel it to 'Sketch' each time the Preferences dialog is shown.
+    One-shot per Show event (no persistent timer -> no hang risk)."""
+
+    _MAP = {"Sketcher": "Sketch"}
+
+    def eventFilter(self, obj, event):
+        try:
+            if event.type() == QtCore.QEvent.Show and isinstance(obj, QtWidgets.QWidget):
+                cn = obj.metaObject().className() if hasattr(obj, "metaObject") else ""
+                title = obj.windowTitle() if obj.isWindow() else ""
+                if "DlgPreferences" in cn or title == "Preferences":
+                    # Re-find and rename after the dialog has built its model.
+                    for delay in (0, 200, 500):
+                        QtCore.QTimer.singleShot(delay, self._scan_and_rename)
+        except Exception:
+            pass
+        return False
+
+    def _scan_and_rename(self):
+        try:
+            for w in QtWidgets.QApplication.topLevelWidgets():
+                try:
+                    cn = w.metaObject().className()
+                except Exception:
+                    cn = ""
+                if "DlgPreferences" in cn or (w.isWindow()
+                                              and w.windowTitle() == "Preferences"):
+                    self._rename(w)
+        except Exception:
+            pass
+
+    def _walk_model(self, model, parent):
+        role = QtCore.Qt.DisplayRole
+        for r in range(model.rowCount(parent)):
+            idx = model.index(r, 0, parent)
+            if not idx.isValid():
+                continue
+            txt = model.data(idx, role)
+            if txt in self._MAP:
+                try:
+                    model.setData(idx, self._MAP[txt], role)
+                except Exception:
+                    pass
+            if model.hasChildren(idx):
+                self._walk_model(model, idx)
+
+    def _rename(self, dlg):
+        try:
+            if dlg is None:
+                return
+            # FreeCAD 1.1 uses a model-based QTreeView ("groupsTreeView").
+            for tv in dlg.findChildren(QtWidgets.QAbstractItemView):
+                model = tv.model()
+                if model is not None:
+                    self._walk_model(model, QtCore.QModelIndex())
+
+            # Fallbacks for item-based navigation (older builds).
+            def walk(item):
+                for col in range(item.columnCount()):
+                    t = item.text(col)
+                    if t in self._MAP:
+                        item.setText(col, self._MAP[t])
+                for k in range(item.childCount()):
+                    walk(item.child(k))
+
+            for tw in dlg.findChildren(QtWidgets.QTreeWidget):
+                root = tw.invisibleRootItem()
+                for k in range(root.childCount()):
+                    walk(root.child(k))
+            for lw in dlg.findChildren(QtWidgets.QListWidget):
+                for i in range(lw.count()):
+                    it = lw.item(i)
+                    if it is not None and it.text() in self._MAP:
+                        it.setText(self._MAP[it.text()])
+        except Exception:
+            pass
+
+
+def _install_pref_group_renamer():
+    if getattr(FreeCAD, "_bnc_pref_renamer_installed", False):
+        return
+    try:
+        app = QtWidgets.QApplication.instance()
+        if app is None:
+            QtCore.QTimer.singleShot(1000, _install_pref_group_renamer)
+            return
+        FreeCAD._bnc_pref_renamer = _PrefGroupRenamer()
+        app.installEventFilter(FreeCAD._bnc_pref_renamer)
+        FreeCAD._bnc_pref_renamer_installed = True
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"ANVIL CAD: pref group renamer failed: {e}\n")
+
+
+def _greenify_window_icon():
+    """Recolor the window/taskbar app icon (the infinity mark) from the old
+    blue to the theme green gradient. The C++ startup sets the blue icon from a
+    compiled resource before Python runs, so we re-set it at runtime; the icon
+    is a single colour with the shape in the alpha channel, so we just remap
+    RGB by vertical position and keep alpha."""
+    if getattr(FreeCAD, "_bnc_window_icon_greened", False):
+        return
+    try:
+        app = QtWidgets.QApplication.instance()
+        if app is None:
+            QtCore.QTimer.singleShot(1000, _greenify_window_icon)
+            return
+        old = app.windowIcon()
+        sizes = old.availableSizes()
+        if not sizes:
+            sizes = [QtCore.QSize(s, s) for s in (16, 24, 32, 48, 64, 128, 256)]
+        TOP = (0x22, 0xb8, 0xb0)
+        BOT = (0x06, 0x7a, 0x75)
+        new = QtGui.QIcon()
+        made = False
+        for sz in sizes:
+            pm = old.pixmap(sz)
+            if pm.isNull():
+                continue
+            img = pm.toImage().convertToFormat(QtGui.QImage.Format_ARGB32)
+            h = img.height()
+            w = img.width()
+            for y in range(h):
+                t = y / max(1, h - 1)
+                gr = int(round(TOP[0] + (BOT[0] - TOP[0]) * t))
+                gg = int(round(TOP[1] + (BOT[1] - TOP[1]) * t))
+                gb = int(round(TOP[2] + (BOT[2] - TOP[2]) * t))
+                for x in range(w):
+                    a = img.pixelColor(x, y).alpha()
+                    if a > 0:
+                        img.setPixelColor(x, y, QtGui.QColor(gr, gg, gb, a))
+            new.addPixmap(QtGui.QPixmap.fromImage(img))
+            made = True
+        if made:
+            app.setWindowIcon(new)
+            mw = FreeCADGui.getMainWindow()
+            if mw is not None:
+                mw.setWindowIcon(new)
+            FreeCAD._bnc_window_icon_greened = True
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"ANVIL CAD: window icon greenify failed: {e}\n")
+
+
+def _refresh_solve_assembly(*_a):
+    """Regenerate/Refresh in an assembly: restore each grounded part to its
+    stored assembled ("home") placement, then re-solve. The Ondsel solver fixes
+    a grounded part wherever it currently sits, so once it's moved with Transform
+    a plain solve won't bring it back — we restore the saved home placement.
+    Home is captured when the part is grounded; if missing (grounded before this
+    feature existed) we capture the CURRENT placement once, so regenerate at the
+    correct position first locks in the home."""
+    try:
+        doc = FreeCAD.ActiveDocument
+        if doc is None:
+            return
+        assemblies = [o for o in doc.Objects
+                      if getattr(o, "TypeId", "") == "Assembly::AssemblyObject"]
+        if not assemblies:
+            return
+        for j in doc.Objects:
+            if not str(getattr(j, "Name", "")).startswith("GroundedJoint"):
+                continue
+            part = getattr(j, "ObjectToGround", None)
+            if part is None:
+                continue
+            if hasattr(j, "BNC_HomePlacement"):
+                try:
+                    part.Placement = j.BNC_HomePlacement
+                except Exception:
+                    pass
+            else:
+                try:
+                    j.addProperty("App::PropertyPlacement", "BNC_HomePlacement",
+                                  "Base", "Assembled (home) placement")
+                    j.BNC_HomePlacement = part.Placement
+                    FreeCAD.Console.PrintWarning(
+                        "[Asm] Captured current position of '{}' as its assembled "
+                        "home.\n".format(getattr(part, "Label", part.Name)))
+                except Exception:
+                    pass
+        for a in assemblies:
+            try:
+                a.recompute(True)  # force the assembly solver to run
+            except Exception:
+                pass
+        doc.recompute()
+        FreeCAD.Console.PrintMessage(
+            "[Asm] Regenerate: restored grounded parts to assembled position.\n")
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"ANVIL CAD: refresh-solve error: {e}\n")
+
+
+def _install_refresh_solve():
+    """Make the Std_Refresh (Regenerate) button also re-solve the active
+    assembly. Re-scans on each workbench switch; each action hooked only once."""
+    try:
+        mw = FreeCADGui.getMainWindow()
+        if not mw:
+            QtCore.QTimer.singleShot(500, _install_refresh_solve)
+            return
+        _QAction = getattr(QtGui, "QAction", None) or QtWidgets.QAction
+        for a in mw.findChildren(_QAction):
+            if a.objectName() == "Std_Refresh" and not getattr(a, "_bnc_solve_hooked", False):
+                a.triggered.connect(_refresh_solve_assembly)
+                a._bnc_solve_hooked = True
+        if not getattr(FreeCAD, "_bnc_refresh_solve_wb_hooked", False):
+            mw.workbenchActivated.connect(
+                lambda: QtCore.QTimer.singleShot(300, _install_refresh_solve))
+            FreeCAD._bnc_refresh_solve_wb_hooked = True
+    except Exception as e:
+        FreeCAD.Console.PrintError(f"ANVIL CAD: install refresh-solve error: {e}\n")
+
+
+def _register_taskbox_icons():
+    """Register GREEN icons into BitmapFactory (addIcon overwrites its cache,
+    which is checked BEFORE any resource/path lookup) so BOTH TaskBox headers AND
+    the document-tree ViewProvider icons (Body, Pad, Pocket, Sketch, primitives,
+    ...) render green — without touching the compiled C++ resource. ViewProviders
+    request the icon by name, some WITH a trailing '.svg' (e.g. sPixmap =
+    'PartDesign_Pad.svg'), so we register under BOTH keys. Runs at import, before
+    objects are created and cache their icons."""
+    try:
+        _dirs = [
+            os.path.join(FreeCAD.getResourceDir(), "Mod", "PartDesign",
+                         "Resources", "icons"),
+            os.path.join(FreeCAD.getHomePath(), "Mod", "Start",
+                         "Resources", "icons", "part"),
+        ]
+        try:
+            from PySide import QtSvg as _QtSvg
+        except Exception:
+            import PySide6.QtSvg as _QtSvg  # noqa
+        for _d in _dirs:
+            if not os.path.isdir(_d):
+                continue
+            for _f in os.listdir(_d):
+                if not _f.lower().endswith(".svg"):
+                    continue
+                _stem = _f[:-4]
+                _p = os.path.join(_d, _f)
+                try:
+                    _r = _QtSvg.QSvgRenderer(_p)
+                    _img = QtGui.QImage(64, 64, QtGui.QImage.Format_ARGB32)
+                    _img.fill(QtCore.Qt.transparent)
+                    _pt = QtGui.QPainter(_img)
+                    _r.render(_pt)
+                    _pt.end()
+                    _buf = QtCore.QBuffer()
+                    _buf.open(QtCore.QIODevice.WriteOnly)
+                    _img.save(_buf, "PNG")
+                    _png = bytes(_buf.data())
+                    for _key in (_stem, _stem + ".svg"):
+                        try:
+                            FreeCADGui.addIcon(_key, _png, "PNG")
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+# Register task-box header icons immediately (before workbenches build panels).
+_register_taskbox_icons()
+
 # Create toolbar with delay to ensure GUI is ready
+QtCore.QTimer.singleShot(4200, _install_body_tool_icon_filter)
+# The Preferences renamer must be installed both immediately (the delayed
+# timer does not always fire depending on startup path) and via timer as a
+# backstop, so the 'Sketcher' group is relabelled 'Sketch' on every open.
+_install_pref_group_renamer()
+QtCore.QTimer.singleShot(4200, _install_pref_group_renamer)
+QtCore.QTimer.singleShot(4500, _greenify_window_icon)
+QtCore.QTimer.singleShot(3000, _install_refresh_solve)
 QtCore.QTimer.singleShot(2000, create_persistent_toolbar)
 QtCore.QTimer.singleShot(2500, _add_setwd_to_file_toolbar)
 QtCore.QTimer.singleShot(3000, _install_task_panel_renamer)
 QtCore.QTimer.singleShot(3000, _fix_std_part_name)
 QtCore.QTimer.singleShot(3500, _apply_partdesign_icons)
 QtCore.QTimer.singleShot(4000, _apply_partdesign_icons_on_wb)
+QtCore.QTimer.singleShot(3600, _apply_assembly_icons)
+QtCore.QTimer.singleShot(4300, _apply_assembly_icons)
+QtCore.QTimer.singleShot(4000, _apply_assembly_icons_on_wb)
+QtCore.QTimer.singleShot(3700, _apply_view_icons)
+QtCore.QTimer.singleShot(4400, _apply_view_icons)
+QtCore.QTimer.singleShot(4000, _apply_view_icons_on_wb)
+QtCore.QTimer.singleShot(3800, _apply_part_icons)
+QtCore.QTimer.singleShot(4500, _apply_part_icons)
+QtCore.QTimer.singleShot(4000, _apply_part_icons_on_wb)
+QtCore.QTimer.singleShot(3900, _apply_drawing_icons)
+QtCore.QTimer.singleShot(4600, _apply_drawing_icons)
+QtCore.QTimer.singleShot(4000, _apply_drawing_icons_on_wb)
 QtCore.QTimer.singleShot(3000, _connect_setwd_on_workbench)
 QtCore.QTimer.singleShot(3500, _remap_file_menu_saveas)
+QtCore.QTimer.singleShot(3800, _add_backup_to_file_menu)
 
 def _connect_workbench_fix():
     try:

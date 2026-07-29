@@ -11,8 +11,8 @@ class TechDrawWorkbench(Gui.Workbench):
             FreeCAD.getResourceDir()
             + "Mod/TechDraw/Resources/icons/preferences-techdraw.svg"
         )
-        self.__class__.MenuText = "TechDraw"
-        self.__class__.ToolTip = "Technical Drawing workbench"
+        self.__class__.MenuText = "Drawing"
+        self.__class__.ToolTip = "Drawing workbench (technical drawings)"
         self._dim_watcher = None
         self._watcher_cls = None   # set in Initialize()
 

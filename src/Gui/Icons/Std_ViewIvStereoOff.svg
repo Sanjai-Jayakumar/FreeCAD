@@ -52,11 +52,11 @@
       <stop
          id="stop3866"
          offset="0"
-         style="stop-color:#71b2f8;stop-opacity:1;" />
+         style="stop-color:#4cbcbc;stop-opacity:1;" />
       <stop
          id="stop3868"
          offset="1"
-         style="stop-color:#002795;stop-opacity:1;" />
+         style="stop-color:#056b6b;stop-opacity:1;" />
     </linearGradient>
     <linearGradient
        gradientTransform="translate(0,-4)"
@@ -70,11 +70,11 @@
     <linearGradient
        id="linearGradient3767">
       <stop
-         style="stop-color:#3465a4;stop-opacity:1"
+         style="stop-color:#088f8f;stop-opacity:1"
          offset="0"
          id="stop3769" />
       <stop
-         style="stop-color:#729fcf;stop-opacity:1"
+         style="stop-color:#088f8f;stop-opacity:1"
          offset="1"
          id="stop3771" />
     </linearGradient>
@@ -90,11 +90,11 @@
     <linearGradient
        id="linearGradient3777">
       <stop
-         style="stop-color:#204a87;stop-opacity:1"
+         style="stop-color:#056b6b;stop-opacity:1"
          offset="0"
          id="stop3779" />
       <stop
-         style="stop-color:#3465a4;stop-opacity:1"
+         style="stop-color:#088f8f;stop-opacity:1"
          offset="1"
          id="stop3781" />
     </linearGradient>

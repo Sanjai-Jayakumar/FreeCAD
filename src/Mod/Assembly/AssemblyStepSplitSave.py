@@ -121,6 +121,18 @@ def _children_of(container):
     return []
 
 
+def _is_body(obj):
+    """A PartDesign::Body — exported as a .prt (its own leaf part). In the
+    single-file (Creo-style) workflow, parts are modelled as bodies living
+    directly in the assembly document, so each Body is a standalone part."""
+    try:
+        if obj.isDerivedFrom("PartDesign::Body"):
+            return True
+    except Exception:
+        pass
+    return getattr(obj, "TypeId", "") == "PartDesign::Body"
+
+
 def _is_leaf_shape(obj):
     """A Part::Feature (or subclass) that should be exported as a .prt."""
     tid = getattr(obj, "TypeId", "")
@@ -137,12 +149,25 @@ def _is_leaf_shape(obj):
 
 
 def _looks_like_step_import(doc):
-    """Heuristic: doc contains at least one container we know how to split
-    (App::Part from STEP, or Assembly::AssemblyObject from the workbench)."""
+    """True ONLY for a pure STEP import: has App::Part containers but NO native
+    Assembly::AssemblyObject.
+
+    Native (BNC) assemblies are split into .asm/.prt by the BNC Save macro
+    (Save.FCMacro) with change-detection and versioning. If this observer ALSO
+    split them, every save would produce duplicate/extra files (e.g. 432.001.prt
+    AND 432.002.prt). So we explicitly SKIP any doc that has an
+    Assembly::AssemblyObject and let the Save macro own the split."""
+    has_app_part = False
     for o in doc.Objects:
-        if _is_part_container(o):
-            return True
-    return False
+        try:
+            if o.isDerivedFrom("Assembly::AssemblyObject") or \
+               getattr(o, "TypeId", "") == "Assembly::AssemblyObject":
+                return False  # native assembly — handled by the Save macro
+        except Exception:
+            pass
+        if getattr(o, "TypeId", "") == "App::Part":
+            has_app_part = True
+    return has_app_part
 
 
 def _root_containers(doc):
@@ -201,6 +226,10 @@ def _walk_and_save(node, folder, log, visited):
         _save_object_as(real, folder, ".asm", log)
         for child in _children_of(real):
             _walk_and_save(child, folder, log, visited)
+    elif _is_body(real):
+        # A PartDesign::Body is a standalone part → .prt. Do NOT recurse into
+        # its features (Sketch/Pad/…) — they belong to the body.
+        _save_object_as(real, folder, ".prt", log)
     elif _is_leaf_shape(real):
         _save_object_as(real, folder, ".prt", log)
 

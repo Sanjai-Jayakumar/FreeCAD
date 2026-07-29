@@ -22,6 +22,25 @@ def clean_name(name):
 
 default_name = clean_name(doc.Label)
 
+
+def get_logical_ext(document):
+    """Logical file type: .asm (assembly / App::Part STEP import), .drg
+    (drawing) or .prt (part)."""
+    has_asm = has_drg = False
+    for obj in document.Objects:
+        t = obj.TypeId
+        if "Assembly" in t or "Link" in t or t == "App::Part":
+            has_asm = True
+        elif "TechDraw" in t or "Drawing" in t:
+            has_drg = True
+    if has_drg:
+        return ".drg"
+    if has_asm:
+        return ".asm"
+    return ".prt"
+
+logical_ext = get_logical_ext(doc)
+
 # -------------------------------------------------
 # SAVE AS DIALOG
 # -------------------------------------------------
@@ -53,9 +72,21 @@ if new_dir != working_dir:
 base_name = os.path.basename(file_path).replace(".FCStd", "")
 base_path = os.path.join(new_dir, base_name)
 
+# -------------------------------------------------
+# NAME THE FIRST BODY / ROOT ASSEMBLY TO MATCH THE FILE
+# So the tree shows "<FileName>" instead of the generic "Body".
+# -------------------------------------------------
+def apply_name_to_first_body(document, name):
+    for obj in document.Objects:
+        if obj.TypeId in ("PartDesign::Body", "Assembly::AssemblyObject"):
+            obj.Label = name
+            break  # only the first matching object
+
+apply_name_to_first_body(doc, base_name)
+
 def latest_version(base):
     v = 1
-    while os.path.exists(f"{base}.{v:03d}.FCStd"):
+    while os.path.exists(f"{base}.{v:03d}{logical_ext}.FCStd"):
         v += 1
     return v - 1
 
@@ -74,23 +105,23 @@ last_undo = save_params.GetInt(undo_key, -1)
 # SAVE AS WITH VERSIONING
 # -------------------------------------------------
 if last_v == 0:
-    path = f"{base_path}.001.FCStd"
+    path = f"{base_path}.001{logical_ext}.FCStd"
     doc.saveAs(path)
     save_params.SetInt(undo_key, undo_now)
     FreeCAD.Console.PrintMessage(
-        f"{base_name} → Saved as .001\n"
+        f"{base_name} → Saved as .001{logical_ext}\n"
     )
 else:
     if undo_now != last_undo:
         new_v = last_v + 1
-        path = f"{base_path}.{new_v:03d}.FCStd"
+        path = f"{base_path}.{new_v:03d}{logical_ext}.FCStd"
         doc.saveAs(path)
         save_params.SetInt(undo_key, undo_now)
         FreeCAD.Console.PrintMessage(
-            f"{base_name} → Modified → Saved as .{new_v:03d}\n"
+            f"{base_name} → Modified → Saved as .{new_v:03d}{logical_ext}\n"
         )
     else:
-        path = f"{base_path}.{last_v:03d}.FCStd"
+        path = f"{base_path}.{last_v:03d}{logical_ext}.FCStd"
         doc.saveAs(path)
         FreeCAD.Console.PrintMessage(
             f"{base_name} → No changes → Saved same version\n"

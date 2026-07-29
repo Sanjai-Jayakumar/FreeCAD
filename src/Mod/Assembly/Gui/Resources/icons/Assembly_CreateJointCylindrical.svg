@@ -27,11 +27,11 @@
       <stop
          id="stop3379"
          offset="0"
-         style="stop-color:#faff2b;stop-opacity:1;" />
+         style="stop-color:#f39c12;stop-opacity:1;" />
       <stop
          id="stop3381"
          offset="1"
-         style="stop-color:#ffaa00;stop-opacity:1;" />
+         style="stop-color:#f39c12;stop-opacity:1;" />
     </linearGradient>
     <radialGradient
        xlink:href="#linearGradient3377"
@@ -56,11 +56,11 @@
     <linearGradient
        id="linearGradient3801-5">
       <stop
-         style="stop-color:#c4a000;stop-opacity:1"
+         style="stop-color:#c17d0c;stop-opacity:1"
          offset="0"
          id="stop3803-3" />
       <stop
-         style="stop-color:#fce94f;stop-opacity:1"
+         style="stop-color:#ffe066;stop-opacity:1"
          offset="1"
          id="stop3805-5" />
     </linearGradient>
@@ -75,11 +75,11 @@
     <linearGradient
        id="linearGradient3838">
       <stop
-         style="stop-color:#34e0e2;stop-opacity:1"
+         style="stop-color:#088f8f;stop-opacity:1"
          offset="0"
          id="stop3840" />
       <stop
-         style="stop-color:#06989a;stop-opacity:1"
+         style="stop-color:#056b6b;stop-opacity:1"
          offset="1"
          id="stop3842" />
     </linearGradient>
@@ -121,15 +121,15 @@
     <linearGradient
        id="linearGradient14">
       <stop
-         style="stop-color:#3465a4;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop13" />
       <stop
-         style="stop-color:#729fcf;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0.44444445"
          id="stop15" />
       <stop
-         style="stop-color:#3465a4;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0.6388889"
          id="stop14" />
     </linearGradient>
@@ -154,15 +154,15 @@
     <linearGradient
        id="linearGradient3">
       <stop
-         style="stop-color:#3465a4;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0"
          id="stop1" />
       <stop
-         style="stop-color:#729fcf;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0.4285714"
          id="stop2" />
       <stop
-         style="stop-color:#3465a4;stop-opacity:1;"
+         style="stop-color:#088f8f;stop-opacity:1;"
          offset="0.72727275"
          id="stop3" />
     </linearGradient>
@@ -212,14 +212,14 @@
          transform="matrix(1.1122207,0,0,1.1122207,-3.793277,28.042367)">
         <path
            id="ellipse12-0"
-           style="fill:url(#linearGradient1202);stroke:#0b1521;stroke-width:1.43649;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dashoffset:20.4;stroke-opacity:1"
+           style="fill:url(#linearGradient1202);stroke:#044a4a;stroke-width:1.43649;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dashoffset:20.4;stroke-opacity:1"
            d="m 44,26 c 0,2.209139 -5.372583,4 -12,4 -6.627417,0 -12,-1.790861 -12,-4 0,-0.97756 0,-12.999156 0,-12.999156 L 44,13 c 0,0 0,10.790861 0,13 z" />
         <path
            id="path15-7"
-           style="fill:none;stroke:#729fcf;stroke-width:1.436;stroke-linecap:round;stroke-linejoin:miter;stroke-miterlimit:4.5;stroke-dasharray:none;stroke-dashoffset:20.4;stroke-opacity:1"
+           style="fill:none;stroke:#088f8f;stroke-width:1.436;stroke-linecap:round;stroke-linejoin:miter;stroke-miterlimit:4.5;stroke-dasharray:none;stroke-dashoffset:20.4;stroke-opacity:1"
            d="m 42.613211,25.495355 c 0,1.885463 -4.934755,3.259253 -10.613211,3.259253 -5.678457,0 -10.657405,-1.417985 -10.657405,-3.303448 V 16.3125 C 27.4375,19 36,19.375 42.613211,16.35597 Z" />
         <ellipse
-           style="fill:#729fcf;fill-opacity:1;stroke:#0b1521;stroke-width:1.43649;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dasharray:none;stroke-dashoffset:20.4;stroke-opacity:1"
+           style="fill:#088f8f;fill-opacity:1;stroke:#044a4a;stroke-width:1.43649;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dasharray:none;stroke-dashoffset:20.4;stroke-opacity:1"
            id="path2994-7-7"
            cx="32"
            cy="13.000844"
@@ -243,19 +243,19 @@
          id="g2-7"
          transform="matrix(0.91296596,0,0,0.91296596,2.582875,-2.7977076)">
         <path
-           style="fill:#fce94f;stroke:#302b00;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dashoffset:20.4;stroke-opacity:1"
+           style="fill:#ffe066;stroke:#6e4a0a;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dashoffset:20.4;stroke-opacity:1"
            d="m 56.000001,50.3673 c 0,4.418278 -10.745166,8 -24,8 -13.254833,0 -23.9999985,-3.581722 -23.9999985,-8 l -2e-6,-23.901751 H 56 Z"
            id="path2994-3" />
         <path
-           style="fill:url(#linearGradient3807);fill-opacity:1;stroke:#fce94f;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dashoffset:20.4;stroke-opacity:1"
+           style="fill:url(#linearGradient3807);fill-opacity:1;stroke:#ffe066;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dashoffset:20.4;stroke-opacity:1"
            d="m 54,49.094573 c 0,4.016616 -9.84973,7.272727 -22,7.272727 -12.150264,0 -21.999999,-3.256111 -21.999999,-7.272727 L 9.9999995,28.21155 H 54 Z"
            id="path2994-3-6" />
         <path
-           style="fill:none;stroke:#fce94f;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dashoffset:20.4;stroke-opacity:1"
+           style="fill:none;stroke:#ffe066;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dashoffset:20.4;stroke-opacity:1"
            d="m 54,30.64805 c -2,3.272727 -9.84973,5.272727 -22,5.272727 -12.150264,0 -19,-2 -21.999999,-5.272727"
            id="path2994-3-6-9" />
         <ellipse
-           style="fill:#fce94f;stroke:#302b00;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dasharray:none;stroke-dashoffset:20.4;stroke-opacity:1"
+           style="fill:#ffe066;stroke:#6e4a0a;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dasharray:none;stroke-dashoffset:20.4;stroke-opacity:1"
            id="path2994"
            cx="32"
            cy="26.465549"
@@ -267,14 +267,14 @@
          transform="matrix(1.1122207,0,0,1.1122207,-3.793277,-7.0714821)">
         <path
            id="ellipse12"
-           style="fill:url(#linearGradient1032);stroke:#0b1521;stroke-width:1.43649;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dashoffset:20.4;stroke-opacity:1"
+           style="fill:url(#linearGradient1032);stroke:#044a4a;stroke-width:1.43649;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dashoffset:20.4;stroke-opacity:1"
            d="m 44,24 c 0,2.209139 -5.372583,4 -12,4 -6.627417,0 -12,-1.790861 -12,-4 V 13.000844 L 44,13 Z" />
         <path
            id="path15"
-           style="fill:none;stroke:#729fcf;stroke-width:1.436;stroke-linecap:round;stroke-linejoin:miter;stroke-miterlimit:4.5;stroke-dasharray:none;stroke-dashoffset:20.4;stroke-opacity:1"
+           style="fill:none;stroke:#088f8f;stroke-width:1.436;stroke-linecap:round;stroke-linejoin:miter;stroke-miterlimit:4.5;stroke-dasharray:none;stroke-dashoffset:20.4;stroke-opacity:1"
            d="m 42.613211,23.495355 c 0,1.885463 -4.934755,3.259253 -10.613211,3.259253 -5.678457,0 -10.657405,-1.417985 -10.657405,-3.303448 V 16.3125 C 27.4375,19 36,19.375 42.613211,16.35597 Z" />
         <ellipse
-           style="fill:#729fcf;fill-opacity:1;stroke:#0b1521;stroke-width:1.43649;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dasharray:none;stroke-dashoffset:20.4;stroke-opacity:1"
+           style="fill:#088f8f;fill-opacity:1;stroke:#044a4a;stroke-width:1.43649;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4.5;stroke-dasharray:none;stroke-dashoffset:20.4;stroke-opacity:1"
            id="path2994-7"
            cx="32"
            cy="13.000844"

@@ -117,6 +117,26 @@ if dlg.exec_():
         elif file_type == "Part Design":
             FreeCADGui.activateWorkbench("PartDesignWorkbench")
 
+            # Create the PartDesign Body up front and label it with the part
+            # name, so the tree shows "<PartName>" instead of the generic
+            # auto-created "Body". Store the description on it too.
+            body = doc.addObject("PartDesign::Body", "Body")
+            body.Label = part_name
+            if part_desc:
+                if not hasattr(body, "Description"):
+                    body.addProperty("App::PropertyString", "Description",
+                                     "Base", "Part description")
+                body.Description = part_desc
+            doc.recompute()
+
+            # Make it the active body so new sketches/features land inside it.
+            try:
+                gui_doc = FreeCADGui.getDocument(doc.Name)
+                if gui_doc and gui_doc.ActiveView:
+                    gui_doc.ActiveView.setActiveObject("pdbody", body)
+            except Exception:
+                pass
+
         elif file_type == "Assembly":
             try:
                 FreeCADGui.activateWorkbench("AssemblyWorkbench")
