@@ -156,6 +156,11 @@ TopoDS_Shape ShapeExtractor::getShapes(const std::vector<App::DocumentObject*> l
             if (!cleanShape.IsNull()) {
                 builder.Add(comp, cleanShape);
             }
+            // ANVIL CAD: the stripped composite is already added above. Without this
+            // 'continue' the original composite was ALSO added by the trailing
+            // builder.Add below, duplicating the whole assembly compound (and
+            // re-introducing the infinite shapes we just stripped) before HLR.
+            continue;
         } else if (Part::TopoShape(s).isInfinite()) {
             continue;    //simple shape is infinite
         }

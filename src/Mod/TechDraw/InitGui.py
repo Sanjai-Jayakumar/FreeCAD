@@ -631,6 +631,10 @@ class TechDrawWorkbench(Gui.Workbench):
                 ("BNC_InsertToleranceTable.svg", "Insert Tolerance Table", "InsertToleranceTable.FCMacro"),
                 ("BNC_AssemblyTable.svg",        "Assembly Table",         "AssemblyTable.FCMacro"),
                 ("BNC_BalloonAssembly.svg",      "Balloon Assembly",       "BalloonAssembly.FCMacro"),
+                ("BNC_DatumFeature.svg",         "Datum Feature Symbol",   "DatumFeatureSymbol.FCMacro"),
+                ("BNC_GDTFrame.svg",             "Feature Control Frame",  "GDTFrame.FCMacro"),
+                ("BNC_ShowDimensions.svg",       "Show Dimensions",        "ShowDimensions.FCMacro"),
+                ("BNC_LockViewsOpen.svg",        "Lock/Unlock View Positions", "LockViews.FCMacro"),
                 ("BNC_ExportPDF.svg",            "Export PDF",             "ExportPDF.FCMacro"),
             ]:
                 icon_path = _o2.path.join(icon_dir, icon_file)
@@ -640,12 +644,55 @@ class TechDrawWorkbench(Gui.Workbench):
                 action.setToolTip(tip)
                 if run is not None:
                     action.triggered.connect(lambda checked=False, m=macro: run(m))
+                if macro == "LockViews.FCMacro":
+                    action.setObjectName("BNC_LockViews_action")
+                    self._bnc_lock_action = action
                 tb.addAction(action)
             mw.addToolBar(QtCore.Qt.TopToolBarArea, tb)
+            self._bnc_sync_lock_icon(icon_dir)
         except Exception as e:
             import traceback
             FreeCAD.Console.PrintError("BNC TechDraw toolbar error: " + str(e) + "\n")
             FreeCAD.Console.PrintError(traceback.format_exc())
+
+    def _bnc_sync_lock_icon(self, icon_dir):
+        # Point the Lock/Unlock button at the icon that matches the current
+        # page state: closed padlock if every view is locked, open otherwise.
+        try:
+            import os as _o3
+            try:
+                from PySide2 import QtGui as _qg
+            except ImportError:
+                from PySide import QtGui as _qg
+            act = getattr(self, "_bnc_lock_action", None)
+            doc = FreeCAD.ActiveDocument
+            if act is None or doc is None:
+                return
+            _tids = ("TechDraw::DrawProjGroup", "TechDraw::DrawViewCollection")
+            views = []
+
+            def _rec(vlist):
+                for v in vlist or []:
+                    try:
+                        if "LockPosition" in v.PropertiesList:
+                            views.append(v)
+                    except Exception:
+                        pass
+                    if v.TypeId in _tids:
+                        _rec(getattr(v, "Views", []))
+
+            for p in doc.Objects:
+                if p.TypeId == "TechDraw::DrawPage":
+                    _rec(getattr(p, "Views", []))
+            if not views:
+                return
+            locked_all = all(bool(v.LockPosition) for v in views)
+            icon_file = "BNC_LockViews.svg" if locked_all else "BNC_LockViewsOpen.svg"
+            ip = _o3.path.join(icon_dir, icon_file)
+            if _o3.path.exists(ip):
+                act.setIcon(_qg.QIcon(ip))
+        except Exception:
+            pass
 
     def Activated(self):
         self._bnc_toolbar(True)

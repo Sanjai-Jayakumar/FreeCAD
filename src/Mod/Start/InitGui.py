@@ -122,6 +122,19 @@ try:
 except Exception as e:
     FreeCAD.Console.PrintError(f"ANVIL CAD: Failed to load workbench order module: {str(e)}\n")
 
+# ANVIL CAD: ProjGroup views are freely movable natively (anchor lock removed in
+# the C++ DrawProjGroupItem::isLocked rebuild). The old auto-unlock observer is
+# intentionally DISABLED — it fought the manual "Lock/Unlock View Positions"
+# TechDraw button by continuously re-unlocking views.
+# import BNCUnlockProjGroupViews  # disabled on purpose
+
+# ANVIL CAD: Creo-style auto-snap for datum feature symbols (drag near -> attach)
+try:
+    import BNCDatumAutoSnap  # noqa: F401 — side-effect import, installs observer
+    FreeCAD.Console.PrintLog("ANVIL CAD: datum auto-snap module loaded\n")
+except Exception as e:
+    FreeCAD.Console.PrintError(f"ANVIL CAD: Failed to load datum auto-snap module: {str(e)}\n")
+
 # ANVIL CAD: Bounce workbench to force PartDesign toolbars to appear on startup
 # activateWorkbench() is a no-op when the target is already active, so we must
 # switch away first, then back, to trigger C++ setupToolBars().

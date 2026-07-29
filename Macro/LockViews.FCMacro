@@ -1,0 +1,137 @@
+# -*- coding: utf-8 -*-
+# LockViews.FCMacro — ANVIL CAD
+#
+# Toggle the position lock of every view on the active TechDraw page.
+#   * First click  -> LOCK: no view can be dragged (positions are fixed).
+#   * Click again  -> UNLOCK: views can be repositioned again.
+# Works on part views, projection groups + their items, symbols, sections,
+# dimensions etc. (anything that carries a LockPosition property).
+
+import os
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide2 import QtCore, QtGui, QtWidgets
+except ImportError:
+    from PySide import QtCore, QtGui
+    QtWidgets = QtGui
+
+_VIEW_TIDS = ("TechDraw::DrawProjGroup", "TechDraw::DrawViewCollection")
+
+# toolbar button icons (locked = closed amber padlock, unlocked = open green)
+_ICON_LOCKED = "BNC_LockViews.svg"
+_ICON_UNLOCKED = "BNC_LockViewsOpen.svg"
+
+
+def _icon_dir():
+    return os.path.join(App.getHomePath().rstrip("/\\"),
+                        "Mod", "BNCTechDraw", "icons")
+
+
+def _sync_toolbar_icon(lock):
+    """Flip the Lock/Unlock toolbar button icon to match the current state."""
+    try:
+        mw = Gui.getMainWindow()
+        if mw is None:
+            return
+        tb = mw.findChild(QtWidgets.QToolBar, "BNC_TechDraw_Tools")
+        if tb is None:
+            return
+        path = os.path.join(_icon_dir(),
+                            _ICON_LOCKED if lock else _ICON_UNLOCKED)
+        if not os.path.exists(path):
+            return
+        for act in tb.actions():
+            txt = (act.text() or "") + " " + (act.toolTip() or "")
+            if act.objectName() == "BNC_LockViews_action" or "Lock/Unlock" in txt:
+                act.setIcon(QtGui.QIcon(path))
+                break
+    except Exception:
+        pass
+
+
+def _active_page(doc):
+    for obj in Gui.Selection.getSelection():
+        if obj.TypeId == "TechDraw::DrawPage":
+            return obj
+        for p in getattr(obj, "InList", []):
+            if p.TypeId == "TechDraw::DrawPage":
+                return p
+    try:
+        av = Gui.ActiveDocument.ActiveView
+        if av and hasattr(av, "getPage"):
+            p = av.getPage()
+            if p:
+                return p
+    except Exception:
+        pass
+    pages = [o for o in doc.Objects if o.TypeId == "TechDraw::DrawPage"]
+    return pages[0] if pages else None
+
+
+def _collect(views, out, seen):
+    for v in views or []:
+        if v is None or id(v) in seen:
+            continue
+        seen.add(id(v))
+        try:
+            if "LockPosition" in v.PropertiesList:
+                out.append(v)
+        except Exception:
+            pass
+        # descend into projection groups / collections to reach their items
+        if v.TypeId in _VIEW_TIDS:
+            _collect(getattr(v, "Views", []), out, seen)
+
+
+def main():
+    doc = App.ActiveDocument
+    if not doc:
+        QtWidgets.QMessageBox.warning(None, "Lock Views", "No active document.")
+        return
+    page = _active_page(doc)
+    if not page:
+        QtWidgets.QMessageBox.warning(
+            None, "Lock Views", "No TechDraw page found. Open a page first.")
+        return
+
+    views = []
+    _collect(getattr(page, "Views", []), views, set())
+    if not views:
+        QtWidgets.QMessageBox.information(
+            None, "Lock Views", "No views on this page to lock.")
+        return
+
+    # if ANY view is currently unlocked -> lock everything; else unlock all
+    lock = any(not bool(v.LockPosition) for v in views)
+
+    App.setActiveTransaction("Lock views" if lock else "Unlock views")
+    for v in views:
+        try:
+            v.setEditorMode("LockPosition", 0)   # keep it user-editable too
+            if bool(v.LockPosition) != lock:
+                v.LockPosition = lock
+        except Exception:
+            pass
+    try:
+        doc.recompute()
+    except Exception:
+        pass
+    App.closeActiveTransaction()
+
+    _sync_toolbar_icon(lock)
+
+    App.Console.PrintMessage(
+        "ANVIL CAD: {} {} view(s) on {}\n".format(
+            "locked" if lock else "unlocked", len(views), page.Label))
+    QtWidgets.QMessageBox.information(
+        None, "Lock Views",
+        "View positions are now {}.\n\n{}".format(
+            "LOCKED" if lock else "UNLOCKED",
+            "Views cannot be dragged. Click the lock button again to unlock."
+            if lock else
+            "Views can now be dragged. Click the lock button again to lock."))
+
+
+main()

@@ -128,6 +128,20 @@ TaskDimension::TaskDimension(QGIViewDimension *parent, ViewProviderDimension *di
 #else
     connect(ui->cbArbitrary, &QCheckBox::stateChanged, this, &TaskDimension::onArbitraryChanged);
 #endif
+    // ANVIL CAD: dedicated display-only value box. It is shown only while
+    // "Edit value" is ticked, and it is the ONLY control that writes the
+    // override - the Format specifier / Prefix / Suffix fields are left alone.
+    {
+        bool arb = parent->getDimFeat()->Arbitrary.getValue();
+        ui->leEditValue->setVisible(arb);
+        ui->labelEditValue->setVisible(arb);
+        if (arb) {
+            ui->leEditValue->setText(
+                QString::fromStdString(parent->getDimFeat()->FormatSpec.getStrValue()));
+        }
+        connect(ui->leEditValue, &QLineEdit::textEdited, this,
+                &TaskDimension::onEditValueChanged);
+    }
     StringValue = parent->getDimFeat()->FormatSpecOverTolerance.getValue();
     qs = QString::fromUtf8(StringValue.data(), StringValue.size());
     ui->leFormatSpecifierOverTolerance->setText(qs);
@@ -142,6 +156,31 @@ TaskDimension::TaskDimension(QGIViewDimension *parent, ViewProviderDimension *di
 #else
     connect(ui->cbArbitraryTolerances, &QCheckBox::stateChanged, this, &TaskDimension::onArbitraryTolerancesChanged);
 #endif
+
+    // ANVIL CAD: Creo-style Tolerance mode dropdown. Presents the underlying
+    // TheoreticalExact / EqualTolerance / Over / Under tolerance controls as a
+    // single Nominal / Symmetric / Plus-Minus / Basic selector and reveals the
+    // dedicated +/- value boxes only for the modes that use them.
+    {
+        ui->comboTolType->addItem(tr("Nominal"));                  // 0 no tolerance
+        ui->comboTolType->addItem(QString::fromUtf8("Symmetric (\xC2\xB1)")); // 1 equal +/-
+        ui->comboTolType->addItem(tr("Plus-Minus"));               // 2 separate + / -
+        ui->comboTolType->addItem(tr("Basic"));                    // 3 theoretically exact
+        auto* df = parent->getDimFeat();
+        int initMode;
+        if (df->TheoreticalExact.getValue())
+            initMode = 3;
+        else if (df->EqualTolerance.getValue())
+            initMode = 1;
+        else if (df->OverTolerance.getValue() == 0.0 && df->UnderTolerance.getValue() == 0.0)
+            initMode = 0;
+        else
+            initMode = 2;
+        ui->comboTolType->setCurrentIndex(initMode);
+        updateToleranceModeUi(initMode);
+        connect(ui->comboTolType, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, &TaskDimension::onTolTypeChanged);
+    }
 
     // Reference
     std::regex refRegex("\\(%\\.([0-9]+)([fFrRgGwWeE])\\)");
@@ -362,6 +401,64 @@ void TaskDimension::onUndertoleranceChanged()
     recomputeFeature();
 }
 
+// ANVIL CAD: Creo-style tolerance mode selector. Maps the chosen mode onto the
+// underlying TheoreticalExact / EqualTolerance / Over / Under properties by
+// driving the (now hidden) checkboxes so all their existing side-effect logic
+// runs, then reveals only the +/- value boxes the mode needs.
+void TaskDimension::onTolTypeChanged()
+{
+    const int mode = ui->comboTolType->currentIndex();
+    const bool basic = (mode == 3);
+    const bool equal = (mode == 1);
+
+    if (mode == 0) {
+        // Nominal: no tolerance at all
+        ui->qsbOvertolerance->setValue(0.0);
+        ui->qsbUndertolerance->setValue(0.0);
+    }
+
+    // Drive the underlying checkboxes; their slots update the feature and handle
+    // enable/min/under=-over bookkeeping. Qt only emits when the state actually
+    // changes, so also write the flags directly to cover the no-change case.
+    ui->cbTheoreticallyExact->setChecked(basic);
+    ui->cbEqualTolerance->setChecked(equal);
+    if (!m_dimensionVP.expired()) {
+        auto* df = m_parent->getDimFeat();
+        df->TheoreticalExact.setValue(basic);
+        df->EqualTolerance.setValue(equal);
+    }
+
+    updateToleranceModeUi(mode);
+    recomputeFeature();
+}
+
+void TaskDimension::updateToleranceModeUi(int mode)
+{
+    const bool showOver  = (mode == 1 || mode == 2);  // symmetric or plus-minus
+    const bool showUnder = (mode == 2);               // plus-minus only
+
+    ui->label_2->setVisible(showOver);
+    ui->qsbOvertolerance->setVisible(showOver);
+    ui->label_8->setVisible(showUnder);
+    ui->qsbUndertolerance->setVisible(showUnder);
+
+    if (mode == 1)
+        ui->label_2->setText(QString::fromUtf8("Tolerance \xC2\xB1"));  // ±
+    else
+        ui->label_2->setText(tr("Upper (+)"));
+    ui->label_8->setText(QString::fromUtf8("Lower (\xE2\x88\x92)"));      // −
+
+    // The dropdown replaces these controls, and the printf-format rows are
+    // hidden so the panel reads like Creo's simple tolerance box.
+    ui->cbTheoreticallyExact->setVisible(false);
+    ui->cbEqualTolerance->setVisible(false);
+    ui->label->setVisible(false);
+    ui->leFormatSpecifierOverTolerance->setVisible(false);
+    ui->label_12->setVisible(false);
+    ui->leFormatSpecifierUnderTolerance->setVisible(false);
+    ui->cbArbitraryTolerances->setVisible(false);
+}
+
 void TaskDimension::onFormatSpecifierChanged()
 {
     m_parent->getDimFeat()->FormatSpec.setValue(ui->leFormatSpecifier->text().toUtf8().constData());
@@ -370,7 +467,43 @@ void TaskDimension::onFormatSpecifierChanged()
 
 void TaskDimension::onArbitraryChanged()
 {
-    m_parent->getDimFeat()->Arbitrary.setValue(ui->cbArbitrary->isChecked());
+    auto* dim = m_parent->getDimFeat();
+    const bool on = ui->cbArbitrary->isChecked();
+    dim->Arbitrary.setValue(on);
+    // Show/hide the dedicated value box only while "Edit value" is ticked.
+    ui->leEditValue->setVisible(on);
+    ui->labelEditValue->setVisible(on);
+    if (on) {
+        // Prefill with the current plain value (no unit) so the user just edits
+        // a number. ONLY this box drives the shown value; the Format specifier /
+        // Prefix / Suffix fields are deliberately left untouched.
+        QString s = QString::number(dim->getDimValue(), 'f', ui->sbNumDecimals->value());
+        ui->leEditValue->blockSignals(true);
+        ui->leEditValue->setText(s);
+        ui->leEditValue->blockSignals(false);
+        dim->FormatSpec.setValue(s.toUtf8().constData());
+    }
+    else {
+        // Back to the model-computed value: restore the format shown in the
+        // Format-specifier field (default "%.2w" = value only, no unit).
+        std::string fmt = ui->leFormatSpecifier->text().toUtf8().constData();
+        if (fmt.empty()) {
+            fmt = "%.2w";
+        }
+        dim->FormatSpec.setValue(fmt.c_str());
+    }
+    recomputeFeature();
+}
+
+void TaskDimension::onEditValueChanged()
+{
+    // The dedicated box is the ONLY writer of the override value. It sets the
+    // FormatSpec directly to the typed text and never touches the other fields.
+    if (!ui->cbArbitrary->isChecked()) {
+        return;
+    }
+    auto* dim = m_parent->getDimFeat();
+    dim->FormatSpec.setValue(ui->leEditValue->text().toUtf8().constData());
     recomputeFeature();
 }
 

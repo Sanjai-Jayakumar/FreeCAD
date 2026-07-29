@@ -170,16 +170,22 @@ QVariant QGIView::itemChange(GraphicsItemChange change, const QVariant &value)
         TechDraw::DrawView* viewObj = getViewObject();
         auto* dpgi = dynamic_cast<TechDraw::DrawProjGroupItem*>(viewObj);
         if (dpgi && dpgi->getPGroup()) {
-            // restrict movements of secondary views.
-            if(alignHash.size() == 1) {   //if aligned.
-                QGraphicsItem* item = alignHash.begin().value();
-                QString alignMode   = alignHash.begin().key();
-                if(alignMode == QStringLiteral("Vertical")) {
-                    newPos.setX(item->pos().x());
-                }
-                else if(alignMode == QStringLiteral("Horizontal")) {
-                    newPos.setY(item->pos().y());
-                }
+            // ANVIL CAD: projection-group views (Top / Right / Left / Bottom /
+            // isometric ...) are freely movable like any other view - no axis
+            // lock. BUT the parent/anchor (Front) must NOT move on its own: it
+            // is carried rigidly by the group move when the parent is dragged.
+            // While the mouse is held down (an interactive drag), reject the
+            // anchor's OWN position change so it cannot detach and "fly off".
+            // Programmatic positioning (button up) and the group move itself
+            // (which fires ItemScenePositionHasChanged, not ItemPositionChange)
+            // are unaffected, so the whole group still translates as one block.
+            bool anchor = dpgi->isAnchor();
+            if (!anchor) {
+                const char* t = dpgi->Type.getValueAsString();
+                anchor = t && (QString::fromLatin1(t) == QLatin1String("Front"));
+            }
+            if (anchor && (QApplication::mouseButtons() & Qt::LeftButton)) {
+                return pos();
             }
         }
         else {
@@ -243,6 +249,19 @@ void QGIView::dragFinished()
         return;
     }
 
+    // ANVIL CAD: never commit the anchor/parent view's OWN position. When the
+    // parent is dragged, the whole group is moved as one (the group's position
+    // changes and every view - including the anchor - follows on recompute).
+    // The anchor also receives the drag on its own QGIView; committing that here
+    // would move the anchor a SECOND time and detach it from the group ("Front
+    // flies off elsewhere"). So skip it - the anchor snaps back onto the group
+    // when the group's position is applied.
+    if (auto* dpgiAnchor = dynamic_cast<TechDraw::DrawProjGroupItem*>(viewObj)) {
+        if (dpgiAnchor->isAnchor()) {
+            return;
+        }
+    }
+
     bool ownTransaction = (viewObj->getDocument()->getTransactionID(true) == 0);
 
     if (ownTransaction) {
@@ -259,6 +278,32 @@ void QGIView::dragFinished()
         if (setY) {
             Gui::Command::doCommand(Gui::Command::Doc, "App.ActiveDocument.%s.Y = %f",
                                 viewObj->getNameInDocument(), candidateY);
+        }
+
+        // ANVIL CAD projection-group behaviour:
+        //  1) Release the group (AutoDistribute off) the moment it is touched, so
+        //     DrawProjGroup::autoPositionChildren never re-arranges ("collapses")
+        //     the views on a later recompute.
+        //  2) When the PARENT (anchor/Front) view is moved, rigidly translate
+        //     every dependent view by the SAME drag delta so the whole group
+        //     moves together and keeps its relative layout. A dependent view
+        //     dragged on its own just moves by itself.
+        // ANVIL CAD: release the group (AutoDistribute off) the moment it is
+        // touched so DrawProjGroup::autoPositionChildren never re-collapses the
+        // layout on a later recompute. The parent drag then moves the whole
+        // group as one QGraphicsItem (native group move, dependents follow
+        // rigidly); a dependent view dragged on its own moves independently.
+        TechDraw::DrawProjGroup* grp = nullptr;
+        if (auto* movedDpgi = dynamic_cast<TechDraw::DrawProjGroupItem*>(viewObj)) {
+            grp = movedDpgi->getPGroup();
+        }
+        else {
+            grp = dynamic_cast<TechDraw::DrawProjGroup*>(viewObj);
+        }
+        if (grp && grp->AutoDistribute.getValue()) {
+            Gui::Command::doCommand(Gui::Command::Doc,
+                "App.ActiveDocument.%s.AutoDistribute = False",
+                grp->getNameInDocument());
         }
 
         snapping = false;
@@ -466,6 +511,17 @@ void QGIView::mousePressEvent(QGraphicsSceneMouseEvent * event)
 {
     // this is never called for balloons (and dimensions?) because the label objects do not
     // inherit from QGIView, but directly from QGraphicsItem. - wf
+
+    // ANVIL CAD: release the projection group the instant any of its views is
+    // pressed (before the drag moves anything), so the layout is never
+    // re-collapsed by autoPositionChildren during the drag.
+    if (auto* dpgi = dynamic_cast<TechDraw::DrawProjGroupItem*>(getViewObject())) {
+        if (auto* grp = dpgi->getPGroup()) {
+            if (grp->AutoDistribute.getValue()) {
+                grp->AutoDistribute.setValue(false);
+            }
+        }
+    }
 
     Qt::KeyboardModifiers originalModifiers = event->modifiers();
     if (event->button()&Qt::LeftButton) {

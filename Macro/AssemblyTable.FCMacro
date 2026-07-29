@@ -66,6 +66,18 @@ def _add(lst, pn, desc=''):
             return
     lst.append([pn, desc, 1])   # [part_name, description, qty]
 
+def _add_force(lst, pn, desc=''):
+    """Like _add(), but does not reject FreeCAD's default generic names
+    (Body, Part001, ...). Used as a last resort so real geometry never
+    produces an empty BOM just because the user hasn't renamed it yet."""
+    if not pn or pn in _SKIP_LBL:
+        return
+    for r in lst:
+        if r[0] == pn:
+            r[2] += 1
+            return
+    lst.append([pn, desc, 1])
+
 def _merge(rows):
     merged = []
     for pn, desc, qty in rows:
@@ -99,9 +111,41 @@ def _walk(objects, rows, depth=0):
             if linked and linked.TypeId in _CONTAINERS:
                 _walk(getattr(linked, 'Group', []), rows, depth + 1)
             else:
-                _add(rows, _clean(obj.Label), _desc(obj))
+                label = _clean(obj.Label)
+                desc  = _desc(obj)
+                if linked is not None and _GENERIC.match(label):
+                    # Assembly links to external documents commonly keep
+                    # FreeCAD's default object name ("Body", "Body001", ...)
+                    # while the real part identity lives on the linked
+                    # document itself (e.g. "Box_CAP.003"). Fall back to
+                    # that when the link's own label is generic.
+                    try:
+                        doc_label = _clean(linked.Document.Label)
+                    except Exception:
+                        doc_label = ''
+                    if doc_label and doc_label not in _SKIP_LBL and not _GENERIC.match(doc_label):
+                        label = doc_label
+                        if not desc:
+                            desc = _desc(linked)
+                _add(rows, label, desc)
         elif tid in _CONTAINERS:
-            _walk(getattr(obj, 'Group', []), rows, depth + 1)
+            children = getattr(obj, 'Group', [])
+            handled = False
+            if tid == 'App::Part':
+                leaf_parts = [c for c in children if c is not None and c.TypeId in _PARTS]
+                label = _clean(obj.Label)
+                if leaf_parts and label and label not in _SKIP_LBL and not _GENERIC.match(label):
+                    # A Part directly wrapping Body/Feature children is the
+                    # common "one part = one App::Part" pattern. Its Body
+                    # children usually keep FreeCAD's default generic names,
+                    # so use the Part's own (meaningful) label for the BOM
+                    # row instead of the generic child label.
+                    _add(rows, label, _desc(leaf_parts[0]))
+                    rest = [c for c in children if c not in leaf_parts]
+                    _walk(rest, rows, depth + 1)
+                    handled = True
+            if not handled:
+                _walk(children, rows, depth + 1)
         elif tid in _PARTS:
             _add(rows, _clean(obj.Label), _desc(obj))
         else:
@@ -122,10 +166,9 @@ def get_rows(doc):
     if not rows:
         for obj in doc.Objects:
             if obj.TypeId == 'App::Part':
-                ch = [o for o in getattr(obj, 'Group', [])
-                      if o.TypeId not in _SKIP and 'TechDraw' not in o.TypeId]
-                if ch:
-                    _walk(ch, rows)
+                # Walk the Part itself (not its unwrapped children) so the
+                # container-label fallback in _walk() can apply.
+                _walk([obj], rows)
 
     # 3 — Flat doc root (STEP imports)
     if not rows:
@@ -152,6 +195,25 @@ def get_rows(doc):
                 parent_tids = {p.TypeId for p in getattr(obj, 'InList', [])}
                 if not (parent_tids & _PARTS):
                     _add(rows, _clean(obj.Label), _desc(obj))
+
+    # 5 — Last resort: any Body/Feature with real geometry, even if it still
+    # carries FreeCAD's default generic name (Body, Body001, ...). Prefer the
+    # parent App::Part's label when available, since that's usually the name
+    # the user actually cares about. Prevents "No Parts Found" on assemblies
+    # whose bodies were never renamed.
+    if not rows:
+        for obj in doc.Objects:
+            if obj.TypeId not in _PARTS: continue
+            shape = getattr(obj, 'Shape', None)
+            if shape is None or shape.isNull(): continue
+            label = _clean(obj.Label)
+            parent = next((p for p in getattr(obj, 'InList', [])
+                            if p.TypeId == 'App::Part'), None)
+            if parent is not None:
+                parent_label = _clean(parent.Label)
+                if parent_label and parent_label not in _SKIP_LBL:
+                    label = parent_label
+            _add_force(rows, label or obj.Label, _desc(obj))
 
     return _merge(rows)
 
@@ -270,7 +332,8 @@ def make_svg(rows):
 
     n_tables = len(chunks)
     total_w  = tw * n_tables + TABLE_GAP * (n_tables - 1)
-    total_h  = HDR_H + ROW_H * ROWS_PER_TABLE   # fixed height = tallest possible
+    max_rows = max((len(c) for c in chunks), default=1)
+    total_h  = HDR_H + ROW_H * max_rows   # actual height of the tallest sub-table
 
     o = []
     o.append('<svg xmlns="http://www.w3.org/2000/svg" version="1.1"'
@@ -319,7 +382,10 @@ def get_active_page(doc):
     return pages[0] if pages else None
 
 def _auto_scale(page, rows):
-    """Scale so the full table layout fits within ~85% of page width."""
+    """Scale so the full table layout fits within ~85% of page width.
+    Capped at 1.5x — for short BOMs (few rows/short names) the natural
+    table width is much smaller than 85% of the page, which would
+    otherwise blow the text up to an unreadable size."""
     try:
         cw = _auto_col_widths(rows)
         tw = float(sum(cw))
@@ -327,7 +393,7 @@ def _auto_scale(page, rows):
         total_w = tw * n + TABLE_GAP * (n - 1)
         target  = float(page.PageWidth) * 0.85
         s = target / total_w
-        return max(0.3, min(4.0, round(s * 4) / 4))    # snap to 0.25 steps
+        return max(0.3, min(1.5, round(s * 4) / 4))    # snap to 0.25 steps
     except Exception:
         return 1.0
 

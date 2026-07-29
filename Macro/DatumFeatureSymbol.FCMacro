@@ -1,0 +1,282 @@
+# -*- coding: utf-8 -*-
+# DatumFeatureSymbol.FCMacro — ANVIL CAD
+#
+# Creo-style Datum Feature Symbol for TechDraw drawings.
+# Places a datum identifier: a lettered box (A, B, C ...) joined by a short
+# leader to a filled datum triangle that rests on the datum feature.
+#
+# HOW TO USE:
+#   1. Open a TechDraw page.
+#   2. Run this macro; enter the datum letter and choose which way the
+#      triangle points (toward the feature).
+#   3. OK -> the symbol drops on the sheet as a draggable object. Drag it so
+#      the triangle base sits on the datum surface / edge.  Re-run for more.
+
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide import QtCore, QtGui
+    QtWidgets = QtGui
+except ImportError:
+    from PySide2 import QtCore, QtGui, QtWidgets
+
+# ── geometry (mm) ────────────────────────────────────────────────────────
+B   = 7.0    # datum box side
+FS  = 4.0    # letter font size
+TB  = 5.0    # triangle base
+TH  = 4.0    # triangle height
+S   = 3.0    # stem/leader length
+LW  = 0.4    # line width
+
+
+def _esc(s):
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _box(x, y, letter):
+    cx = x + B / 2.0
+    # vertical centre + ~0.35*font (cap-height/2): renderer-independent
+    # centering (Qt SVG ignores dominant-baseline)
+    by = y + B / 2.0 + FS * 0.35
+    return (
+        '<rect x="{x:.2f}" y="{y:.2f}" width="{b:.2f}" height="{b:.2f}" '
+        'fill="white" stroke="#000" stroke-width="{lw}"/>'
+        '<text x="{cx:.2f}" y="{by:.2f}" font-family="osifont" font-size="{fs}" '
+        'text-anchor="middle" fill="#000">{L}</text>'
+    ).format(x=x, y=y, b=B, lw=LW, cx=cx, by=by, fs=FS, L=_esc(letter))
+
+
+def _line(x1, y1, x2, y2):
+    return ('<line x1="{:.2f}" y1="{:.2f}" x2="{:.2f}" y2="{:.2f}" '
+            'stroke="#000" stroke-width="{}"/>'.format(x1, y1, x2, y2, LW))
+
+
+def _tri(pts, filled):
+    fill = "#000" if filled else "white"
+    p = " ".join("{:.2f},{:.2f}".format(px, py) for px, py in pts)
+    return '<polygon points="{}" fill="{}" stroke="#000" stroke-width="{}"/>'.format(p, fill, LW)
+
+
+def build_symbol_svg(letter, orient, filled=True):
+    """orient in {Bottom, Top, Left, Right} = direction the triangle points
+    (i.e. which side the datum feature is on)."""
+    o = []
+    if orient in ("Bottom", "Top"):
+        W = B
+        Hh = B + S + TH
+        cx = B / 2.0
+        if orient == "Bottom":
+            o.append(_box(0, 0, letter))
+            o.append(_line(cx, B, cx, B + S))
+            apex = (cx, B + S)
+            base = [(cx - TB / 2.0, B + S + TH), (cx + TB / 2.0, B + S + TH)]
+        else:  # Top
+            o.append(_box(0, TH + S, letter))
+            o.append(_line(cx, TH + S, cx, TH))
+            apex = (cx, TH)
+            base = [(cx - TB / 2.0, 0), (cx + TB / 2.0, 0)]
+        o.append(_tri([apex, base[0], base[1]], filled))
+    else:  # Left / Right
+        W = B + S + TH
+        Hh = B
+        cy = B / 2.0
+        if orient == "Right":
+            o.append(_box(0, 0, letter))
+            o.append(_line(B, cy, B + S, cy))
+            apex = (B + S, cy)
+            base = [(B + S + TH, cy - TB / 2.0), (B + S + TH, cy + TB / 2.0)]
+        else:  # Left
+            o.append(_box(TH + S, 0, letter))
+            o.append(_line(TH + S, cy, TH, cy))
+            apex = (TH, cy)
+            base = [(0, cy - TB / 2.0), (0, cy + TB / 2.0)]
+        o.append(_tri([apex, base[0], base[1]], filled))
+
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" version="1.1" '
+           'width="{w:.2f}mm" height="{h:.2f}mm" viewBox="0 0 {w:.2f} {h:.2f}">'
+           '{body}</svg>').format(w=W, h=Hh, body="".join(o))
+    return svg, W, Hh
+
+
+def _base_offset(orient, w, h):
+    """Offset from the symbol CENTRE to where the triangle base sits, so we
+    can position the symbol with its base on the attach point (app Y-up)."""
+    if orient == "Bottom":
+        return 0.0, h / 2.0      # base below centre -> raise centre
+    if orient == "Top":
+        return 0.0, -h / 2.0
+    if orient == "Right":
+        return -w / 2.0, 0.0
+    if orient == "Left":
+        return w / 2.0, 0.0
+    return 0.0, 0.0
+
+
+def _selected_attach():
+    """If the user selected a vertex/edge on a TechDraw view, return
+    (view, App.Vector point in the view's coordinate system), else (None,None)."""
+    try:
+        from FreeCAD import Vector
+        for s in Gui.Selection.getSelectionEx():
+            obj = s.Object
+            if obj.TypeId not in ("TechDraw::DrawViewPart",
+                                   "TechDraw::DrawProjGroupItem"):
+                continue
+            for sub in (s.SubElementNames or []):
+                try:
+                    if sub.startswith("Vertex"):
+                        ts = obj.getVertexBySelection(sub)
+                        return obj, ts.Vertexes[0].Point
+                    if sub.startswith("Edge"):
+                        ts = obj.getEdgeBySelection(sub)
+                        vs = ts.Vertexes
+                        if len(vs) >= 2:
+                            return obj, (vs[0].Point + vs[-1].Point) * 0.5
+                        if vs:
+                            return obj, vs[0].Point
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return None, None
+
+
+def _active_page(doc):
+    for obj in Gui.Selection.getSelection():
+        if obj.TypeId == "TechDraw::DrawPage":
+            return obj
+        for p in getattr(obj, "InList", []):
+            if p.TypeId == "TechDraw::DrawPage":
+                return p
+    try:
+        av = Gui.ActiveDocument.ActiveView
+        if av and hasattr(av, "getPage"):
+            p = av.getPage()
+            if p:
+                return p
+    except Exception:
+        pass
+    pages = [o for o in doc.Objects if o.TypeId == "TechDraw::DrawPage"]
+    return pages[0] if pages else None
+
+
+class DatumDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Datum Feature Symbol")
+        self.setMinimumWidth(320)
+        lay = QtWidgets.QVBoxLayout(self)
+        form = QtWidgets.QFormLayout()
+
+        self.edLetter = QtWidgets.QLineEdit("A")
+        self.edLetter.setMaxLength(3)
+        form.addRow("Datum letter:", self.edLetter)
+
+        self.cbOrient = QtWidgets.QComboBox()
+        self.cbOrient.addItems(["Bottom (points down)",
+                                "Top (points up)",
+                                "Left (points left)",
+                                "Right (points right)"])
+        form.addRow("Triangle toward:", self.cbOrient)
+
+        self.spRot = QtWidgets.QDoubleSpinBox()
+        self.spRot.setRange(-360.0, 360.0)
+        self.spRot.setSingleStep(15.0)
+        self.spRot.setSuffix(" °")
+        self.spRot.setValue(0.0)
+        self.spRot.setToolTip("Rotate the whole symbol. You can also change "
+                              "this later in the Data panel (Rotation).")
+        form.addRow("Rotation:", self.spRot)
+
+        self.chkFilled = QtWidgets.QCheckBox("Filled triangle (ASME)")
+        self.chkFilled.setChecked(True)
+        form.addRow("", self.chkFilled)
+
+        lay.addLayout(form)
+        bb = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def values(self):
+        orient = ["Bottom", "Top", "Left", "Right"][self.cbOrient.currentIndex()]
+        return (self.edLetter.text().strip() or "A", orient,
+                self.chkFilled.isChecked(), self.spRot.value())
+
+
+def main():
+    doc = App.ActiveDocument
+    if not doc:
+        QtWidgets.QMessageBox.warning(None, "Datum", "No active document.")
+        return
+    page = _active_page(doc)
+    if not page:
+        QtWidgets.QMessageBox.warning(
+            None, "Datum", "No TechDraw page found. Open a page first.")
+        return
+
+    dlg = DatumDialog(Gui.getMainWindow())
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return
+    letter, orient, filled, rot = dlg.values()
+
+    svg, w, h = build_symbol_svg(letter, orient, filled)
+
+    attach_view, attach_pt = _selected_attach()
+
+    App.setActiveTransaction("Insert datum feature symbol")
+    view = doc.addObject("TechDraw::DrawViewSymbol", "DatumFeature")
+    view.Symbol = svg
+    view.Label = "Datum_" + letter
+    try:
+        view.Rotation = float(rot)   # QGIViewSymbol applies this to the symbol
+    except Exception:
+        pass
+
+    if attach_view is not None and attach_pt is not None:
+        # Attach to the view (moves with it) and sit the triangle base on the
+        # selected corner/edge point (coords are in the view's own frame).
+        try:
+            view.Owner = attach_view
+        except Exception:
+            pass
+        offx, offy = _base_offset(orient, w, h)
+        view.X = float(attach_pt.x) + offx
+        view.Y = float(attach_pt.y) + offy
+        page.addView(view)
+        note = ("Datum attached to '{}' at the selected point.\n"
+                "It now moves with that view. Drag to fine-tune if needed."
+                .format(attach_view.Label))
+    else:
+        # free placement, offset from centre so it's easy to grab
+        try:
+            view.X = float(page.PageWidth) * 0.30
+            view.Y = float(page.PageHeight) * 0.30
+        except Exception:
+            view.X, view.Y = 80.0, 60.0
+        page.addView(view)
+        note = ("Placed as a free symbol. TIP: to snap it onto a view, select "
+                "a corner (vertex) or edge on the view FIRST, then run this "
+                "tool — it will attach there and move with the view.")
+    try:
+        doc.recompute([view, page])
+    except Exception:
+        doc.recompute()
+    App.closeActiveTransaction()
+
+    try:
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(doc.Name, view.Name)
+    except Exception:
+        pass
+    App.Console.PrintMessage(
+        "ANVIL CAD: inserted datum feature symbol '{}' ({})\n".format(letter, orient))
+    try:
+        QtWidgets.QMessageBox.information(None, "Datum Feature Symbol", note)
+    except Exception:
+        pass
+
+
+main()

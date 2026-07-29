@@ -390,7 +390,7 @@ void QGIViewDimension::draw()
     }
     else {
         // No dimension lines are drawn, the arrows are hidden
-        dimLines->setPath(QPainterPath());
+        dimLines->setUngappedPath(QPainterPath());
         drawArrows(0, nullptr, nullptr, false);
     }
 
@@ -1287,7 +1287,7 @@ void QGIViewDimension::drawDistanceExecutive(const Base::Vector2d& startPoint,
 
     datumLabel->setRotation(toQtDeg(labelAngle));
 
-    dimLines->setPath(distancePath);
+    dimLines->setUngappedPath(distancePath);
 }
 
 //draw any of 3 distance dimension types with user override of dimension and extension line directions
@@ -1499,7 +1499,7 @@ void QGIViewDimension::drawDistanceOverride(const Base::Vector2d& startPoint,
 
     datumLabel->setRotation(toQtDeg(labelAngle));
 
-    dimLines->setPath(distancePath);
+    dimLines->setUngappedPath(distancePath);
 }
 
 void QGIViewDimension::drawRadiusExecutive(const Base::Vector2d& centerPoint,
@@ -1710,7 +1710,7 @@ void QGIViewDimension::drawRadiusExecutive(const Base::Vector2d& centerPoint,
 
     datumLabel->setRotation(toQtDeg(labelAngle));
 
-    dimLines->setPath(radiusPath);
+    dimLines->setUngappedPath(radiusPath);
 }
 
 void QGIViewDimension::drawAreaExecutive(const Base::Vector2d& centerPoint, double area,
@@ -1782,7 +1782,7 @@ void QGIViewDimension::drawAreaExecutive(const Base::Vector2d& centerPoint, doub
 
     datumLabel->setRotation(toQtDeg(labelAngle));
 
-    dimLines->setPath(areaPath);
+    dimLines->setUngappedPath(areaPath);
 }
 
 void QGIViewDimension::drawDistance(TechDraw::DrawViewDimension* dimension,
@@ -1983,7 +1983,7 @@ void QGIViewDimension::drawDiameter(TechDraw::DrawViewDimension* dimension,
 
         datumLabel->setRotation(toQtDeg(labelAngle));
 
-        dimLines->setPath(diameterPath);
+        dimLines->setUngappedPath(diameterPath);
     }
     else if (renderExtent >= ViewProviderDimension::REND_EXTENT_EXPANDED) {
         double lineAngle = (labelCenter - curveCenter).Angle();
@@ -2211,7 +2211,7 @@ void QGIViewDimension::drawAngle(TechDraw::DrawViewDimension* dimension,
 
     datumLabel->setRotation(toQtDeg(labelAngle));
 
-    dimLines->setPath(anglePath);
+    dimLines->setUngappedPath(anglePath);
 }
 
 void QGIViewDimension::drawArea(TechDraw::DrawViewDimension* dimension,

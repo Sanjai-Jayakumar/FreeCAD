@@ -127,6 +127,12 @@ QVariant QGIProjGroup::itemChange(GraphicsItemChange change, const QVariant &val
                 QString type = QString::fromLatin1(projItemPtr->Type.getValueAsString());
 
                 if (type == QStringLiteral("Front")) {
+                    // ANVIL CAD: keep the scene-event filter on the anchor so a
+                    // parent drag moves the WHOLE group as a single QGraphicsItem
+                    // (dependent views follow rigidly, one motion, no per-child
+                    // cascade). Collapse is prevented by keeping AutoDistribute
+                    // OFF (generator sets it; dragFinished releases it), so
+                    // autoPositionChildren never re-arranges the views.
                     gView->alignTo(m_origin, QStringLiteral("None"));
                     installSceneEventFilter(gView);
                 }
@@ -155,6 +161,15 @@ QVariant QGIProjGroup::itemChange(GraphicsItemChange change, const QVariant &val
 
 void QGIProjGroup::mousePressEvent(QGraphicsSceneMouseEvent * event)
 {
+    // ANVIL CAD: release the group BEFORE any drag begins, so moving the parent
+    // slides the whole group rigidly instead of re-collapsing it. (Turning
+    // AutoDistribute off stops DrawProjGroup::autoPositionChildren from ever
+    // re-arranging the views on the recomputes triggered during the drag.)
+    if (auto* dpg = dynamic_cast<TechDraw::DrawProjGroup*>(getViewObject())) {
+        if (dpg->AutoDistribute.getValue()) {
+            dpg->AutoDistribute.setValue(false);
+        }
+    }
     // save the new mousePos, but don't do anything else.
     QGIView *qAnchor = getAnchorQItem();
     if(qAnchor) {

@@ -23,6 +23,7 @@
 # include <cmath>
 
 
+#include <Base/Color.h>
 #include <Mod/TechDraw/App/DrawViewSection.h>
 
 #include "QGIViewSection.h"
@@ -33,6 +34,19 @@
 
 using namespace TechDrawGui;
 using FillMode = QGIFace::FillMode;
+
+// ANVIL CAD: a section's hatch must render as solid, visible lines. The stock
+// default hatch colour (0x00FF0000) has alpha 0, so the SVG/geometric hatch fell
+// back to the pattern's native (blue) colour and, densely tiled, looked like a
+// shaded blue background. If the stored colour is effectively invisible
+// (alpha ~ 0), substitute opaque black so only clean hatch lines are drawn.
+static Base::Color sectionHatchColor(Base::Color color)
+{
+    if (color.a <= 0.0f) {
+        return Base::Color(0.0f, 0.0f, 0.0f, 1.0f);
+    }
+    return color;
+}
 
 void QGIViewSection::draw()
 {
@@ -93,7 +107,12 @@ void QGIViewSection::drawSectionFace()
         } else if (section->CutSurfaceDisplay.isValue("SvgHatch")) {
             newFace->isHatched(true);
             newFace->setFillMode(FillMode::SvgFill);
-            newFace->setHatchColor(sectionVp->HatchColor.getValue());
+            // ANVIL CAD: draw ONLY the hatch lines - no shaded/coloured background
+            // behind them. Force a transparent face fill and a solid, visible hatch
+            // colour (the stock default is alpha-0 and rendered as the SVG pattern's
+            // native blue, which looked like a blue background).
+            newFace->setFillColor(QColor(0, 0, 0, 0));
+            newFace->setHatchColor(sectionHatchColor(sectionVp->HatchColor.getValue()));
             newFace->setHatchScale(section->HatchScale.getValue());
             newFace->setHatchRotation(section->HatchRotation.getValue());
             newFace->setHatchOffset(section->HatchOffset.getValue());
@@ -102,7 +121,9 @@ void QGIViewSection::drawSectionFace()
         } else if (section->CutSurfaceDisplay.isValue("PatHatch")) {
             newFace->isHatched(true);
             newFace->setFillMode(FillMode::GeomHatchFill);
-            newFace->setHatchColor(sectionVp->GeomHatchColor.getValue());
+            // ANVIL CAD: hatch lines only, transparent background (see SvgHatch note)
+            newFace->setFillColor(QColor(0, 0, 0, 0));
+            newFace->setHatchColor(sectionHatchColor(sectionVp->GeomHatchColor.getValue()));
             newFace->setHatchScale(section->HatchScale.getValue());
             newFace->setHatchRotation(section->HatchRotation.getValue());
             newFace->setHatchOffset(section->HatchOffset.getValue());

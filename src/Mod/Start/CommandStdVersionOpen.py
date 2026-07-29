@@ -55,12 +55,66 @@ def parse_versioned(filename):
 # COLLECT FILES
 # ============================================================
 
+# Real CAD files on disk (NOT versioned .FCStd). A specific type filter also
+# lists these so a crowded workspace can be narrowed to just DWG/STEP/... files.
+REAL_EXT = {
+    "prt": (".prt",),
+    "asm": (".asm",),
+    "drg": (".drg",),
+    "stp": (".stp", ".step"),
+    "stl": (".stl",),
+    "dwg": (".dwg",),
+}
+
+# Dropdown labels for each filter entry.
+TYPE_LABELS = {
+    "All": "All types (*.FCStd)",
+    "prt": "PRT files (*.prt.FCStd, *.prt)",
+    "asm": "ASM files (*.asm.FCStd, *.asm)",
+    "drg": "DRG files (*.drg.FCStd, *.drg)",
+    "stp": "STP / STEP files (*.stp.FCStd, *.stp, *.step)",
+    "stl": "STL files (*.stl.FCStd, *.stl)",
+    "dwg": "DWG files (*.dwg)",
+}
+
+
+def file_type_label(fname):
+    """Short type tag for the details 'Type' column."""
+    low = fname.lower()
+    if low.endswith(".fcstd"):
+        info = parse_versioned(fname)
+        return info[2].upper() if info and info[2] else "FCStd"
+    for t, exts in REAL_EXT.items():
+        if low.endswith(exts):
+            return t.upper()
+    ext = os.path.splitext(fname)[1].lstrip(".").upper()
+    return ext or "FILE"
+
+
+def _real_matches(entries, type_filter):
+    """Actual (non-FCStd) files whose extension matches the chosen filter."""
+    tf = type_filter.lower()
+    exts = REAL_EXT.get(tf)
+    if not exts:
+        return []
+    return [f for f in entries
+            if not f.lower().endswith(".fcstd") and f.lower().endswith(exts)]
+
+
 def collect_files(folder, show_all_versions=False, type_filter="All"):
     """
-    Return sorted list of versioned .FCStd filenames.
-    type_filter : "All" | "prt" | "asm" | "drg" | "stp" | "stl"
+    Return sorted list of matching filenames from the folder.
+      * Versioned BNC .FCStd files (base.001.prt.FCStd ...) matched by token.
+      * When a specific type filter is chosen, real CAD files on disk
+        (*.dwg, *.prt, *.asm, *.stp/.step, *.stl, *.drg) matched by extension.
+    type_filter : "All" | "prt" | "asm" | "drg" | "stp" | "stl" | "dwg"
     """
-    raw = [f for f in os.listdir(folder) if f.lower().endswith(".fcstd")]
+    try:
+        entries = os.listdir(folder)
+    except Exception:
+        return []
+
+    raw = [f for f in entries if f.lower().endswith(".fcstd")]
 
     parsed = []
     for f in raw:
@@ -68,7 +122,7 @@ def collect_files(folder, show_all_versions=False, type_filter="All"):
         if info:
             parsed.append((f, info[0], info[1], info[2]))
 
-    # Type filter
+    # Type filter (FCStd token)
     if type_filter != "All":
         tf = type_filter.lower()
         parsed = [p for p in parsed if p[3] == tf]
@@ -83,8 +137,13 @@ def collect_files(folder, show_all_versions=False, type_filter="All"):
         parsed = [p for p in parsed
                   if p[0] == best.get((p[1].lower(), p[3]), (None,))[0]]
 
-    parsed.sort(key=lambda p: p[0].lower())
-    return [p[0] for p in parsed]
+    names = [p[0] for p in parsed]
+
+    # Add real CAD files only for a specific (non-"All") filter.
+    if type_filter != "All":
+        names += _real_matches(entries, type_filter)
+
+    return sorted(set(names), key=lambda s: s.lower())
 
 
 def format_size(n):
@@ -139,7 +198,7 @@ def read_description_from_fcstd(filepath):
 
 class OpenFileDialog(QtGui.QDialog):
 
-    TYPES = ["All", "prt", "asm", "drg", "stp", "stl"]
+    TYPES = ["All", "prt", "asm", "drg", "stp", "stl", "dwg"]
 
     _STYLE = """
     QDialog { font-size: 9pt; }
@@ -373,15 +432,12 @@ class OpenFileDialog(QtGui.QDialog):
 
         # Type row
         r_type = QtGui.QHBoxLayout()
-        lbl_type = QtGui.QLabel("Type:")
+        lbl_type = QtGui.QLabel("Filter:")
         lbl_type.setFixedWidth(75)
         self.type_cb = QtGui.QComboBox()
         for t in self.TYPES:
-            if t == "All":
-                self.type_cb.addItem("All types (*.FCStd)", "All")
-            else:
-                self.type_cb.addItem("{} files (*.{}.FCStd)".format(
-                    t.upper(), t), t)
+            self.type_cb.addItem(
+                TYPE_LABELS.get(t, "{} files".format(t.upper())), t)
         self.type_cb.currentIndexChanged.connect(self._refresh)
         r_type.addWidget(lbl_type)
         r_type.addWidget(self.type_cb, 1)
@@ -468,8 +524,7 @@ class OpenFileDialog(QtGui.QDialog):
                     st.st_mtime).strftime("%d-%m-%Y  %H:%M")
             except Exception:
                 sz, mt = "", ""
-            info = parse_versioned(fname)
-            ft = info[2].upper() if info and info[2] else "FCStd"
+            ft = file_type_label(fname)
             r = self.table.rowCount()
             self.table.insertRow(r)
             self.table.setItem(r, 0, QtGui.QTableWidgetItem(fname))
@@ -605,9 +660,16 @@ def main():
     dlg = OpenFileDialog(wd, Gui.getMainWindow())
     if dlg.exec_() == QtGui.QDialog.Accepted and dlg.selected_file:
         file_path = os.path.join(wd, dlg.selected_file)
-        App.openDocument(file_path)
-        App.Console.PrintMessage(
-            "Opened: {}\n".format(os.path.basename(file_path)))
+        try:
+            App.openDocument(file_path)
+            App.Console.PrintMessage(
+                "Opened: {}\n".format(os.path.basename(file_path)))
+        except Exception as exc:
+            QtGui.QMessageBox.warning(
+                None, "Open",
+                "Could not open:\n{}\n\n{}\n\n(DWG/STEP files need their "
+                "importer to be available.)".format(
+                    os.path.basename(file_path), exc))
 
 
 # ============================================================

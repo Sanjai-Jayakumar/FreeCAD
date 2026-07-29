@@ -39,10 +39,10 @@
         <item row="2" column="0">
          <widget class="QCheckBox" name="cbArbitrary">
           <property name="toolTip">
-           <string>Sets use of 'Format spec' instead of the dimension value</string>
+           <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Tick this to type your own value/text for this dimension in the &quot;Format specifier&quot; / Main Value field.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Display only:&lt;/b&gt; it changes only what is SHOWN on the drawing. It does NOT change the 3D part (to change the part, edit the Sketch/Part Design feature).&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
           </property>
           <property name="text">
-           <string>Arbitrary text</string>
+           <string>Edit value (display only, does not change part)</string>
           </property>
          </widget>
         </item>
@@ -76,6 +76,26 @@
           </property>
          </widget>
         </item>
+        <item row="4" column="0">
+         <widget class="QLabel" name="labelEditValue">
+          <property name="visible">
+           <bool>false</bool>
+          </property>
+          <property name="text">
+           <string>Value shown</string>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="1">
+         <widget class="QLineEdit" name="leEditValue">
+          <property name="visible">
+           <bool>false</bool>
+          </property>
+          <property name="toolTip">
+           <string>Type the value/text shown for this dimension. Display only - does NOT change the 3D part.</string>
+          </property>
+         </widget>
+        </item>
        </layout>
       </item>
      </layout>
@@ -87,6 +107,24 @@
       <string>Tolerancing</string>
      </property>
      <layout class="QVBoxLayout" name="verticalLayout">
+      <item>
+       <layout class="QHBoxLayout" name="hlTolType">
+        <item>
+         <widget class="QLabel" name="labelTolType">
+          <property name="text">
+           <string>Tolerance</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QComboBox" name="comboTolType">
+          <property name="toolTip">
+           <string>Tolerance display mode (Creo-style): Nominal, Symmetric (±), Plus-Minus, or Basic</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
       <item>
        <layout class="QGridLayout" name="gridLayout" columnstretch="1,1">
         <item row="1" column="0">

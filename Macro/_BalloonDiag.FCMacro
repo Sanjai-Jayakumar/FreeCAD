@@ -1,0 +1,98 @@
+# -*- coding: utf-8 -*-
+# _BalloonDiag.FCMacro — READ-ONLY diagnostic for ANVIL CAD balloon tips.
+# Changes NOTHING. Just inspects the assembly / exploded view / TechDraw view
+# and writes findings to %TEMP%\bnc_balloon_diag.log so the balloon tip logic
+# can be corrected for exploded views.
+
+import os
+import FreeCAD as App
+import FreeCADGui as Gui
+
+_LOG = os.path.join(os.environ.get("TEMP", os.path.expanduser("~")), "bnc_balloon_diag.log")
+
+
+def w(msg):
+    with open(_LOG, "a", encoding="utf-8") as f:
+        f.write(str(msg) + "\n")
+
+
+def run():
+    open(_LOG, "w", encoding="utf-8").close()
+    doc = App.ActiveDocument
+    if not doc:
+        w("NO ACTIVE DOCUMENT")
+        return
+    w("=== DOC: %s ===" % doc.Name)
+
+    # 1) list all objects (type, label)
+    w("\n--- OBJECTS ---")
+    for o in doc.Objects:
+        w("%-28s | %-32s | %r" % (o.Name, o.TypeId, o.Label))
+
+    # 2) find ExplodedView objects and their read-only exploded placements
+    w("\n--- EXPLODED VIEWS ---")
+    for o in doc.Objects:
+        proxy = getattr(o, "Proxy", None)
+        if proxy is not None and hasattr(proxy, "_calculateExplodedPlacements"):
+            w("ExplodedView object: %s (%r)" % (o.Name, o.Label))
+            try:
+                fp, lines = proxy._calculateExplodedPlacements(o)
+                w("  moved parts: %d" % len(fp))
+                for part, plc in fp.items():
+                    w("    %-24s -> exploded Base=%s" % (
+                        getattr(part, "Name", "?"), tuple(round(v, 2) for v in plc.Base)))
+            except Exception as e:
+                w("  _calculateExplodedPlacements ERROR: %s" % e)
+
+    # 3) assembly parts: assembled world centers
+    w("\n--- ASSEMBLY PART CENTERS (current/assembled) ---")
+    for o in doc.Objects:
+        if o.TypeId == "Assembly::AssemblyObject":
+            for child in o.Group:
+                if child.TypeId == "App::Link":
+                    linked = getattr(child, "LinkedObject", None)
+                    doclbl = ""
+                    try:
+                        doclbl = linked.Document.Label
+                    except Exception:
+                        pass
+                    shp = getattr(child, "Shape", None)
+                    ctr = None
+                    try:
+                        if shp and shp.BoundBox.isValid():
+                            ctr = tuple(round(v, 2) for v in shp.BoundBox.Center)
+                    except Exception:
+                        pass
+                    w("    link=%-10s linkedDoc=%-18s placementBase=%s worldCenter=%s" % (
+                        child.Name, doclbl,
+                        tuple(round(v, 2) for v in child.Placement.Base), ctr))
+
+    # 4) TechDraw views + their source + axes + existing balloons
+    w("\n--- TECHDRAW VIEWS ---")
+    for o in doc.Objects:
+        if o.TypeId in ("TechDraw::DrawProjGroupItem", "TechDraw::DrawViewPart"):
+            src = [getattr(s, "Name", "?") for s in getattr(o, "Source", [])]
+            try:
+                d = tuple(round(v, 3) for v in o.Direction)
+                xd = tuple(round(v, 3) for v in o.XDirection)
+            except Exception:
+                d = xd = "?"
+            w("  VIEW %-14s Label=%-14r Source=%s Dir=%s XDir=%s Scale=%s X=%.1f Y=%.1f" % (
+                o.Name, o.Label, src, d, xd, getattr(o, "Scale", "?"),
+                float(getattr(o, "X", 0)), float(getattr(o, "Y", 0))))
+    w("\n--- BALLOONS (tip origin vs bubble) ---")
+    for o in doc.Objects:
+        if o.TypeId == "TechDraw::DrawViewBalloon":
+            sv = getattr(getattr(o, "SourceView", None), "Name", "?")
+            w("  %-16s Text=%-3s SourceView=%-12s OriginX=%.2f OriginY=%.2f X=%.2f Y=%.2f" % (
+                o.Name, getattr(o, "Text", "?"), sv,
+                float(o.OriginX), float(o.OriginY), float(o.X), float(o.Y)))
+
+    w("\n=== DONE — read-only, nothing changed ===")
+    App.Console.PrintMessage("Balloon diagnostic written to %s\n" % _LOG)
+    from PySide import QtWidgets
+    QtWidgets.QMessageBox.information(None, "Balloon Diagnostic",
+        "Read-only diagnostic complete.\nNothing was changed.\n\nLog: %s" % _LOG)
+
+
+run()

@@ -83,9 +83,11 @@ void DrawProjGroupItem::onChanged(const App::Property *prop)
 
 bool DrawProjGroupItem::isLocked() const
 {
-    if (isAnchor()) {                             //Anchor view is always locked to DPG
-        return true;
-    }
+    // ANVIL CAD: The anchor view used to be hardcoded locked ("return true"),
+    // which made it impossible to drag on the sheet regardless of the
+    // LockPosition property.  We now honour LockPosition for the anchor too,
+    // so Projection Group views (including single exploded pictorials placed
+    // as the Front anchor) can be freely repositioned like any other view.
     return DrawView::isLocked();
 }
 
@@ -157,7 +159,13 @@ void DrawProjGroupItem::autoPosition()
         return;
     }
     Base::Vector3d newPos;
-    if (pGroup && pGroup->AutoDistribute.getValue()) {
+    // ANVIL CAD: also position a freshly-created secondary view (still at its default
+    // 0,0) when AutoDistribute is off, so a new ProjGroup spreads on creation instead
+    // of clumping at the front-view centre. Views the user has moved (non-zero) are
+    // left alone, so free positioning is preserved.
+    bool freshUnplaced = DrawUtil::fpCompare(X.getValue(), 0.0)
+                         && DrawUtil::fpCompare(Y.getValue(), 0.0);
+    if (pGroup && (pGroup->AutoDistribute.getValue() || freshUnplaced)) {
         newPos = pGroup->getXYPosition(Type.getValueAsString());
         X.setValue(newPos.x);
         Y.setValue(newPos.y);

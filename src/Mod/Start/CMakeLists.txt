@@ -60,7 +60,7 @@ if (BUILD_GUI)
         UpdateUI.py
         CommandCheckForUpdates.py
         UPDATE_SYSTEM_README.md
-        test_update_system.py
+        BNCUnlockProjGroupViews.py
         freecad-icon-64.png
     )
 endif (BUILD_GUI)

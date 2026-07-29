@@ -283,6 +283,10 @@ private:
     bool nowUnsetting;
     bool m_waitingForFaces;
     bool m_waitingForHlr;
+    // ANVIL CAD: set for one HLR run when the source shape exceeds the exact-HLR
+    // face limit, so we fall back to the fast polygon HLR and skip face-finding
+    // even though the user's CoarseView property is still false.
+    bool m_forcedCoarse{false};
 
     QMetaObject::Connection connectHlrWatcher;
     QFutureWatcher<void> m_hlrWatcher;

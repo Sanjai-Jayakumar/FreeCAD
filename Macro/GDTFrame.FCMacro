@@ -1,0 +1,466 @@
+# -*- coding: utf-8 -*-
+# GDTFrame.FCMacro — ANVIL CAD
+#
+# Creo-style GD&T Feature Control Frame input for TechDraw drawings.
+#
+# HOW TO USE:
+#   1. Open a TechDraw page (optionally select the view you want the frame
+#      near — otherwise it drops in the page centre).
+#   2. Run this macro.
+#   3. Pick the geometric characteristic, type the tolerance value, choose a
+#      material modifier / diameter symbol, and add up to three datum refs.
+#   4. OK -> a proper feature control frame is placed on the sheet as a
+#      draggable symbol.  Drag it into position; re-run for more frames.
+#
+# The frame is a standard multi-compartment box:
+#   [ characteristic | (Ø)tol (M) | A (M) | B | C ]
+
+import os
+import FreeCAD as App
+import FreeCADGui as Gui
+
+try:
+    from PySide import QtCore, QtGui
+    QtWidgets = QtGui
+except ImportError:
+    from PySide2 import QtCore, QtGui, QtWidgets
+
+try:
+    from PySide import QtSvg
+except ImportError:
+    try:
+        from PySide2 import QtSvg
+    except ImportError:
+        QtSvg = None
+
+translate = App.Qt.translate
+
+# ── geometry of the composed frame (millimetres) ─────────────────────────
+H      = 7.0     # frame height
+FS     = 3.6     # text font size
+PAD    = 1.8     # horizontal padding inside a compartment
+SYM_BX = 8.0     # width of the symbol compartment
+CHW    = FS * 0.60   # approx char width
+GLYPH_DIR = os.path.join(
+    App.getResourceDir(), "Mod", "TechDraw", "Symbols", "gd-and-t")
+
+# characteristic display name -> (shipped glyph file | None, inline svg | None)
+# inline svg is drawn in the same 0..64 coordinate space as the shipped glyphs
+_INLINE = {
+    "Straightness":
+        '<path d="m6,32 h52" fill="none" stroke="#000" stroke-width="3"/>',
+    "Circular runout":
+        '<path d="m14,52 l34,-40" fill="none" stroke="#000" stroke-width="3"/>'
+        '<path d="m48,12 l-11,3 m11,-3 l-3,11" fill="none" stroke="#000" stroke-width="3"/>',
+}
+# ordered list: (label, glyph filename or None)
+CHARACTERISTICS = [
+    ("Straightness",           None),
+    ("Flatness",               "flatness.svg"),
+    ("Circularity (roundness)", "roundness.svg"),
+    ("Cylindricity",           "cylindricity.svg"),
+    ("Profile of a line",      "profile-tolerance-of-line.svg"),
+    ("Profile of a surface",   "profile-tolerance-of-plane.svg"),
+    ("Angularity",             "angularity-left.svg"),
+    ("Perpendicularity",       "perpendicularity.svg"),
+    ("Parallelism",            "parallelism.svg"),
+    ("Position",               "position.svg"),
+    ("Concentricity",          "concentricity.svg"),
+    ("Symmetry",               "symmetry.svg"),
+    ("Circular runout",        None),
+    ("Total runout",           "totalrunout.svg"),
+]
+
+MODIFIERS = ["(none)", "Ⓜ  MMC", "Ⓛ  LMC", "Ⓢ  RFS"]
+_MOD_LETTER = {1: "M", 2: "L", 3: "S"}
+
+
+def _esc(s):
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _load_glyph(label, glyph_file):
+    """Return inner SVG (0..64 coord space) for the characteristic glyph."""
+    if glyph_file:
+        path = os.path.join(GLYPH_DIR, glyph_file)
+        try:
+            import re
+            with open(path, "r", encoding="utf-8") as f:
+                raw = f.read()
+            # strip xml declaration, comments and title, then grab ONLY the
+            # geometry *inside* <svg>...</svg> (never the <svg> tag itself,
+            # or the nested element is left unclosed and the SVG is invalid).
+            raw = re.sub(r"<\?xml.*?\?>", "", raw, flags=re.DOTALL)
+            raw = re.sub(r"<!--.*?-->", "", raw, flags=re.DOTALL)
+            raw = re.sub(r"<title>.*?</title>", "", raw, flags=re.DOTALL)
+            m = re.search(r"<svg[^>]*>(.*)</svg>", raw, flags=re.DOTALL)
+            if m:
+                return m.group(1).strip()
+        except Exception:
+            pass
+    return _INLINE.get(label, "")
+
+
+def _glyph_icon(label, glyph_file):
+    """Render the characteristic's GD&T glyph to a QIcon so the combo box
+    shows the real symbol next to the name (font-independent)."""
+    if QtSvg is None:
+        return None
+    try:
+        size = 22
+        pm = QtGui.QPixmap(size, size)
+        pm.fill(QtCore.Qt.transparent)
+        if glyph_file:
+            path = os.path.join(GLYPH_DIR, glyph_file)
+            if not os.path.isfile(path):
+                return None
+            renderer = QtSvg.QSvgRenderer(path)
+        else:
+            inner = _INLINE.get(label, "")
+            if not inner:
+                return None
+            svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="64" '
+                   'height="64">{}</svg>'.format(inner))
+            renderer = QtSvg.QSvgRenderer(QtCore.QByteArray(svg.encode("utf-8")))
+        painter = QtGui.QPainter(pm)
+        # small inset so the glyph isn't flush to the icon edge
+        renderer.render(painter, QtCore.QRectF(2, 2, size - 4, size - 4))
+        painter.end()
+        return QtGui.QIcon(pm)
+    except Exception:
+        return None
+
+
+def _parse_path(d, xs, ys):
+    """Very small path parser (m/M/l/L/h/H/v/V — all these glyphs use) that
+    appends visited points to xs/ys for bounding-box computation."""
+    import re
+    toks = re.findall(r'[a-zA-Z]|[-+]?[0-9.]+', d)
+    i, cx, cy, cmd = 0, 0.0, 0.0, None
+    while i < len(toks):
+        t = toks[i]
+        if t.isalpha():
+            cmd = t
+            i += 1
+            continue
+        try:
+            if cmd in ('m', 'l', 'M', 'L'):
+                x = float(toks[i]); y = float(toks[i + 1]); i += 2
+                if cmd in ('m', 'l') and (xs or ys):
+                    cx += x; cy += y
+                else:
+                    cx = x; cy = y
+                cmd = 'l' if cmd == 'm' else ('L' if cmd == 'M' else cmd)
+            elif cmd in ('h', 'H'):
+                x = float(toks[i]); i += 1
+                cx = cx + x if cmd == 'h' else x
+            elif cmd in ('v', 'V'):
+                y = float(toks[i]); i += 1
+                cy = cy + y if cmd == 'v' else y
+            else:
+                i += 1
+                continue
+            xs.append(cx); ys.append(cy)
+        except (IndexError, ValueError):
+            break
+
+
+def _glyph_bbox(inner):
+    """Bounding box (minx,miny,maxx,maxy) of the glyph geometry so it can be
+    centred by its real content, not the (often off-centre) 64x64 canvas."""
+    import re
+    xs, ys = [], []
+    for seg in re.findall(r'<circle[^>]*>', inner):
+        try:
+            cx = float(re.search(r'cx="([-\d.]+)"', seg).group(1))
+            cy = float(re.search(r'cy="([-\d.]+)"', seg).group(1))
+            r = float(re.search(r'r="([-\d.]+)"', seg).group(1))
+            xs += [cx - r, cx + r]; ys += [cy - r, cy + r]
+        except Exception:
+            pass
+    for seg in re.findall(r'<line[^>]*>', inner):
+        try:
+            xs += [float(re.search(r'x1="([-\d.]+)"', seg).group(1)),
+                   float(re.search(r'x2="([-\d.]+)"', seg).group(1))]
+            ys += [float(re.search(r'y1="([-\d.]+)"', seg).group(1)),
+                   float(re.search(r'y2="([-\d.]+)"', seg).group(1))]
+        except Exception:
+            pass
+    for pts in re.findall(r'<polygon[^>]*points="([^"]+)"', inner):
+        nums = [float(n) for n in re.findall(r'[-+]?[\d.]+', pts)]
+        xs += nums[0::2]; ys += nums[1::2]
+    for d in re.findall(r'<path[^>]*d="([^"]+)"', inner):
+        _parse_path(d, xs, ys)
+    if not xs or not ys:
+        return (0.0, 0.0, 64.0, 64.0)
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+# ── SVG builders ─────────────────────────────────────────────────────────
+def _circled_letter(cx, cy, letter):
+    """Draw a circled modifier letter (Ⓜ/Ⓛ/Ⓢ) centred at cx,cy. Returns svg."""
+    r = FS * 0.62
+    out = ['<circle cx="{:.2f}" cy="{:.2f}" r="{:.2f}" fill="none" '
+           'stroke="#000" stroke-width="0.3"/>'.format(cx, cy, r)]
+    # baseline offset (~0.3*font) instead of dominant-baseline (Qt SVG ignores it)
+    out.append('<text x="{:.2f}" y="{:.2f}" font-family="osifont" '
+               'font-size="{:.2f}" text-anchor="middle" fill="#000">{}</text>'.format(
+                   cx, cy + FS * 0.8 * 0.35, FS * 0.8, letter))
+    return "".join(out)
+
+
+def _text(x, y, s, anchor="start"):
+    # y is the compartment CENTRE; add ~0.35*font so the glyph is visually
+    # centred vertically without dominant-baseline (which Qt SVG ignores)
+    return ('<text x="{:.2f}" y="{:.2f}" font-family="osifont" '
+            'font-size="{:.2f}" text-anchor="{}" fill="#000">{}</text>'.format(
+                x, y + FS * 0.35, FS, anchor, _esc(s)))
+
+
+def build_frame_svg(glyph_inner, tol_text, tol_mod, datums):
+    """datums = [(letter, modifier_index), ...]; tol_mod = modifier index."""
+    cy = H / 2.0
+    comps = []           # (width, kind, payload)
+
+    # symbol compartment
+    comps.append((SYM_BX, "glyph", glyph_inner))
+
+    # tolerance compartment width: text + optional modifier circle
+    tol_w = PAD * 2 + max(1, len(tol_text)) * CHW
+    if tol_mod:
+        tol_w += FS * 1.4
+    comps.append((tol_w, "tol", (tol_text, tol_mod)))
+
+    # datum compartments
+    for letter, mod in datums:
+        w = PAD * 2 + max(1, len(letter)) * CHW
+        if mod:
+            w += FS * 1.4
+        comps.append((max(w, H * 0.8), "datum", (letter, mod)))
+
+    total_w = sum(c[0] for c in comps)
+
+    o = []
+    o.append('<svg xmlns="http://www.w3.org/2000/svg" version="1.1" '
+             'width="{w:.2f}mm" height="{h:.2f}mm" viewBox="0 0 {w:.2f} {h:.2f}">'
+             .format(w=total_w, h=H))
+    # outer frame
+    o.append('<rect x="0" y="0" width="{:.2f}" height="{:.2f}" fill="white" '
+             'stroke="#000" stroke-width="0.4"/>'.format(total_w, H))
+
+    x = 0.0
+    for i, (w, kind, payload) in enumerate(comps):
+        if i > 0:
+            o.append('<line x1="{x:.2f}" y1="0" x2="{x:.2f}" y2="{h:.2f}" '
+                     'stroke="#000" stroke-width="0.4"/>'.format(x=x, h=H))
+        if kind == "glyph":
+            # centre the glyph by its REAL content bounding box (the source
+            # SVGs aren't centred in their own 64x64 canvas), scaled to ~5mm
+            bx0, by0, bx1, by1 = _glyph_bbox(payload)
+            bw = max(bx1 - bx0, 0.1)
+            bh = max(by1 - by0, 0.1)
+            s = 5.0 / max(bw, bh)
+            ccx = (bx0 + bx1) / 2.0
+            ccy = (by0 + by1) / 2.0
+            tx = (x + w / 2.0) - ccx * s      # content centre -> cell centre
+            ty = (H / 2.0) - ccy * s
+            o.append('<g transform="translate({:.3f},{:.3f}) scale({:.4f})">{}</g>'
+                     .format(tx, ty, s, payload))
+        elif kind in ("tol", "datum"):
+            text, mod = payload
+            # centre the text (+ optional modifier) as one group in the cell
+            text_w = max(1, len(text)) * CHW
+            mod_w = FS * 1.4 if mod else 0.0
+            gap = FS * 0.35 if mod else 0.0
+            group_w = text_w + gap + mod_w
+            sx = x + (w - group_w) / 2.0            # left edge of the group
+            o.append(_text(sx + text_w / 2.0, cy, text, "middle"))
+            if mod:
+                o.append(_circled_letter(sx + text_w + gap + mod_w / 2.0, cy,
+                                         _MOD_LETTER[mod]))
+        x += w
+
+    o.append('</svg>')
+    return "\n".join(o), total_w
+
+
+# ── page / insertion helpers ─────────────────────────────────────────────
+def _selected_dimension():
+    """Return a selected TechDraw dimension and its referenced view, or
+    (None, None)."""
+    for obj in Gui.Selection.getSelection():
+        if obj.TypeId == "TechDraw::DrawViewDimension":
+            refv = None
+            try:
+                if obj.References2D:
+                    refv = obj.References2D[0][0]
+            except Exception:
+                pass
+            if refv is None:
+                for o in obj.InList:
+                    if o.TypeId in ("TechDraw::DrawViewPart",
+                                    "TechDraw::DrawProjGroupItem"):
+                        refv = o
+                        break
+            return obj, refv
+    return None, None
+
+
+def _active_page(doc):
+    for obj in Gui.Selection.getSelection():
+        if obj.TypeId == "TechDraw::DrawPage":
+            return obj
+        for p in getattr(obj, "InList", []):
+            if p.TypeId == "TechDraw::DrawPage":
+                return p
+    try:
+        av = Gui.ActiveDocument.ActiveView
+        if av and hasattr(av, "getPage"):
+            p = av.getPage()
+            if p:
+                return p
+    except Exception:
+        pass
+    pages = [o for o in doc.Objects if o.TypeId == "TechDraw::DrawPage"]
+    return pages[0] if pages else None
+
+
+# ── dialog ─────────────────────────────────────────────────────────────
+class GDTDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("GD&T — Feature Control Frame")
+        self.setMinimumWidth(380)
+        lay = QtWidgets.QVBoxLayout(self)
+        form = QtWidgets.QFormLayout()
+
+        self.cbChar = QtWidgets.QComboBox()
+        self.cbChar.setIconSize(QtCore.QSize(22, 22))
+        for label, glyph_file in CHARACTERISTICS:
+            icon = _glyph_icon(label, glyph_file)
+            if icon is not None:
+                self.cbChar.addItem(icon, "  " + label)
+            else:
+                self.cbChar.addItem(label)
+        self.cbChar.setCurrentIndex(9)  # Position (common default)
+        form.addRow("Characteristic:", self.cbChar)
+
+        self.chkDia = QtWidgets.QCheckBox("Diameter (⌀) tolerance zone")
+        form.addRow("", self.chkDia)
+
+        self.edTol = QtWidgets.QLineEdit("0.1")
+        form.addRow("Tolerance value:", self.edTol)
+
+        self.cbTolMod = QtWidgets.QComboBox()
+        self.cbTolMod.addItems(MODIFIERS)
+        form.addRow("Tolerance modifier:", self.cbTolMod)
+
+        self.datumWidgets = []
+        for name in ("Primary datum:", "Secondary datum:", "Tertiary datum:"):
+            row = QtWidgets.QHBoxLayout()
+            ed = QtWidgets.QLineEdit()
+            ed.setPlaceholderText("A / B / C …")
+            ed.setMaximumWidth(80)
+            mod = QtWidgets.QComboBox()
+            mod.addItems(MODIFIERS)
+            row.addWidget(ed)
+            row.addWidget(mod)
+            w = QtWidgets.QWidget()
+            w.setLayout(row)
+            form.addRow(name, w)
+            self.datumWidgets.append((ed, mod))
+
+        lay.addLayout(form)
+
+        bb = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def values(self):
+        idx = self.cbChar.currentIndex()
+        label, glyph_file = CHARACTERISTICS[idx]
+        tol = self.edTol.text().strip()
+        if self.chkDia.isChecked():
+            tol = "⌀" + tol
+        datums = []
+        for ed, mod in self.datumWidgets:
+            t = ed.text().strip()
+            if t:
+                datums.append((t, mod.currentIndex()))
+        return label, glyph_file, tol, self.cbTolMod.currentIndex(), datums
+
+
+def main():
+    doc = App.ActiveDocument
+    if not doc:
+        QtWidgets.QMessageBox.warning(None, "GD&T", "No active document.")
+        return
+    page = _active_page(doc)
+    if not page:
+        QtWidgets.QMessageBox.warning(
+            None, "GD&T", "No TechDraw page found. Open or create a page first.")
+        return
+
+    # capture a selected dimension BEFORE opening the dialog
+    sel_dim, dim_view = _selected_dimension()
+
+    dlg = GDTDialog(Gui.getMainWindow())
+    if dlg.exec_() != QtWidgets.QDialog.Accepted:
+        return
+
+    label, glyph_file, tol, tol_mod, datums = dlg.values()
+    if not tol:
+        QtWidgets.QMessageBox.warning(None, "GD&T", "Enter a tolerance value.")
+        return
+
+    glyph = _load_glyph(label, glyph_file)
+    svg, total_w = build_frame_svg(glyph, tol, tol_mod, datums)
+
+    App.setActiveTransaction("Insert GD&T frame")
+    name = "GDTFrame"
+    view = doc.addObject("TechDraw::DrawViewSymbol", name)
+    view.Symbol = svg
+    view.Label = "GDT_" + label.split()[0]
+
+    if sel_dim is not None and dim_view is not None:
+        # Drop the frame directly UNDER the selected dimension's label and
+        # attach it to that dimension's view so it stays put with the drawing.
+        # dim.X/Y and an owned symbol's X/Y are both in the view's local frame.
+        try:
+            view.Owner = dim_view
+        except Exception:
+            pass
+        try:
+            view.X = float(sel_dim.X)
+            view.Y = float(sel_dim.Y) - (H + 3.0)   # H = frame height, sit just below
+        except Exception:
+            view.X, view.Y = 100.0, 100.0
+        placed = "below dimension on {}".format(getattr(dim_view, "Label", "view"))
+    else:
+        try:
+            view.X = float(page.PageWidth) / 2.0
+            view.Y = float(page.PageHeight) / 2.0
+        except Exception:
+            view.X, view.Y = 100.0, 100.0
+        placed = "page centre (select a dimension first to auto-place under it)"
+    page.addView(view)
+    try:
+        doc.recompute([view, page])
+    except Exception:
+        doc.recompute()
+    App.closeActiveTransaction()
+
+    try:
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(doc.Name, view.Name)
+    except Exception:
+        pass
+
+    App.Console.PrintMessage(
+        "ANVIL CAD: inserted GD&T frame '{}' {} datums — {}\n".format(
+            label, len(datums), placed))
+
+
+main()

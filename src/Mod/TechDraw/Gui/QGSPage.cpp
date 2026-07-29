@@ -25,6 +25,12 @@
 #include <QFile>
 #include <QGraphicsSceneEvent>
 #include <QPainter>
+#include <QPainterPath>
+#include <QTimer>
+#include <QTransform>
+#include <algorithm>
+#include <cmath>
+#include <map>
 #include <QSvgGenerator>
 #include <QTemporaryFile>
 #include <QTextStream>
@@ -69,6 +75,7 @@
 #include "QGIUserTypes.h"
 #include "QGIViewAnnotation.h"
 #include "QGIViewBalloon.h"
+#include "QGIDimLines.h"
 #include "QGIViewClip.h"
 #include "QGIViewCollection.h"
 #include "QGIViewDimension.h"
@@ -104,6 +111,9 @@ QGSPage::QGSPage(ViewProviderPage* vpPage, QWidget* parent)
     assert(vpPage);
     m_vpPage = vpPage;
     setItemIndexMethod(QGraphicsScene::BspTreeIndex);//the default
+    // ANVIL CAD: re-apply Creo-style dimension-line breaks whenever the scene
+    // changes (debounced + guarded inside the slot).
+    connect(this, &QGraphicsScene::changed, this, &QGSPage::scheduleDimensionLineBreaks);
 }
 
 
@@ -1002,12 +1012,177 @@ bool QGSPage::orphanExists(const char* viewName, const std::vector<App::Document
 }
 
 //NOTE: this doesn't add missing views.  see fixOrphans()
+namespace {
+// Proper interior intersection of segments p1->p2 and p3->p4 (scene coords).
+// Returns true and the parameter t along p1->p2 when they genuinely cross.
+bool tdSegmentsCross(const QPointF& p1, const QPointF& p2,
+                     const QPointF& p3, const QPointF& p4, double& tOn12)
+{
+    const double rx = p2.x() - p1.x(), ry = p2.y() - p1.y();
+    const double sx = p4.x() - p3.x(), sy = p4.y() - p3.y();
+    const double denom = rx * sy - ry * sx;
+    if (std::fabs(denom) < 1e-9) {
+        return false;  // parallel / collinear
+    }
+    const double qpx = p3.x() - p1.x(), qpy = p3.y() - p1.y();
+    const double t = (qpx * sy - qpy * sx) / denom;
+    const double u = (qpx * ry - qpy * rx) / denom;
+    const double eps = 1e-3;  // stay off the exact endpoints
+    if (t <= eps || t >= 1.0 - eps || u <= eps || u >= 1.0 - eps) {
+        return false;
+    }
+    tOn12 = t;
+    return true;
+}
+}  // namespace
+
+// ANVIL CAD: Creo-style dimension-line breaks. Where one dimension/leader line
+// crosses another, put a small gap in the later-drawn line so the crossing is
+// clear (instead of two lines overlapping). Operates on the rendered QGIDimLines
+// paths after every full redraw; only lines that actually cross are modified.
+void QGSPage::applyDimensionLineBreaks()
+{
+    if (m_applyingBreaks) {
+        return;  // re-entrancy guard: our own setPath() triggers scene changes
+    }
+    std::vector<QGIDimLines*> dims;
+    for (QGraphicsItem* gi : items()) {
+        if (auto* dl = dynamic_cast<QGIDimLines*>(gi)) {
+            if (dl->isVisible() && !dl->ungappedPath().isEmpty()) {
+                dims.push_back(dl);
+            }
+        }
+    }
+    if (dims.size() < 2) {
+        return;
+    }
+
+    m_applyingBreaks = true;
+    const double gap = Rez::guiX(1.2);  // gap width in scene units (~1.2 mm)
+
+    struct Seg { QPointF sa, sb; int elem; };
+    std::vector<QPainterPath> locals(dims.size());
+    std::vector<std::vector<Seg>> segsOf(dims.size());
+    for (std::size_t k = 0; k < dims.size(); ++k) {
+        QPainterPath lp = dims[k]->ungappedPath();
+        locals[k] = lp;
+        const QTransform xf = dims[k]->sceneTransform();
+        QPointF cur;
+        for (int i = 0; i < lp.elementCount(); ++i) {
+            const QPainterPath::Element e = lp.elementAt(i);
+            const QPointF p(e.x, e.y);
+            if (e.type == QPainterPath::LineToElement) {
+                segsOf[k].push_back({xf.map(cur), xf.map(p), i});
+            }
+            cur = p;  // MoveTo / LineTo / curve data all advance the cursor
+        }
+    }
+
+    // breaks[k][elementIndex] = list of parameters t (0..1) to gap on that segment
+    std::vector<std::map<int, std::vector<double>>> breaks(dims.size());
+    bool any = false;
+    for (std::size_t a = 0; a < dims.size(); ++a) {
+        for (std::size_t b = a + 1; b < dims.size(); ++b) {
+            for (const Seg& sb : segsOf[b]) {
+                for (const Seg& sa : segsOf[a]) {
+                    double t = 0.0;
+                    if (tdSegmentsCross(sb.sa, sb.sb, sa.sa, sa.sb, t)) {
+                        breaks[b][sb.elem].push_back(t);  // break the later line (b)
+                        any = true;
+                    }
+                }
+            }
+        }
+    }
+    if (!any) {
+        m_applyingBreaks = false;
+        return;
+    }
+
+    for (std::size_t k = 0; k < dims.size(); ++k) {
+        if (breaks[k].empty()) {
+            // no crossings on this line now: make sure any stale gap is cleared
+            if (dims[k]->path() != locals[k]) {
+                dims[k]->setPath(locals[k]);
+            }
+            continue;
+        }
+        const QPainterPath& src = locals[k];
+        QPainterPath out;
+        QPointF cur;
+        for (int i = 0; i < src.elementCount(); ++i) {
+            const QPainterPath::Element e = src.elementAt(i);
+            const QPointF p(e.x, e.y);
+            if (e.type == QPainterPath::MoveToElement) {
+                out.moveTo(p);
+                cur = p;
+            }
+            else if (e.type == QPainterPath::LineToElement) {
+                auto it = breaks[k].find(i);
+                if (it == breaks[k].end()) {
+                    out.lineTo(p);
+                }
+                else {
+                    const QPointF d = p - cur;
+                    const double segLen = std::hypot(d.x(), d.y());
+                    const double half = (segLen > 1e-6) ? (gap * 0.5 / segLen) : 0.0;
+                    std::vector<double> ts = it->second;
+                    std::sort(ts.begin(), ts.end());
+                    double pos = 0.0;
+                    for (double t : ts) {
+                        const double t0 = std::max(0.0, t - half);
+                        const double t1 = std::min(1.0, t + half);
+                        if (t0 <= pos + 1e-4) {
+                            pos = std::max(pos, t1);
+                            continue;
+                        }
+                        out.lineTo(cur + d * t0);
+                        out.moveTo(cur + d * t1);
+                        pos = t1;
+                    }
+                    if (pos < 1.0 - 1e-4) {
+                        out.lineTo(p);
+                    }
+                }
+                cur = p;
+            }
+            else if (e.type == QPainterPath::CurveToElement && i + 2 < src.elementCount()) {
+                const QPainterPath::Element e2 = src.elementAt(i + 1);
+                const QPainterPath::Element e3 = src.elementAt(i + 2);
+                out.cubicTo(QPointF(e.x, e.y), QPointF(e2.x, e2.y), QPointF(e3.x, e3.y));
+                cur = QPointF(e3.x, e3.y);
+                i += 2;
+            }
+        }
+        if (out != dims[k]->path()) {
+            dims[k]->setPath(out);  // idempotent: only change when needed
+        }
+    }
+    m_applyingBreaks = false;
+}
+
+void QGSPage::scheduleDimensionLineBreaks(const QList<QRectF>&)
+{
+    // Debounced trigger: coalesce scene changes into a single break pass on the
+    // next event-loop turn. The guard flags prevent stacking timers and stop the
+    // pass's own setPath() calls from causing an infinite change->pass loop.
+    if (m_applyingBreaks || m_breakPending) {
+        return;
+    }
+    m_breakPending = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_breakPending = false;
+        applyDimensionLineBreaks();
+    });
+}
+
 void QGSPage::redrawAllViews()
 {
     const std::vector<QGIView*>& upviews = getViews();
     for (std::vector<QGIView*>::const_iterator it = upviews.begin(); it != upviews.end(); ++it) {
         (*it)->updateView(true);
     }
+    applyDimensionLineBreaks();
 }
 
 //NOTE: this doesn't add missing views.   see fixOrphans()

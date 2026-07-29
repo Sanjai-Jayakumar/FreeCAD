@@ -26,6 +26,8 @@
 #include <Mod/TechDraw/App/Geometry.h>
 #include <Mod/TechDraw/TechDrawGlobal.h>
 
+#include <QPointF>
+
 #include "QGIPrimPath.h"
 #include "QGIUserTypes.h"
 
@@ -63,6 +65,10 @@ public:
 protected:
 
     void mouseDoubleClickEvent(QGraphicsSceneMouseEvent *event) override;
+    // ANVIL CAD: interactive drag-to-extend for straight cosmetic center lines
+    void mousePressEvent(QGraphicsSceneMouseEvent *event) override;
+    void mouseMoveEvent(QGraphicsSceneMouseEvent *event) override;
+    void mouseReleaseEvent(QGraphicsSceneMouseEvent *event) override;
 
     bool multiselectEligible() override { return true; }
 
@@ -76,6 +82,18 @@ private:
     bool isSmoothEdge;
 
     TechDraw::SourceType m_source{TechDraw::SourceType::GEOMETRY};
+
+    // ANVIL CAD: state for drag-to-extend of a straight cosmetic center line.
+    // The line grows symmetrically about its midpoint (both ends move equally).
+    bool isStretchableCosmeticLine(QPointF& p0, QPointF& p1) const;
+    void persistStretch();
+    bool    m_stretching{false};
+    QPointF m_center;         // fixed midpoint of the line
+    QPointF m_axis;           // unit vector along the line, toward the grabbed end
+    double  m_halfLen{0.0};   // half-length at drag start
+    QPointF m_endA;           // current endpoints during/after the drag
+    QPointF m_endB;
+    QPointF m_pressPos;
 };
 
 }

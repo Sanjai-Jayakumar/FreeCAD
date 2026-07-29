@@ -74,6 +74,21 @@ def _clean(label):
 def _desc(obj):
     return str(getattr(obj, 'Label2', '') or '').strip()
 
+def _link_label(obj, linked):
+    """Best-effort part name for an App::Link. Assembly links commonly keep
+    FreeCAD's default object name ("Body", "Body001", ...) while the real
+    part identity lives on the linked EXTERNAL document itself (e.g.
+    "Box_CAP.003"). Fall back to that when the link's own label is generic."""
+    label = _clean(obj.Label)
+    if linked is not None and _GENERIC.match(label):
+        try:
+            doc_label = _clean(linked.Document.Label)
+        except Exception:
+            doc_label = ''
+        if doc_label and doc_label not in _SKIP_LBL and not _GENERIC.match(doc_label):
+            label = doc_label
+    return label
+
 def _add(lst, pn, desc=''):
     if not pn or pn in _SKIP_LBL or _GENERIC.match(pn):
         return
@@ -112,9 +127,26 @@ def _walk(objects, rows, depth=0):
             if linked and linked.TypeId in _CONTAINERS:
                 _walk(getattr(linked, 'Group', []), rows, depth + 1)
             else:
-                _add(rows, _clean(obj.Label), _desc(obj))
+                desc = _desc(obj) or (_desc(linked) if linked is not None else '')
+                _add(rows, _link_label(obj, linked), desc)
         elif tid in _CONTAINERS:
-            _walk(getattr(obj, 'Group', []), rows, depth + 1)
+            children = getattr(obj, 'Group', [])
+            handled = False
+            if tid == 'App::Part':
+                leaf_parts = [c for c in children if c is not None and c.TypeId in _PARTS]
+                label = _clean(obj.Label)
+                if leaf_parts and label and label not in _SKIP_LBL and not _GENERIC.match(label):
+                    # A Part directly wrapping Body/Feature children is the
+                    # common "one part = one App::Part" pattern. Its Body
+                    # children usually keep FreeCAD's default generic names,
+                    # so use the Part's own (meaningful) label for the BOM
+                    # row instead of the generic child label.
+                    _add(rows, label, _desc(leaf_parts[0]))
+                    rest = [c for c in children if c not in leaf_parts]
+                    _walk(rest, rows, depth + 1)
+                    handled = True
+            if not handled:
+                _walk(children, rows, depth + 1)
         elif tid in _PARTS:
             _add(rows, _clean(obj.Label), _desc(obj))
         else:
@@ -131,10 +163,9 @@ def get_rows(doc):
     if not rows:
         for obj in doc.Objects:
             if obj.TypeId == 'App::Part':
-                ch = [o for o in getattr(obj, 'Group', [])
-                      if o.TypeId not in _SKIP and 'TechDraw' not in o.TypeId]
-                if ch:
-                    _walk(ch, rows)
+                # Walk the Part itself (not its unwrapped children) so the
+                # container-label fallback in _walk() can apply.
+                _walk([obj], rows)
     if not rows:
         for obj in doc.Objects:
             if obj.TypeId in _SKIP or 'TechDraw' in obj.TypeId: continue
@@ -148,7 +179,8 @@ def get_rows(doc):
                 if linked and linked.TypeId in _CONTAINERS:
                     _walk(getattr(linked, 'Group', []), rows)
                 else:
-                    _add(rows, _clean(obj.Label), _desc(obj))
+                    desc = _desc(obj) or (_desc(linked) if linked is not None else '')
+                    _add(rows, _link_label(obj, linked), desc)
     if not rows:
         for d in App.listDocuments().values():
             if d is doc: continue
@@ -172,7 +204,7 @@ def _plc(obj):
     p = getattr(obj, 'Placement', None)
     return p if p is not None else App.Placement()
 
-def collect_instances(objects, parent_plc, out, depth=0):
+def collect_instances(objects, parent_plc, out, depth=0, exp_plc=None):
     """
     Walk the assembly tree collecting PLACED part instances with their
     WORLD bounding-box centres.  This is the crucial difference from
@@ -182,6 +214,10 @@ def collect_instances(objects, parent_plc, out, depth=0):
     parent_plc holds the accumulated placement of ANCESTORS only.  An
     object's own Placement is already baked into its Shape.BoundBox, so we
     transform the shape's bbox centre by parent_plc — never double-count.
+
+    exp_plc (optional) maps {part_obj: exploded_placement}; when given, a
+    part's geometry is moved to its exploded position so balloon tips match
+    an exploded view.
 
     out receives (clean_label, world_centre_Vector) tuples.
     """
@@ -202,22 +238,39 @@ def collect_instances(objects, parent_plc, out, depth=0):
                 # Link points at a sub-assembly: descend, adding the link's
                 # placement and the linked container's own placement.
                 child_plc = parent_plc.multiply(_plc(obj)).multiply(_plc(linked))
-                collect_instances(getattr(linked, 'Group', []), child_plc, out, depth + 1)
+                collect_instances(getattr(linked, 'Group', []), child_plc, out, depth + 1, exp_plc)
             else:
-                g = _leaf_geom(obj, parent_plc)
+                g = _leaf_geom(obj, parent_plc, exp_plc)
                 if g is not None:
-                    out.append((_clean(obj.Label), g[0], g[1]))
+                    out.append((_link_label(obj, linked), g[0], g[1]))
         elif tid in _CONTAINERS:
             child_plc = parent_plc.multiply(_plc(obj))
-            collect_instances(getattr(obj, 'Group', []), child_plc, out, depth + 1)
+            children = getattr(obj, 'Group', [])
+            handled = False
+            if tid == 'App::Part':
+                leaf_parts = [c for c in children if c is not None and c.TypeId in _PARTS]
+                label = _clean(obj.Label)
+                if leaf_parts and label and label not in _SKIP_LBL and not _GENERIC.match(label):
+                    # Mirror _walk()'s container-label fallback so each leaf
+                    # Body's geometry is filed under the SAME name its BOM
+                    # row uses, even though the Body itself is unnamed.
+                    for lp in leaf_parts:
+                        g = _leaf_geom(lp, child_plc, exp_plc)
+                        if g is not None:
+                            out.append((label, g[0], g[1]))
+                    rest = [c for c in children if c not in leaf_parts]
+                    collect_instances(rest, child_plc, out, depth + 1, exp_plc)
+                    handled = True
+            if not handled:
+                collect_instances(children, child_plc, out, depth + 1, exp_plc)
         elif tid in _PARTS:
-            g = _leaf_geom(obj, parent_plc)
+            g = _leaf_geom(obj, parent_plc, exp_plc)
             if g is not None:
                 out.append((_clean(obj.Label), g[0], g[1]))
         else:
             grp = getattr(obj, 'Group', None)
             if grp:
-                collect_instances(grp, parent_plc.multiply(_plc(obj)), out, depth + 1)
+                collect_instances(grp, parent_plc.multiply(_plc(obj)), out, depth + 1, exp_plc)
 
 def _bbox_corners(bb):
     """The 8 corner points of an (axis-aligned) BoundBox."""
@@ -227,11 +280,60 @@ def _bbox_corners(bb):
             for y in (bb.YMin, bb.YMax)
             for z in (bb.ZMin, bb.ZMax)]
 
-def _leaf_geom(obj, parent_plc):
+def _shape_bbox(obj, depth=0):
+    """Return a valid LOCAL BoundBox for obj, even if obj itself has no
+    Shape — aggregates children's shapes recursively (e.g. a Link or
+    container whose own Shape is empty but whose children carry the real
+    geometry, as happens with some fastener/standard-part objects). This
+    is what keeps a single unresolved part from collapsing to a point and
+    corrupting the whole assembly's measured extent (which then feeds the
+    exploded-view tip-scale correction and skews EVERY balloon, not just
+    the one part that failed)."""
+    if depth > 8 or obj is None:
+        return None
+    shp = getattr(obj, 'Shape', None)
+    if shp is not None and getattr(shp, 'BoundBox', None) is not None:
+        try:
+            if shp.BoundBox.isValid():
+                return shp.BoundBox
+        except Exception:
+            pass
+    bb = None
+    for child in getattr(obj, 'Group', []) or []:
+        cbb = _shape_bbox(child, depth + 1)
+        if cbb is None:
+            continue
+        if bb is None:
+            bb = App.BoundBox(cbb.XMin, cbb.YMin, cbb.ZMin, cbb.XMax, cbb.YMax, cbb.ZMax)
+        else:
+            bb.add(cbb)
+    return bb
+
+
+def _exploded_delta(obj, exp_plc):
+    """World-to-world transform that moves obj from its assembled placement to
+    its EXPLODED placement, or None if obj isn't part of the explode.
+    exp_plc = {part_obj: exploded_App.Placement} (read-only from ExplodedView)."""
+    if not exp_plc:
+        return None
+    final = exp_plc.get(obj)
+    if final is None:
+        return None
+    try:
+        return final.multiply(_plc(obj).inverse())
+    except Exception:
+        return None
+
+
+def _leaf_geom(obj, parent_plc, exp_plc=None):
     """
     Return (world_centre, [8 world corner points]) for a placed leaf part.
     Robust to how the object exposes geometry — parts here are App::Links
     to EXTERNAL part documents, so obj.Shape is often absent.
+
+    If exp_plc is given and obj is in it, the returned world geometry is moved
+    to the part's EXPLODED position — so balloon tips land on the parts where
+    they are actually drawn in an exploded view (stacked parts separate out).
     """
     gplc = None
     try:
@@ -239,53 +341,101 @@ def _leaf_geom(obj, parent_plc):
     except Exception:
         gplc = None
 
-    # A) direct Shape — bbox already in the parent frame
-    shp = getattr(obj, 'Shape', None)
-    if shp is not None and getattr(shp, 'BoundBox', None) is not None and shp.BoundBox.isValid():
-        bb = shp.BoundBox
+    centre = None
+    corners = None
+
+    # A) direct Shape (or aggregated children) — bbox already in the parent frame
+    bb = _shape_bbox(obj)
+    if bb is not None:
         corners = [parent_plc.multVec(c) for c in _bbox_corners(bb)]
-        return parent_plc.multVec(bb.Center), corners
+        centre = parent_plc.multVec(bb.Center)
+    else:
+        # B) App::Link to an external-document part: linked local bbox, placed
+        linked = getattr(obj, 'LinkedObject', None)
+        if linked is not None:
+            lbb = _shape_bbox(linked)
+            if lbb is not None:
+                plc = gplc if gplc is not None else parent_plc.multiply(_plc(obj))
+                corners = [plc.multVec(c) for c in _bbox_corners(lbb)]
+                centre = plc.multVec(lbb.Center)
 
-    # B) App::Link to an external-document part: linked local bbox, placed
-    linked = getattr(obj, 'LinkedObject', None)
-    if linked is not None:
-        lshp = getattr(linked, 'Shape', None)
-        if lshp is not None and getattr(lshp, 'BoundBox', None) is not None and lshp.BoundBox.isValid():
-            bb = lshp.BoundBox
-            plc = gplc if gplc is not None else parent_plc.multiply(_plc(obj))
-            corners = [plc.multVec(c) for c in _bbox_corners(bb)]
-            return plc.multVec(bb.Center), corners
+    if centre is None:
+        # C) last resort: the part's world origin (zero-size box)
+        App.Console.PrintWarning(
+            'BalloonAssembly: could not resolve real geometry for {} — '
+            'its balloon tip will collapse to a point.\n'.format(obj.Label))
+        base = gplc.Base if gplc is not None else parent_plc.multiply(_plc(obj)).Base
+        centre, corners = base, [base]
 
-    # C) last resort: the part's world origin (zero-size box)
-    base = gplc.Base if gplc is not None else parent_plc.multiply(_plc(obj)).Base
-    return base, [base]
+    # Move to exploded position if this part is exploded (tips follow the drawn parts)
+    delta = _exploded_delta(obj, exp_plc)
+    if delta is not None:
+        centre = delta.multVec(centre)
+        corners = [delta.multVec(c) for c in corners]
 
-def get_instances(doc):
-    """Return {clean_label: [(world_centre, corners), ...]} for all parts."""
+    return centre, corners
+
+def get_instances(doc, exp_plc=None):
+    """Return {clean_label: [(world_centre, corners), ...]} for all parts.
+    If exp_plc is given, parts are placed at their EXPLODED positions."""
     out = []
     for obj in doc.Objects:
         if obj.TypeId == 'Assembly::AssemblyObject':
-            collect_instances(getattr(obj, 'Group', []), App.Placement(), out)
+            collect_instances(getattr(obj, 'Group', []), App.Placement(), out, 0, exp_plc)
             break
     if not out:
         for obj in doc.Objects:
             if obj.TypeId == 'App::Part':
-                collect_instances(getattr(obj, 'Group', []), App.Placement(), out)
+                collect_instances(getattr(obj, 'Group', []), App.Placement(), out, 0, exp_plc)
     name_map = {}
     for label, centre, corners in out:
         name_map.setdefault(label, []).append((centre, corners))
     return name_map
 
-def match_geom(part_name, name_map):
-    """Find (world_centre, corners) for a table row name (exact, then 001/suffix)."""
+
+def _exploded_placements(doc):
+    """READ-ONLY: {part_obj: exploded_App.Placement} from every ExplodedView in
+    the doc.  Calls the Assembly ExplodedView proxy's calculation which returns
+    placements WITHOUT applying them — the exploded view and document are left
+    completely unchanged."""
+    result = {}
+    for o in doc.Objects:
+        proxy = getattr(o, 'Proxy', None)
+        if proxy is not None and hasattr(proxy, '_calculateExplodedPlacements'):
+            try:
+                fp, _lines = proxy._calculateExplodedPlacements(o)
+                if fp:
+                    result.update(fp)
+            except Exception as e:
+                App.Console.PrintWarning(
+                    '[BalloonAssembly] could not read exploded placements from '
+                    '{}: {}\n'.format(getattr(o, 'Name', '?'), e))
+    return result
+
+
+def _view_sources_exploded(view):
+    """True if this TechDraw view is a projection of an exploded view."""
+    for s in getattr(view, 'Source', []) or []:
+        proxy = getattr(s, 'Proxy', None)
+        if proxy is not None and hasattr(proxy, '_calculateExplodedPlacements'):
+            return True
+        if 'Exploded' in getattr(s, 'Name', '') or 'Exploded' in getattr(s, 'Label', ''):
+            return True
+    return False
+
+def match_all_geom(part_name, name_map):
+    """Find ALL (world_centre, corners) instances for a table row name
+    (exact, then 001/suffix). A BOM row with Qty > 1 (e.g. 8 identical
+    bolts) has one entry per physical instance here — every one of them
+    gets its own balloon, not just the first."""
     if part_name in name_map:
-        return name_map[part_name][0]
+        return name_map[part_name]
     if part_name + '001' in name_map:
-        return name_map[part_name + '001'][0]
+        return name_map[part_name + '001']
     for lbl, entries in name_map.items():
         if lbl.startswith(part_name) and lbl[len(part_name):].isdigit():
-            return entries[0]
-    return (None, None)
+            return entries
+    return []
 
 def _view_scale(view):
     try:
@@ -299,10 +449,16 @@ def _view_scale(view):
         return 1.0
 
 def _view_axes(view):
+    """View-local 2D basis. Direction is the projection direction (into the
+    screen, away from the viewer); XDirection is the view's screen-right.
+    Screen-up must be Direction x XDirection — e.g. for the standard Front
+    view (Direction=(0,-1,0), XDirection=(1,0,0)) that gives (0,0,1), i.e.
+    world +Z, matching FreeCAD's own convention. The reverse cross-product
+    order silently flips every view's up axis (top/bottom swapped)."""
     from FreeCAD import Vector
     xd = Vector(view.XDirection).normalize()
     d  = Vector(view.Direction).normalize()
-    yd = xd.cross(d).normalize()
+    yd = d.cross(xd).normalize()
     return xd, yd
 
 def _view_extent_2d(view):
@@ -461,41 +617,37 @@ def main():
             'No assembly parts found. Open the assembly document first.')
         return
 
-    # World-space geometry of every PLACED part instance (the key fix — this
-    # is where each part actually sits in the assembly, hence in the view)
-    name_map = get_instances(doc)
-    App.Console.PrintMessage(
-        '[BalloonAssembly] resolved {} placed instances: {}\n'.format(
-            len(name_map), ', '.join(sorted(name_map.keys())[:40])))
-
-    # Whole-assembly extent from EVERY instance's bbox corners.  The ring is
-    # sized to this (the true drawing outline), NOT to the matched-part
-    # centres — otherwise long thin parts (shafts) collapse the estimate and
-    # the balloons clump.  centre3d = mid-point of the full 3D extent.
     from FreeCAD import Vector
-    all_pts = []
-    for entries in name_map.values():
-        for centre, corners in entries:
-            if corners:
-                all_pts.extend(corners)
-            elif centre is not None:
-                all_pts.append(centre)
-    if all_pts:
-        centre3d = Vector(
-            (min(p.x for p in all_pts) + max(p.x for p in all_pts)) / 2.0,
-            (min(p.y for p in all_pts) + max(p.y for p in all_pts)) / 2.0,
-            (min(p.z for p in all_pts) + max(p.z for p in all_pts)) / 2.0)
-        dx = max(p.x for p in all_pts) - min(p.x for p in all_pts)
-        dy = max(p.y for p in all_pts) - min(p.y for p in all_pts)
-        dz = max(p.z for p in all_pts) - min(p.z for p in all_pts)
-    else:
-        centre3d = Vector(0, 0, 0)
-        dx = dy = dz = 0.0
-    n_with_box = sum(1 for entries in name_map.values()
-                     for c, corners in entries if corners and len(corners) > 1)
+
+    def _extent_of(nmap):
+        """(all_corner_pts, centre3d) for a name_map — the drawing extent used
+        to size the balloon ring and set the projection reference point."""
+        pts = []
+        for entries in nmap.values():
+            for centre, corners in entries:
+                if corners:
+                    pts.extend(corners)
+                elif centre is not None:
+                    pts.append(centre)
+        if pts:
+            c3d = Vector(
+                (min(p.x for p in pts) + max(p.x for p in pts)) / 2.0,
+                (min(p.y for p in pts) + max(p.y for p in pts)) / 2.0,
+                (min(p.z for p in pts) + max(p.z for p in pts)) / 2.0)
+        else:
+            c3d = Vector(0, 0, 0)
+        return pts, c3d
+
+    # Assembled part positions (used for ordinary views).  Exploded positions
+    # are read READ-ONLY from the ExplodedView and used ONLY for views that
+    # project an exploded view — so balloon tips follow the parts to their
+    # separated locations instead of collapsing onto stacked assembled centres.
+    name_map_asm = get_instances(doc)
+    exp_plc = _exploded_placements(doc)
+    name_map_exp = get_instances(doc, exp_plc) if exp_plc else None
     App.Console.PrintMessage(
-        '[BalloonAssembly] {} instances have real bbox; 3D extent = '
-        '{:.0f} x {:.0f} x {:.0f} mm\n'.format(n_with_box, dx, dy, dz))
+        '[BalloonAssembly] resolved {} parts (assembled); exploded placements '
+        'available for {} parts\n'.format(len(name_map_asm), len(exp_plc)))
 
     # Remove existing BNC balloons
     for obj in list(doc.Objects):
@@ -536,11 +688,30 @@ def main():
         xd, yd = _view_axes(view)
         scale  = _view_scale(view)
 
+        # Pick exploded vs assembled positions for THIS view.  A view whose
+        # Source is an exploded view must use the exploded part positions or
+        # its balloon tips land on the assembled (stacked) locations.
+        exploded = bool(name_map_exp) and _view_sources_exploded(view)
+        name_map = name_map_exp if exploded else name_map_asm
+        all_pts, centre3d = _extent_of(name_map)
+        App.Console.PrintMessage(
+            '[BalloonAssembly] view "{}": using {} part positions\n'.format(
+                view.Label, 'EXPLODED' if exploded else 'assembled'))
+
         # ---- Resolve each part's WORLD geometry (centre + bbox corners) ----
+        # One balloon per PHYSICAL INSTANCE — a Qty>1 BOM row (e.g. 8
+        # identical bolts) gets one entry per bolt here, not just one for
+        # the whole row, so every instance gets its own leader/bubble.
         raw = []   # (sno, world_centre or None, corners or None)
+        missing = []
         for sno, (pn, desc, qty) in chunk:
-            c, corners = match_geom(pn, name_map)
-            raw.append((sno, c, corners))
+            entries = match_all_geom(pn, name_map)
+            if entries:
+                for c, corners in entries:
+                    raw.append((sno, c, corners))
+            else:
+                raw.append((sno, None, None))
+                missing.append(pn)
 
         def _proj(p):
             rel = p.sub(centre3d)
@@ -568,7 +739,13 @@ def main():
         tip_scale = 1.0
         if ext is not None and ext[0] > 1.0:
             drawn_r = ext[0]
-            if geom_r > 1.0 and drawn_r > geom_r:
+            # Only treat this as an exploded view once the drawn extent is
+            # SUBSTANTIALLY bigger than the assembled geometry (>1.5x) — a
+            # smaller gap is more likely measurement slack (e.g. HLR edge
+            # noise) than an actual explosion, and stretching every tip for
+            # a small gap does more harm (misaligning correct tips) than
+            # good.
+            if geom_r > 1.0 and drawn_r > geom_r * 1.5:
                 tip_scale = drawn_r / geom_r
             draw_r = drawn_r
         else:
@@ -586,11 +763,10 @@ def main():
         spread = max((math.sqrt(x*x + y*y) for _, x, y in items), default=0.0)
         n_matched = sum(1 for _, c, _ in raw if c is not None)
         App.Console.PrintMessage(
-            '[BalloonAssembly] view "{}": {}/{} parts located, scale={:.3f}, '
+            '[BalloonAssembly] view "{}": {}/{} balloons located, scale={:.3f}, '
             'centre-spread={:.1f}mm, drawing radius={:.1f}mm, ring={:.1f}mm\n'.format(
                 view.Label, n_matched, len(raw), scale, spread, draw_r, ring_r))
-        if n_matched < len(raw):
-            missing = [pn for (sno, (pn, d, q)), (s2, c, cc) in zip(chunk, raw) if c is None]
+        if missing:
             App.Console.PrintWarning(
                 '[BalloonAssembly] NOT located (no placement match): {}\n'.format(
                     ', '.join(missing[:30])))
